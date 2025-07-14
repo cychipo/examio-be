@@ -1,0 +1,50 @@
+{
+    "name": "codecraft-be",
+    "version": "1.0.0",
+    "description": "",
+    "main": "dist/src/main",
+    "scripts": {
+        "build": "nest build",
+        "start": "nest start",
+        "prisma:merge": "prisma-merge -b prisma/base.prisma -s 'prisma/models/*.prisma' -o prisma/schema.prisma",
+        "prisma:generate": "pnpm prisma:push && prisma generate",
+        "prisma:migrate": "pnpm prisma:merge && prisma migrate dev",
+        "prisma:push": "pnpm prisma:merge && prisma db push",
+        "start:dev": "pnpm prisma:merge && nest start --watch",
+        "start:prod": "node ."
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "packageManager": "pnpm@10.11.0",
+    "dependencies": {
+        "@nestjs/common": "^11.1.3",
+        "@nestjs/core": "^11.1.3",
+        "@nestjs/jwt": "^11.0.0",
+        "@nestjs/passport": "^11.0.5",
+        "@nestjs/platform-express": "^11.1.3",
+        "@nestjs/swagger": "^11.2.0",
+        "@prisma/client": "^6.11.1",
+        "bcryptjs": "^3.0.2",
+        "ejs": "^3.1.10",
+        "jsonwebtoken": "^9.0.2",
+        "nestjs-zod": "^4.3.1",
+        "nodemailer": "^7.0.5",
+        "passport": "^0.7.0",
+        "passport-jwt": "^4.0.1",
+        "prisma": "^6.11.1",
+        "reflect-metadata": "~0.2.2",
+        "swagger-ui-express": "^5.0.1",
+        "zod": "^4.0.5"
+    },
+    "devDependencies": {
+        "@nestjs/cli": "^11.0.7",
+        "@nestjs/schematics": "^11.0.5",
+        "@types/ejs": "^3.1.5",
+        "@types/node": "^24.0.13",
+        "@types/nodemailer": "^6.4.17",
+        "prettier": "^3.6.2",
+        "prisma-merge": "^0.2.0",
+        "typescript": "^5.8.3"
+    }
+}

@@ -1,0 +1,27 @@
+//******** AUTO GENERATED FILE, DO NOT EDIT.  *********
+
+generator client {
+  provider = "prisma-client-js"
+  output = "../../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+
+model User {
+  id String @unique
+  email    String   @unique
+  username String   @unique
+  name     String?
+  avatar   String?
+  banner   String?
+  bio      String?
+  isAdmin  Boolean  @default(false)
+  isVerified Boolean @default(false)
+  password String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

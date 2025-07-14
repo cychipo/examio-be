@@ -1,0 +1,14 @@
+model User {
+  id String @unique
+  email    String   @unique
+  username String   @unique
+  name     String?
+  avatar   String?
+  banner   String?
+  bio      String?
+  isAdmin  Boolean  @default(false)
+  isVerified Boolean @default(false)
+  password String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
