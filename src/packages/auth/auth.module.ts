@@ -6,6 +6,9 @@ import { JwtModule } from '@nestjs/jwt';
 import { MailService } from 'src/common/services/mail.service';
 import { PasswordService } from 'src/common/services/password.service';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { AuthGuard } from 'src/common/guard/auth.guard';
+import { PassportModule } from '@nestjs/passport';
+import { GoogleStrategy } from './strategies/google.strategy';
 
 @Module({
     imports: [
@@ -13,15 +16,18 @@ import { GenerateIdService } from 'src/common/services/generate-id.service';
             secret: process.env.JWT_SECRET,
             signOptions: { expiresIn: '30d' },
         }),
+        PassportModule.register({ session: true }),
     ],
     providers: [
         PrismaService,
         PasswordService,
         GenerateIdService,
+        GoogleStrategy,
         AuthService,
         MailService,
+        AuthGuard,
     ],
     controllers: [AuthController],
-    exports: [AuthService, JwtModule],
+    exports: [AuthService, JwtModule, AuthGuard],
 })
 export class AuthModule {}

@@ -13,6 +13,8 @@ import { PasswordService } from 'src/common/services/password.service';
 import { RegisterDto } from './dto/register.dto';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { sanitizeUser } from 'src/common/utils/sanitize-user';
+import { User } from '@prisma/client';
+import { generateCode } from 'src/common/utils/generate-code';
 
 @Injectable()
 export class AuthService {
@@ -27,6 +29,10 @@ export class AuthService {
     async login(loginDto: LoginDto) {
         const { credential, password } = loginDto;
 
+        if (!credential || !password) {
+            throw new BadRequestException('Thông tin đăng nhập không hợp lệ');
+        }
+
         try {
             // Validate user credentials
             const user = await this.prisma.user.findFirst({
@@ -36,16 +42,18 @@ export class AuthService {
             });
 
             if (!user) {
-                throw new NotFoundException('User not found');
+                throw new NotFoundException('Không tìm thấy người dùng');
             }
 
             // Check password (assuming bcrypt is used for hashing)
             const isPasswordValid = await this.passwordService.comparePasswords(
                 password,
-                user.password
+                user.password || ''
             );
             if (!isPasswordValid) {
-                throw new BadRequestException('Invalid credentials');
+                throw new BadRequestException(
+                    'Thông tin đăng nhập không hợp lệ'
+                );
             }
 
             // Generate JWT token
@@ -59,7 +67,9 @@ export class AuthService {
             ) {
                 throw error;
             }
-            throw new InternalServerErrorException('Login failed');
+            throw new InternalServerErrorException(
+                'Đăng nhập không thành công'
+            );
         }
     }
 
@@ -73,7 +83,7 @@ export class AuthService {
             });
 
             if (existingUser) {
-                throw new ConflictException('Email already in use');
+                throw new ConflictException('Email đã được sử dụng');
             }
 
             // Check if username already exists
@@ -81,7 +91,7 @@ export class AuthService {
                 where: { username: username.toLowerCase() },
             });
             if (existingUsername) {
-                throw new ConflictException('Username already in use');
+                throw new ConflictException('Username đã được sử dụng');
             }
 
             // Hash the password
@@ -111,14 +121,215 @@ export class AuthService {
             );
 
             return {
-                message: 'User registered successfully',
+                message: 'Đăng ký thành công',
                 user: sanitizeUser(newUser),
             };
         } catch (error) {
             if (error instanceof ConflictException) {
                 throw error;
             }
-            throw new InternalServerErrorException('Registration failed');
+            console.log(error);
+            throw new InternalServerErrorException('Đăng ký không thành công');
         }
+    }
+
+    async sendVerificationEmail(user: User) {
+        try {
+            const code = generateCode(6);
+
+            await this.prisma.verifyAccountCode.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    userId: user.id,
+                    code,
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                },
+            });
+
+            // Send verification email
+            await this.mailService.sendMail(
+                user.email,
+                'Xác minh tài khoản của bạn',
+                'verify-account.template',
+                {
+                    username: user.username,
+                    verificationCode: code,
+                }
+            );
+
+            return { message: 'Email xác minh đã được gửi' };
+        } catch (error) {
+            throw new InternalServerErrorException(
+                'Gửi email không thành công'
+            );
+        }
+    }
+
+    async verifyAccount(userId: string, code: string) {
+        try {
+            const verificationCode =
+                await this.prisma.verifyAccountCode.findUnique({
+                    where: { userId },
+                });
+
+            if (!verificationCode) {
+                throw new NotFoundException('Mã xác minh không hợp lệ');
+            }
+
+            if (verificationCode.code !== code) {
+                throw new BadRequestException('Mã xác minh không chính xác');
+            }
+
+            if (new Date() > verificationCode.expiresAt) {
+                throw new BadRequestException('Mã xác minh đã hết hạn');
+            }
+
+            // Mark user as verified
+            await this.prisma.user.update({
+                where: { id: userId },
+                data: { isVerified: true },
+            });
+
+            // Clean up verification code
+            await this.prisma.verifyAccountCode.delete({
+                where: { userId },
+            });
+
+            return { message: 'Tài khoản đã được xác minh thành công' };
+        } catch (error) {
+            if (
+                error instanceof NotFoundException ||
+                error instanceof BadRequestException
+            ) {
+                throw error;
+            }
+            throw new InternalServerErrorException(
+                'Xác minh tài khoản không thành công'
+            );
+        }
+    }
+
+    async sendCodeToResetPassword(email: string) {
+        try {
+            const user = await this.prisma.user.findUnique({
+                where: { email: email.toLowerCase() },
+            });
+
+            if (!user) {
+                throw new NotFoundException('Không tìm thấy người dùng');
+            }
+
+            const code = generateCode(6);
+
+            await this.prisma.resetPasswordCode.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    userId: user.id,
+                    code,
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                },
+            });
+
+            // Send reset password email
+            await this.mailService.sendMail(
+                user.email,
+                'Yêu cầu đặt lại mật khẩu',
+                'reset-password.template',
+                {
+                    username: user.username,
+                    resetCode: code,
+                }
+            );
+
+            return { message: 'Email đặt lại mật khẩu đã được gửi' };
+        } catch (error) {
+            throw new InternalServerErrorException(
+                'Gửi email đặt lại mật khẩu không thành công'
+            );
+        }
+    }
+
+    async resetPassword(email: string, code: string, newPassword: string) {
+        try {
+            const user = await this.prisma.user.findUnique({
+                where: { email: email.toLowerCase() },
+            });
+
+            if (!user) {
+                throw new NotFoundException('Không tìm thấy người dùng');
+            }
+
+            const resetCode = await this.prisma.resetPasswordCode.findUnique({
+                where: { userId: user.id },
+            });
+
+            if (!resetCode) {
+                throw new NotFoundException('Mã đặt lại mật khẩu không hợp lệ');
+            }
+
+            if (resetCode.code !== code) {
+                throw new BadRequestException(
+                    'Mã đặt lại mật khẩu không chính xác'
+                );
+            }
+
+            if (new Date() > resetCode.expiresAt) {
+                throw new BadRequestException('Mã đặt lại mật khẩu đã hết hạn');
+            }
+
+            // Update user password
+            await this.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    password:
+                        await this.passwordService.hashPassword(newPassword),
+                },
+            });
+
+            // Clean up reset code
+            await this.prisma.resetPasswordCode.delete({
+                where: { userId: user.id },
+            });
+
+            return { message: 'Mật khẩu đã được đặt lại thành công' };
+        } catch (error) {
+            if (
+                error instanceof NotFoundException ||
+                error instanceof BadRequestException
+            ) {
+                throw error;
+            }
+            throw new InternalServerErrorException(
+                'Đặt lại mật khẩu không thành công'
+            );
+        }
+    }
+
+    async googleLogin(user: any) {
+        const { email, picture } = user;
+
+        let existingUser = await this.prisma.user.findUnique({
+            where: { email },
+        });
+
+        if (!existingUser) {
+            existingUser = await this.prisma.user.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    email,
+                    username: email.split('@')[0],
+                    avatar: picture,
+                    isVerified: true,
+                    password: null,
+                },
+            });
+        }
+
+        const token = this.jwtService.sign({ userId: user.id });
+
+        return {
+            token,
+            user: existingUser,
+        };
     }
 }
