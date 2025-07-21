@@ -67,6 +67,7 @@
       font-size: 32px;
       font-weight: 700;
       letter-spacing: -0.5px;
+      justify-content: center;
     }
 
     .logo-icon {
@@ -75,13 +76,10 @@
       background: rgba(255, 255, 255, 0.2);
       backdrop-filter: blur(10px);
       border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: inline-block;
       margin-right: 12px;
-      font-size: 24px;
-      font-weight: 800;
       border: 1px solid rgba(255, 255, 255, 0.3);
+      vertical-align: middle;
     }
 
     .header-subtitle {
@@ -143,14 +141,9 @@
       height: 60px;
       background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
       border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-size: 24px;
-      font-weight: 600;
+      display: inline-block;
       margin-right: 16px;
-      object-fit: cover;
+      vertical-align: middle;
     }
 
     .user-details h3 {
@@ -202,8 +195,8 @@
 
     .features-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 20px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
       margin: 40px 0;
     }
 
@@ -291,6 +284,39 @@
       text-decoration: none;
     }
 
+    /* Email client fallbacks */
+    .fallback-logo {
+      display: none;
+      width: 48px;
+      height: 48px;
+      background: rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      text-align: center;
+      line-height: 46px;
+      font-size: 24px;
+      font-weight: 800;
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      margin-right: 12px;
+      vertical-align: middle;
+    }
+
+    .fallback-avatar {
+      display: none;
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      border-radius: 50%;
+      text-align: center;
+      line-height: 60px;
+      font-size: 24px;
+      font-weight: 600;
+      color: white;
+      margin-right: 16px;
+      vertical-align: middle;
+    }
+
     @media (max-width: 600px) {
       .email-wrapper {
         margin: 0 10px;
@@ -313,14 +339,50 @@
         grid-template-columns: 1fr;
       }
     }
+
+    /* Outlook and other email clients that don't support advanced CSS */
+    @media screen and (-webkit-min-device-pixel-ratio: 0) {
+      .logo-icon {
+        display: inline-block !important;
+      }
+      .fallback-logo {
+        display: none !important;
+      }
+      .user-avatar {
+        display: inline-block !important;
+      }
+      .fallback-avatar {
+        display: none !important;
+      }
+    }
   </style>
+  <!--[if mso]>
+  <style>
+    .logo-icon {
+      display: none !important;
+    }
+    .fallback-logo {
+      display: inline-block !important;
+    }
+    .user-avatar {
+      display: none !important;
+    }
+    .fallback-avatar {
+      display: inline-block !important;
+    }
+  </style>
+  <![endif]-->
 </head>
 <body>
   <div class="email-wrapper">
     <div class="header">
       <div class="logo-container">
         <div class="logo">
-         <img src="https://ik.imagekit.io/devhatebug/code_craft/code.png?updatedAt=1752507908607" alt="NEO Logo" class="logo-icon" />
+          <img src="https://ik.imagekit.io/devhatebug/code_craft/code.png?updatedAt=1752507908607" alt="CodeCraft Logo" class="logo-icon" style="width: 48px; height: 48px; border-radius: 12px; margin-right: 12px; vertical-align: middle;" />
+          <!--[if mso]>
+          <div class="fallback-logo">C</div>
+          <![endif]-->
+          <div class="fallback-logo">C</div>
           CodeCraft
         </div>
         <div class="header-subtitle">Nền tảng cung cấp các công cụ hữu ích cho việc học tập</div>
@@ -338,7 +400,11 @@
 
       <div class="user-card">
         <div class="user-info">
-          <img class="user-avatar" src="https://ik.imagekit.io/devhatebug/code_craft/code.png?updatedAt=1752507908607" />
+          <img class="user-avatar" src="https://ik.imagekit.io/devhatebug/code_craft/code.png?updatedAt=1752507908607" alt="User Avatar" style="width: 60px; height: 60px; border-radius: 50%; margin-right: 16px; vertical-align: middle;" />
+          <!--[if mso]>
+          <div class="fallback-avatar"><%= username.charAt(0).toUpperCase() %></div>
+          <![endif]-->
+          <div class="fallback-avatar"><%= username.charAt(0).toUpperCase() %></div>
           <div class="user-details">
             <h3><%= username %></h3>
             <p><%= useremail %></p>
@@ -353,29 +419,6 @@
         <a href="<%= loginUrl %>" class="cta-button">
           🚀 Bắt đầu khám phá CodeCraft
         </a>
-      </div>
-
-      <div class="features-grid">
-        <div class="feature-item">
-          <div class="feature-icon">⚡</div>
-          <div class="feature-title">Hiệu suất cao</div>
-          <div class="feature-desc">Trải nghiệm nhanh chóng</div>
-        </div>
-        <div class="feature-item">
-          <div class="feature-icon">🔒</div>
-          <div class="feature-title">Bảo mật</div>
-          <div class="feature-desc">Dữ liệu được bảo vệ</div>
-        </div>
-        <div class="feature-item">
-          <div class="feature-icon">🎨</div>
-          <div class="feature-title">Thiết kế đẹp</div>
-          <div class="feature-desc">Giao diện hiện đại</div>
-        </div>
-        <div class="feature-item">
-          <div class="feature-icon">📱</div>
-          <div class="feature-title">Đa nền tảng</div>
-          <div class="feature-desc">Mọi thiết bị</div>
-        </div>
       </div>
 
       <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 12px; padding: 24px; margin: 32px 0; border-left: 4px solid #f59e0b;">
@@ -402,13 +445,6 @@
     </div>
 
     <div class="footer">
-      <div class="social-links">
-        <a href="#" class="social-link">📘</a>
-        <a href="#" class="social-link">🐦</a>
-        <a href="#" class="social-link">📷</a>
-        <a href="#" class="social-link">💼</a>
-      </div>
-
       <div class="footer-text">
         <p>&copy; <%= new Date().getFullYear() %> CodeCraft Platform. Tất cả quyền được bảo lưu.</p>
         <p style="margin-top: 8px;">
