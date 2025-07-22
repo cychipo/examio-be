@@ -34,5 +34,5 @@ export class LoginResponse {
         description: 'Sanitized user object',
         type: Object,
     })
-    user: Omit<User, 'password'>;
+    user: Omit<User, 'password' | 'isAdmin'>;
 }
