@@ -346,7 +346,63 @@ export class AuthService {
 
         return {
             token,
-            user: existingUser,
+            user: sanitizeUser(existingUser),
+        };
+    }
+
+    async facebookLogin(user: any) {
+        const { email, picture, username } = user;
+
+        let existingUser = await this.prisma.user.findUnique({
+            where: { email },
+        });
+
+        if (!existingUser) {
+            existingUser = await this.prisma.user.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    email,
+                    username: username || email.split('@')[0],
+                    avatar: picture,
+                    isVerified: true,
+                    password: null,
+                },
+            });
+        }
+
+        const token = this.jwtService.sign({ userId: existingUser.id });
+
+        return {
+            token,
+            user: sanitizeUser(existingUser),
+        };
+    }
+
+    async githubLogin(user: any) {
+        const { email, avatar, username } = user;
+
+        let existingUser = await this.prisma.user.findUnique({
+            where: { email },
+        });
+
+        if (!existingUser) {
+            existingUser = await this.prisma.user.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    email,
+                    username: username || email.split('@')[0],
+                    avatar,
+                    isVerified: true,
+                    password: null,
+                },
+            });
+        }
+
+        const token = this.jwtService.sign({ userId: existingUser.id });
+
+        return {
+            token,
+            user: sanitizeUser(existingUser),
         };
     }
 }

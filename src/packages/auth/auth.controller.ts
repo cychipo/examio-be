@@ -6,6 +6,7 @@ import {
     Req,
     Get,
     Response,
+    Res,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -18,8 +19,15 @@ import {
     ApiBearerAuth,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/common/guard/auth.guard';
-import { AuthenticatedRequest } from './dto/request-with-auth.dto';
+import {
+    AuthenticatedRequest,
+    AuthenticatedOauthRequest,
+} from './dto/request-with-auth.dto';
 import { GoogleAuthGuard } from 'src/common/guard/google-auth.guard';
+import { Response as ExpressResponse } from 'express';
+import { FacebookAuthGuard } from '../../common/guard/facebook-auth.guard';
+import { GithubAuthGuard } from 'src/common/guard/github-auth.guard';
+
 @ApiTags('Auth')
 @ApiExtraModels(RegisterDto, LoginDto)
 @Controller('auth')
@@ -109,7 +117,86 @@ export class AuthController {
     @Get('google/callback')
     @UseGuards(GoogleAuthGuard)
     @ApiOperation({ summary: 'Google OAuth callback' })
-    async googleAuthRedirect(@Req() req: AuthenticatedRequest) {
-        return req.user;
+    async googleAuthRedirect(
+        @Req() req: AuthenticatedOauthRequest,
+        @Res({ passthrough: true }) res: ExpressResponse
+    ) {
+        const { token, user } = req.user;
+
+        console.log('Google login callback:', { token, user });
+
+        const html = `
+        <html lang="en">
+            <body>
+                <script>
+                console.log('Google login successful:', ${JSON.stringify({ token, user })});
+                    window.opener.postMessage({
+                        token: ${JSON.stringify(token)},
+                        user: ${JSON.stringify(user)}
+                    }, "*");
+                    window.close();
+                </script>
+            </body>
+        </html>
+    `;
+
+        res.send(html);
+    }
+
+    @Get('facebook')
+    @UseGuards(FacebookAuthGuard)
+    async facebookLogin() {
+        // Redirects to Facebook
+    }
+
+    @Get('facebook/callback')
+    @UseGuards(FacebookAuthGuard)
+    async facebookCallback(
+        @Req() req: AuthenticatedOauthRequest,
+        @Res({ passthrough: true }) res: ExpressResponse
+    ) {
+        const { token, user } = req.user;
+
+        const html = `
+        <html lang="en">
+            <body>
+                <script>
+                    window.opener.postMessage({
+                        token: ${JSON.stringify(token)},
+                        user: ${JSON.stringify(user)}
+                    }, "*");
+                    window.close();
+                </script>
+            </body>
+        </html>
+    `;
+        res.send(html);
+    }
+
+    @Get('github')
+    @UseGuards(GithubAuthGuard)
+    async githubLogin() {
+        // Passport sẽ redirect tới GitHub
+    }
+
+    @Get('github/callback')
+    @UseGuards(GithubAuthGuard)
+    async githubLoginCallback(
+        @Req() req: AuthenticatedOauthRequest,
+        @Res({ passthrough: true }) res: ExpressResponse
+    ) {
+        const { token, user } = req.user;
+
+        const html = `
+    <html lang="en">
+        <body>
+            <script>
+                window.opener.postMessage(${JSON.stringify({ token, user })}, "*");
+                window.close();
+            </script>
+        </body>
+    </html>
+    `;
+        res.send(html);
     }
 }

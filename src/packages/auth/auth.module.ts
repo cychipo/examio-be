@@ -9,6 +9,8 @@ import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { PassportModule } from '@nestjs/passport';
 import { GoogleStrategy } from './strategies/google.strategy';
+import { FacebookStrategy } from './strategies/facebook.strategy';
+import { GithubStrategy } from './strategies/github.strategy';
 
 @Module({
     imports: [
@@ -23,6 +25,8 @@ import { GoogleStrategy } from './strategies/google.strategy';
         PasswordService,
         GenerateIdService,
         GoogleStrategy,
+        FacebookStrategy,
+        GithubStrategy,
         AuthService,
         MailService,
         AuthGuard,
