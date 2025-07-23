@@ -211,8 +211,8 @@ export class AuthService {
 
     async sendCodeToResetPassword(email: string) {
         try {
-            const user = await this.prisma.user.findUnique({
-                where: { email: email.toLowerCase() },
+            const user = await this.prisma.user.findFirst({
+                where: { email: email },
             });
 
             if (!user) {
@@ -221,14 +221,30 @@ export class AuthService {
 
             const code = generateCode(6);
 
-            await this.prisma.resetPasswordCode.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    userId: user.id,
-                    code,
-                    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-                },
-            });
+            const existingCode = await this.prisma.resetPasswordCode.findUnique(
+                {
+                    where: { userId: user.id },
+                }
+            );
+
+            if (existingCode) {
+                await this.prisma.resetPasswordCode.update({
+                    where: { userId: user.id },
+                    data: {
+                        code,
+                        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+                    },
+                });
+            } else {
+                await this.prisma.resetPasswordCode.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: user.id,
+                        code,
+                        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                    },
+                });
+            }
 
             // Send reset password email
             await this.mailService.sendMail(
@@ -243,6 +259,7 @@ export class AuthService {
 
             return { message: 'Email đặt lại mật khẩu đã được gửi' };
         } catch (error) {
+            console.log(error);
             throw new InternalServerErrorException(
                 'Gửi email đặt lại mật khẩu không thành công'
             );
