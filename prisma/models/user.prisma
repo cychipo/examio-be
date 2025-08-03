@@ -16,6 +16,14 @@ model User {
   resetPasswordCode ResetPasswordCode?
 }
 
+model TempSocialUser {
+  id String @unique
+  username String @unique
+  avatar String?
+  provider String
+  createdAt DateTime @default(now())
+}
+
 model VerifyAccountCode {
   id String @unique
   userId String @unique

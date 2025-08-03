@@ -123,8 +123,6 @@ export class AuthController {
     ) {
         const { token, user } = req.user;
 
-        console.log('Google login callback:', { token, user });
-
         const html = `
         <html lang="en">
             <body>
@@ -145,12 +143,14 @@ export class AuthController {
 
     @Get('facebook')
     @UseGuards(FacebookAuthGuard)
+    @ApiOperation({ summary: 'Đăng nhập Facebook OAuth' })
     async facebookLogin() {
         // Redirects to Facebook
     }
 
     @Get('facebook/callback')
     @UseGuards(FacebookAuthGuard)
+    @ApiOperation({ summary: 'Facebook OAuth callback' })
     async facebookCallback(
         @Req() req: AuthenticatedOauthRequest,
         @Res({ passthrough: true }) res: ExpressResponse
@@ -175,12 +175,14 @@ export class AuthController {
 
     @Get('github')
     @UseGuards(GithubAuthGuard)
+    @ApiOperation({ summary: 'Đăng nhập GitHub OAuth' })
     async githubLogin() {
         // Passport sẽ redirect tới GitHub
     }
 
     @Get('github/callback')
     @UseGuards(GithubAuthGuard)
+    @ApiOperation({ summary: 'GitHub OAuth callback' })
     async githubLoginCallback(
         @Req() req: AuthenticatedOauthRequest,
         @Res({ passthrough: true }) res: ExpressResponse

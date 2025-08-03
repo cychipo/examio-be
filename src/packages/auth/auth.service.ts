@@ -28,11 +28,9 @@ export class AuthService {
 
     async login(loginDto: LoginDto) {
         const { credential, password } = loginDto;
-
         if (!credential || !password) {
             throw new BadRequestException('Thông tin đăng nhập không hợp lệ');
         }
-
         try {
             // Validate user credentials
             const user = await this.prisma.user.findFirst({
@@ -40,11 +38,9 @@ export class AuthService {
                     OR: [{ email: credential }, { username: credential }],
                 },
             });
-
             if (!user) {
                 throw new NotFoundException('Không tìm thấy người dùng');
             }
-
             // Check password (assuming bcrypt is used for hashing)
             const isPasswordValid = await this.passwordService.comparePasswords(
                 password,
@@ -55,7 +51,6 @@ export class AuthService {
                     'Thông tin đăng nhập không hợp lệ'
                 );
             }
-
             // Generate JWT token
             const token = this.jwtService.sign({ userId: user.id });
 
@@ -352,6 +347,12 @@ export class AuthService {
 
     async facebookLogin(user: any) {
         const { email, picture, username } = user;
+
+        if (!email) {
+            throw new BadRequestException(
+                'Tài khoản của bạn cần được liên kết với email để có thể hoàn tất đăng nhập.'
+            );
+        }
 
         let existingUser = await this.prisma.user.findUnique({
             where: { email },
