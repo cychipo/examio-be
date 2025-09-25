@@ -1,7 +1,7 @@
 import { DocumentBuilder } from '@nestjs/swagger';
 
 export const swaggerConfig = new DocumentBuilder()
-    .setTitle('CODE CRAFT API')
+    .setTitle('EXAMIO API')
     .setDescription('API documentation')
     .setVersion('v0.0.1')
     .addBearerAuth(
