@@ -28,11 +28,9 @@ export class AuthService {
 
     async login(loginDto: LoginDto) {
         const { credential, password } = loginDto;
-
         if (!credential || !password) {
             throw new BadRequestException('Thông tin đăng nhập không hợp lệ');
         }
-
         try {
             // Validate user credentials
             const user = await this.prisma.user.findFirst({
@@ -40,11 +38,9 @@ export class AuthService {
                     OR: [{ email: credential }, { username: credential }],
                 },
             });
-
             if (!user) {
                 throw new NotFoundException('Không tìm thấy người dùng');
             }
-
             // Check password (assuming bcrypt is used for hashing)
             const isPasswordValid = await this.passwordService.comparePasswords(
                 password,
@@ -55,7 +51,6 @@ export class AuthService {
                     'Thông tin đăng nhập không hợp lệ'
                 );
             }
-
             // Generate JWT token
             const token = this.jwtService.sign({ userId: user.id });
 
@@ -211,8 +206,8 @@ export class AuthService {
 
     async sendCodeToResetPassword(email: string) {
         try {
-            const user = await this.prisma.user.findUnique({
-                where: { email: email.toLowerCase() },
+            const user = await this.prisma.user.findFirst({
+                where: { email: email },
             });
 
             if (!user) {
@@ -221,14 +216,30 @@ export class AuthService {
 
             const code = generateCode(6);
 
-            await this.prisma.resetPasswordCode.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    userId: user.id,
-                    code,
-                    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-                },
-            });
+            const existingCode = await this.prisma.resetPasswordCode.findUnique(
+                {
+                    where: { userId: user.id },
+                }
+            );
+
+            if (existingCode) {
+                await this.prisma.resetPasswordCode.update({
+                    where: { userId: user.id },
+                    data: {
+                        code,
+                        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+                    },
+                });
+            } else {
+                await this.prisma.resetPasswordCode.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: user.id,
+                        code,
+                        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                    },
+                });
+            }
 
             // Send reset password email
             await this.mailService.sendMail(
@@ -243,6 +254,7 @@ export class AuthService {
 
             return { message: 'Email đặt lại mật khẩu đã được gửi' };
         } catch (error) {
+            console.log(error);
             throw new InternalServerErrorException(
                 'Gửi email đặt lại mật khẩu không thành công'
             );
@@ -329,7 +341,69 @@ export class AuthService {
 
         return {
             token,
-            user: existingUser,
+            user: sanitizeUser(existingUser),
+        };
+    }
+
+    async facebookLogin(user: any) {
+        const { email, picture, username } = user;
+
+        if (!email) {
+            throw new BadRequestException(
+                'Tài khoản của bạn cần được liên kết với email để có thể hoàn tất đăng nhập.'
+            );
+        }
+
+        let existingUser = await this.prisma.user.findUnique({
+            where: { email },
+        });
+
+        if (!existingUser) {
+            existingUser = await this.prisma.user.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    email,
+                    username: username || email.split('@')[0],
+                    avatar: picture,
+                    isVerified: true,
+                    password: null,
+                },
+            });
+        }
+
+        const token = this.jwtService.sign({ userId: existingUser.id });
+
+        return {
+            token,
+            user: sanitizeUser(existingUser),
+        };
+    }
+
+    async githubLogin(user: any) {
+        const { email, avatar, username } = user;
+
+        let existingUser = await this.prisma.user.findUnique({
+            where: { email },
+        });
+
+        if (!existingUser) {
+            existingUser = await this.prisma.user.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    email,
+                    username: username || email.split('@')[0],
+                    avatar,
+                    isVerified: true,
+                    password: null,
+                },
+            });
+        }
+
+        const token = this.jwtService.sign({ userId: existingUser.id });
+
+        return {
+            token,
+            user: sanitizeUser(existingUser),
         };
     }
 }

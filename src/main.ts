@@ -7,7 +7,7 @@ import { SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
     app.enableCors({
-        origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+        origin:[ process.env.CORS_ORIGIN || 'http://localhost:3000', 'http://localhost:5173' ],
         methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
         credentials: true,
     });
