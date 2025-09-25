@@ -10,11 +10,14 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { PDFDocument } from 'pdf-lib';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { PROMPT_CONSTANT } from 'src/constants/prompt';
+import { R2Service } from '../r2/r2.service';
+import { User } from '@prisma/client';
 
 @Injectable()
 export class AIService {
     private apiKeys: string[];
     private currentKeyIndex: number = 0;
+    private r2Service: R2Service;
     private readonly modalName =
         process.env.GEMINI_MODAL_NAME || 'gemini-2.0-flash';
     private ai: GoogleGenAI;
@@ -26,6 +29,7 @@ export class AIService {
     constructor() {
         this.prisma = new PrismaService();
         this.generateIdService = new GenerateIdService();
+        this.r2Service = new R2Service();
         this.apiKeys =
             process.env.GEMINI_API_KEYS?.split(',').map((key) => key.trim()) ||
             [];
@@ -145,14 +149,14 @@ export class AIService {
         return response.text;
     }
 
-    async uploadFile(fileBuffer: Blob) {
+    private async uploadFile(fileBuffer: Blob) {
         const response = await this.ensureClient().files.upload({
             file: fileBuffer,
         });
         return response;
     }
 
-    async deleteFile(fileName: string) {
+    private async deleteFile(fileName: string) {
         await this.ensureClient().files.delete({
             name: fileName,
         });
@@ -180,7 +184,7 @@ export class AIService {
         return chunks;
     }
 
-    async embedTextFromFile(file: any) {
+    async embedTextFromFile(file: any, user: User) {
         const supportedMimeTypes = ['application/pdf'];
         if (!supportedMimeTypes.includes(file.mimetype)) {
             throw new BadRequestException('Chỉ hỗ trợ tệp PDF');
@@ -188,6 +192,34 @@ export class AIService {
         if (file.size > 10 * 1024 * 1024) {
             throw new BadRequestException('Giới hạn kích thước tệp là 10MB');
         }
+
+        const r2Key = this.generateIdService.generateId();
+        const r2File = await this.r2Service.uploadFile(
+            r2Key,
+            file.buffer,
+            file.mimetype
+        );
+
+        if (!r2File) {
+            throw new InternalServerErrorException(
+                'Không upload được file lên R2'
+            );
+        }
+
+        console.log('Type R2File', typeof r2File);
+        console.log('✅ Upload file lên R2 thành công:', r2File);
+
+        const userStorage = await this.prisma.userStorage.create({
+            data: {
+                id: this.generateIdService.generateId(),
+                userId: user.id,
+                filename: file.originalname,
+                mimetype: file.mimetype,
+                size: file.size,
+                keyR2: r2Key,
+                url: r2File,
+            },
+        });
 
         const chunkSize = 5;
         const pdfChunks = await this.splitPdfToChunks(file.buffer, chunkSize);
@@ -327,11 +359,7 @@ export class AIService {
         });
 
         const allPages = parsedResults.flatMap((chunk) => chunk.data ?? []);
-
-        await this.saveJsonToDb('default', allPages[0]);
-
-        console.log('Type of allPages:', typeof allPages);
-
+        await this.saveJsonToDb(userStorage.id, allPages[0]);
         return JSON.stringify({ data: allPages }, null, 2);
     }
 

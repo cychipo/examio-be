@@ -4,6 +4,8 @@ import {
     Body,
     UseInterceptors,
     UploadedFile,
+    UseGuards,
+    Req,
 } from '@nestjs/common';
 import { AIService } from './ai.service';
 import {
@@ -18,6 +20,8 @@ import {
 import { GenerateDto } from './dto/generate.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiFile } from 'src/common/decorators/file-upload.decorator';
+import { AuthGuard } from 'src/common/guard/auth.guard';
+import { AuthenticatedRequest } from '../auth/dto/request-with-auth.dto';
 
 @ApiTags('AI')
 @ApiExtraModels()
@@ -37,6 +41,8 @@ export class AIController {
     }
 
     @Post('embedde-file')
+    @UseGuards(AuthGuard)
+    @ApiBearerAuth('JWT')
     @UseInterceptors(FileInterceptor('file'))
     @ApiOperation({ summary: 'Extract and embed text from an uploaded file' })
     @ApiResponse({
@@ -45,7 +51,10 @@ export class AIController {
         type: String,
     })
     @ApiFile('file')
-    async filePrompt(@UploadedFile() file: Express.Multer.File) {
-        return this.aiService.embedTextFromFile(file);
+    async filePrompt(
+        @UploadedFile() file: Express.Multer.File,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.aiService.embedTextFromFile(file, req.user);
     }
 }
