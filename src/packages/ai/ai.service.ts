@@ -9,12 +9,17 @@ import { GoogleGenAI } from '@google/genai';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PDFDocument } from 'pdf-lib';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
-import { PROMPT_CONSTANT } from 'src/constants/prompt';
+import { PromptUtils } from 'src/utils/prompt';
+import { R2Service } from '../r2/r2.service';
+import { User } from '@prisma/client';
+import { TYPE_RESULT } from './constant/type-result';
+import { PdfService } from 'src/common/services/pdf.service';
 
 @Injectable()
 export class AIService {
     private apiKeys: string[];
     private currentKeyIndex: number = 0;
+    private r2Service: R2Service;
     private readonly modalName =
         process.env.GEMINI_MODAL_NAME || 'gemini-2.0-flash';
     private ai: GoogleGenAI;
@@ -22,14 +27,128 @@ export class AIService {
     private failedKeys: Set<string> = new Set();
     private keyResetTime: number = Date.now() + 60000;
     private generateIdService: GenerateIdService = new GenerateIdService();
-    private promptExtractPdf: string;
+    private readonly pdfService: PdfService;
+
+    // --- VECTOR SEARCH CONFIG ---
+    public static readonly VECTOR_SEARCH_CONFIG = {
+        TOP_K: 15,
+        SIMILARITY_THRESHOLD: 0.7,
+        MAX_KEYWORDS: 10,
+        EMBEDDING_MODEL: 'gemini-embedding-001',
+    };
+
+    /**
+     * Helper: Create embedding vector for multiple keywords (comma-separated)
+     * - Cleans, normalizes, and combines keywords
+     * - Uses retryWithBackoff for reliability
+     * - Returns embedding vector as number[]
+     */
+    private async createKeywordEmbedding(keywords: string): Promise<number[]> {
+        if (!keywords || typeof keywords !== 'string') {
+            throw new BadRequestException(
+                'Từ khóa không hợp lệ. Vui lòng sử dụng định dạng: keyword1, keyword2'
+            );
+        }
+        // Split, clean, and validate
+        let keywordList = keywords
+            .split(',')
+            .map((k) => k.trim())
+            .filter((k) => k.length > 0);
+        if (keywordList.length === 0) {
+            throw new BadRequestException(
+                'Từ khóa không hợp lệ. Vui lòng sử dụng định dạng: keyword1, keyword2'
+            );
+        }
+        if (keywordList.length > AIService.VECTOR_SEARCH_CONFIG.MAX_KEYWORDS) {
+            throw new BadRequestException(
+                `Quá nhiều từ khóa. Tối đa ${AIService.VECTOR_SEARCH_CONFIG.MAX_KEYWORDS} từ khóa`
+            );
+        }
+        // Combine into single string for embedding
+        const combined = keywordList.join(' ');
+        try {
+            const embeddingResponse = await this.retryWithBackoff(() =>
+                this.ensureClient().models.embedContent({
+                    model: AIService.VECTOR_SEARCH_CONFIG.EMBEDDING_MODEL,
+                    contents: combined,
+                })
+            );
+            const vector =
+                embeddingResponse.embeddings &&
+                Array.isArray(embeddingResponse.embeddings)
+                    ? embeddingResponse.embeddings.map((e) => e.values).flat()
+                    : [];
+            if (!vector.length) {
+                throw new Error('Empty embedding vector');
+            }
+            if (vector.length === 0) {
+                throw new Error('Empty embedding vector');
+            }
+            return vector.filter((v): v is number => typeof v === 'number');
+        } catch (err) {
+            console.error('❌ Error creating keyword embedding:', err);
+            throw new InternalServerErrorException(
+                'Không tạo được embedding cho từ khóa'
+            );
+        }
+    }
+
+    /**
+     * Helper: Find similar document chunks using vector search (pgvector)
+     * - Uses raw SQL with cosine similarity
+     * - Filters by similarity threshold, orders by similarity, limits to topK
+     * - Returns filtered document chunks
+     */
+    private async findSimilarDocuments(
+        userStorageId: string,
+        keywordEmbedding: number[],
+        topK?: number,
+        similarityThreshold?: number
+    ): Promise<any[]> {
+        if (!Array.isArray(keywordEmbedding) || !keywordEmbedding.length) {
+            throw new BadRequestException('Embedding vector không hợp lệ');
+        }
+        // Set defaults if not provided
+        const finalTopK =
+            typeof topK === 'number'
+                ? topK
+                : AIService.VECTOR_SEARCH_CONFIG.TOP_K;
+        const finalThreshold =
+            typeof similarityThreshold === 'number'
+                ? similarityThreshold
+                : AIService.VECTOR_SEARCH_CONFIG.SIMILARITY_THRESHOLD;
+        try {
+            // Use $1: embedding, $2: userStorageId, $3: threshold, $4: topK
+            const result = await this.prisma.$queryRawUnsafe(
+                `SELECT id, "userStorageId", "pageRange", title, content, "createdAt", "updatedAt",
+                    1 - (embeddings <=> $1::vector) as similarity_score
+                 FROM "Document"
+                 WHERE "userStorageId" = $2
+                   AND 1 - (embeddings <=> $1::vector) > $3
+                 ORDER BY embeddings <=> $1::vector ASC
+                 LIMIT $4;`,
+                `[${keywordEmbedding.join(',')}]`,
+                userStorageId,
+                finalThreshold,
+                finalTopK
+            );
+            return Array.isArray(result) ? result : [];
+        } catch (err) {
+            console.error('❌ Error in findSimilarDocuments:', err);
+            throw new InternalServerErrorException(
+                'Không thể thực hiện truy vấn vector search'
+            );
+        }
+    }
+
     constructor() {
         this.prisma = new PrismaService();
         this.generateIdService = new GenerateIdService();
+        this.r2Service = new R2Service();
         this.apiKeys =
             process.env.GEMINI_API_KEYS?.split(',').map((key) => key.trim()) ||
             [];
-        this.promptExtractPdf = PROMPT_CONSTANT.EXTRACT_TEXT_FROM_PDF;
+        this.pdfService = new PdfService();
     }
 
     private getNextApiKey(): string {
@@ -90,9 +209,10 @@ export class AIService {
     private async retryWithBackoff<T>(
         fn: () => Promise<T>,
         maxRetries: number = 5,
-        initialDelay: number = 2000
+        initialDelay: number = 1000
     ): Promise<T> {
         let lastError: any;
+        const jitter = () => Math.floor(Math.random() * 300);
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
@@ -100,37 +220,58 @@ export class AIService {
             } catch (error: any) {
                 lastError = error;
 
-                if (error.status === 429) {
-                    console.log(
-                        `⚠️ Rate limit hit ở attempt ${attempt}/${maxRetries}`
-                    );
+                const status =
+                    error?.status ?? error?.error?.code ?? error?.error?.status;
+                const is429 = status === 429 || status === 'TOO_MANY_REQUESTS';
+                const is503 =
+                    status === 503 ||
+                    (typeof status === 'string' &&
+                        status.toUpperCase().includes('UNAVAILABLE')) ||
+                    error?.message?.includes('UNAVAILABLE') ||
+                    error?.message?.includes('Service Unavailable');
 
-                    const currentClient = this.ai;
-                    if (currentClient) {
+                // 429 -> mark key failed and rotate to next key
+                if (is429) {
+                    try {
                         const currentKey =
                             this.apiKeys[Math.max(0, this.currentKeyIndex - 1)];
-                        this.markKeyAsFailed(currentKey);
-                    }
-
-                    try {
-                        this.ai = this.createClient();
-                        console.log(`🔄 Đã chuyển sang API key mới`);
-                    } catch (keyError) {
-                        throw new InternalServerErrorException(
-                            'Tất cả API keys đều đã hết quota. Vui lòng thử lại sau ít phút.'
+                        if (currentKey) this.markKeyAsFailed(currentKey);
+                    } catch (e) {
+                        console.warn(
+                            'Không lấy được currentKey để mark failed',
+                            e
                         );
                     }
 
-                    const delayTime = initialDelay * Math.pow(1.5, attempt - 1);
-                    console.log(`⏱️ Retry sau ${delayTime}ms với key mới`);
+                    // try to create new client (may throw if no keys left)
+                    try {
+                        this.ai = this.createClient();
+                    } catch (e) {
+                        throw new InternalServerErrorException(
+                            'Tất cả API keys đều đã hết quota.'
+                        );
+                    }
 
+                    const delayTime =
+                        initialDelay * Math.pow(1.5, attempt - 1) + jitter();
                     if (attempt < maxRetries) {
                         await this.delay(delayTime);
                         continue;
                     }
-                } else {
-                    throw error;
                 }
+
+                // 503 / UNAVAILABLE -> transient, retry with backoff but DO NOT mark key as failed
+                if (is503) {
+                    const delayTime =
+                        initialDelay * Math.pow(1.6, attempt - 1) + jitter();
+                    if (attempt < maxRetries) {
+                        await this.delay(delayTime);
+                        continue;
+                    }
+                }
+
+                // non-retryable
+                throw error;
             }
         }
 
@@ -145,211 +286,280 @@ export class AIService {
         return response.text;
     }
 
-    async uploadFile(fileBuffer: Blob) {
-        const response = await this.ensureClient().files.upload({
-            file: fileBuffer,
-        });
-        return response;
-    }
-
-    async deleteFile(fileName: string) {
-        await this.ensureClient().files.delete({
-            name: fileName,
-        });
-    }
-
     private async splitPdfToChunks(
         buffer: Buffer,
         chunkSize: number
     ): Promise<Buffer[]> {
-        const pdfDoc = await PDFDocument.load(buffer);
-        const totalPages = pdfDoc.getPageCount();
-        const chunks: Buffer[] = [];
+        try {
+            console.log('🔧 Starting PDF splitting...');
 
-        for (let i = 0; i < totalPages; i += chunkSize) {
-            const newPdf = await PDFDocument.create();
-            const end = Math.min(i + chunkSize, totalPages);
-            const pages = await newPdf.copyPages(
-                pdfDoc,
-                Array.from({ length: end - i }, (_, idx) => i + idx)
+            if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+                throw new Error('Invalid buffer provided');
+            }
+
+            const pdfDoc = await PDFDocument.load(buffer);
+            const totalPages = pdfDoc.getPageCount();
+
+            if (totalPages === 0) {
+                throw new Error('PDF has no pages');
+            }
+
+            const chunks: Buffer[] = [];
+
+            for (let i = 0; i < totalPages; i += chunkSize) {
+                const end = Math.min(i + chunkSize, totalPages);
+
+                try {
+                    const newPdf = await PDFDocument.create();
+                    const pages = await newPdf.copyPages(
+                        pdfDoc,
+                        Array.from({ length: end - i }, (_, idx) => i + idx)
+                    );
+                    pages.forEach((page) => newPdf.addPage(page));
+                    const pdfBytes = await newPdf.save();
+                    const chunkBuffer = Buffer.from(pdfBytes);
+
+                    if (chunkBuffer.length > 0) {
+                        chunks.push(chunkBuffer);
+                    }
+                } catch (chunkError) {
+                    console.error(
+                        `❌ Error creating chunk ${i + 1}-${end}:`,
+                        chunkError
+                    );
+                    continue;
+                }
+            }
+
+            if (chunks.length === 0) {
+                throw new Error('No valid chunks created');
+            }
+
+            console.log(`🎯 Successfully created ${chunks.length} chunks`);
+            return chunks;
+        } catch (error) {
+            console.error('❌ Error splitting PDF:', error);
+            throw new InternalServerErrorException(
+                `Failed to split PDF: ${error.message}`
             );
-            pages.forEach((page) => newPdf.addPage(page));
-            const pdfBytes = await newPdf.save();
-            chunks.push(Buffer.from(pdfBytes));
         }
-        return chunks;
     }
 
-    async embedTextFromFile(file: any) {
+    async handleActionsWithFile(
+        file: any,
+        user: User,
+        typeResult: number,
+        quantityFlashcard?: number,
+        quantityQuizz?: number,
+        isNarrowSearch: boolean = false,
+        keyword?: string
+    ) {
+        // Validate keyword for narrow search
+        if (isNarrowSearch === true) {
+            if (!keyword || keyword.trim().length === 0) {
+                throw new BadRequestException(
+                    'Khi isNarrowSearch là true, keyword không được để trống'
+                );
+            }
+            // Validate multiple keywords (max, format)
+            const keywordList = keyword
+                .split(',')
+                .map((k) => k.trim())
+                .filter((k) => k.length > 0);
+            if (keywordList.length === 0) {
+                throw new BadRequestException(
+                    'Từ khóa không hợp lệ. Vui lòng sử dụng định dạng: keyword1, keyword2'
+                );
+            }
+            if (
+                keywordList.length > AIService.VECTOR_SEARCH_CONFIG.MAX_KEYWORDS
+            ) {
+                throw new BadRequestException(
+                    `Quá nhiều từ khóa. Tối đa ${AIService.VECTOR_SEARCH_CONFIG.MAX_KEYWORDS} từ khóa`
+                );
+            }
+        }
+        try {
+            console.log('🚀 Starting handleActionsWithFile...');
+            this.validatePdfFile(file);
+            const userStorage = await this.uploadAndCreateUserStorage(
+                file,
+                user
+            );
+
+            await this.extractAndSavePdfChunks(file, userStorage.id);
+
+            if (Number(typeResult) === TYPE_RESULT.QUIZZ) {
+                const quiz = await this.generateQuizChunkBased(
+                    userStorage.id,
+                    quantityQuizz || 40,
+                    isNarrowSearch,
+                    keyword
+                );
+                return JSON.stringify(quiz, null, 2);
+            } else if (Number(typeResult) === TYPE_RESULT.FLASHCARD) {
+                const flashcards = await this.generateFlashcardsChunkBased(
+                    userStorage.id,
+                    quantityFlashcard || 40,
+                    isNarrowSearch,
+                    keyword
+                );
+                return JSON.stringify(flashcards, null, 2);
+            } else {
+                throw new BadRequestException(
+                    `Invalid typeResult: ${typeResult}`
+                );
+            }
+        } catch (error) {
+            console.error('❌ Error in handleActionsWithFile:', error);
+            throw error;
+        }
+    }
+
+    private validatePdfFile(file: any) {
+        if (!file) {
+            throw new BadRequestException('No file provided');
+        }
+
         const supportedMimeTypes = ['application/pdf'];
-        if (!supportedMimeTypes.includes(file.mimetype)) {
+        if (!file.mimetype || !supportedMimeTypes.includes(file.mimetype)) {
             throw new BadRequestException('Chỉ hỗ trợ tệp PDF');
         }
+
+        if (!file.buffer || file.buffer.length === 0) {
+            throw new BadRequestException('File buffer không hợp lệ');
+        }
+
         if (file.size > 10 * 1024 * 1024) {
             throw new BadRequestException('Giới hạn kích thước tệp là 10MB');
         }
 
-        const chunkSize = 5;
-        const pdfChunks = await this.splitPdfToChunks(file.buffer, chunkSize);
-        console.log(
-            `📄 Chia PDF thành ${pdfChunks.length} chunks (${chunkSize} trang/chunk)`
+        try {
+            const pdfSignature = file.buffer.slice(0, 4).toString();
+            if (pdfSignature !== '%PDF') {
+                throw new BadRequestException('File không phải PDF hợp lệ');
+            }
+        } catch (error) {
+            throw new BadRequestException('Cannot validate PDF format');
+        }
+    }
+
+    private async uploadAndCreateUserStorage(file: any, user: User) {
+        const r2Key = this.generateIdService.generateId();
+        const r2File = await this.r2Service.uploadFile(
+            r2Key,
+            file.buffer,
+            file.mimetype
         );
+        if (!r2File) {
+            throw new InternalServerErrorException(
+                'Không upload được file lên R2'
+            );
+        }
+        return await this.prisma.userStorage.create({
+            data: {
+                id: this.generateIdService.generateId(),
+                userId: user.id,
+                filename: file.originalname,
+                mimetype: file.mimetype,
+                size: file.size,
+                keyR2: r2Key,
+                url: r2File,
+            },
+        });
+    }
 
-        const results: string[] = [];
+    private async extractAndSavePdfChunks(file: any, userStorageId: string) {
+        try {
+            console.log('📄 Starting PDF extraction process...');
 
-        for (let i = 0; i < pdfChunks.length; i++) {
-            const chunkBuffer = pdfChunks[i];
-            console.log(`🔄 Đang xử lý chunk ${i + 1}/${pdfChunks.length}...`);
+            const chunkSize = 10;
+            const pdfChunks = await this.splitPdfToChunks(
+                file.buffer,
+                chunkSize
+            );
 
-            let uploadedFile: any = null;
+            let successCount = 0;
+            let errorCount = 0;
 
-            try {
-                const uint8Array = new Uint8Array(chunkBuffer);
-                uploadedFile = await this.uploadFile(
-                    new Blob([uint8Array], { type: file.mimetype })
-                );
+            for (let i = 0; i < pdfChunks.length; i++) {
+                try {
+                    // OCR chunk
+                    const ocrText = await this.pdfService.ocrPdf(pdfChunks[i]);
 
-                const result = await this.retryWithBackoff(async () => {
-                    const stream =
-                        await this.ensureClient().models.generateContentStream({
-                            model: this.modalName,
-                            contents: {
-                                role: 'user',
-                                parts: [
-                                    {
-                                        text: this.promptExtractPdf,
-                                    },
-                                    {
-                                        fileData: {
-                                            mimeType: file.mimetype,
-                                            fileUri: uploadedFile.uri,
-                                        },
-                                    },
-                                ],
-                            },
-                            config: {
-                                responseMimeType: 'application/json',
-                                responseSchema: {
-                                    type: 'object',
-                                    properties: {
-                                        data: {
-                                            type: 'array',
-                                            items: {
-                                                type: 'object',
-                                                properties: {
-                                                    pageNumber: {
-                                                        type: 'number',
-                                                    },
-                                                    title: { type: 'string' },
-                                                    content: { type: 'string' },
-                                                },
-                                                required: [
-                                                    'pageNumber',
-                                                    'title',
-                                                    'content',
-                                                ],
-                                            },
-                                        },
-                                    },
-                                    required: ['data'],
-                                },
-                                candidateCount: 1,
-                                maxOutputTokens: parseInt(
-                                    process.env.GEMINI_MAX_TOKENS || '2000000'
-                                ),
-                                temperature: 0.2,
-                            },
+                    if (!ocrText || ocrText.trim().length === 0) {
+                        console.warn(`⚠️ Empty OCR result for chunk ${i + 1}`);
+                        errorCount++;
+                        continue;
+                    }
+
+                    // Save to database
+                    try {
+                        await this.saveJsonToDb(userStorageId, {
+                            pageRange: `${i + 1}`,
+                            title: `Chunk ${i + 1}`,
+                            content: ocrText,
                         });
-
-                    let fullText = '';
-                    for await (const chunk of stream) {
-                        const chunkText = chunk.text;
-                        if (chunkText) {
-                            fullText += chunkText;
+                        successCount++;
+                    } catch (saveError) {
+                        console.error(
+                            `❌ Failed to save chunk ${i + 1}, retrying once...`
+                        );
+                        // Retry once với delay
+                        await this.delay(2000);
+                        try {
+                            await this.saveJsonToDb(userStorageId, {
+                                pageRange: `${i + 1}`,
+                                title: `Chunk ${i + 1}`,
+                                content: ocrText,
+                            });
+                            successCount++;
+                        } catch (retryError) {
+                            console.error(
+                                `❌ Final failure for chunk ${i + 1}:`,
+                                retryError
+                            );
+                            errorCount++;
                         }
                     }
-
-                    return fullText || '';
-                });
-
-                results.push(result);
-                console.log(`✅ Hoàn thành chunk ${i + 1}/${pdfChunks.length}`);
-
-                if (i < pdfChunks.length - 1) {
-                    console.log('⏱️ Delay 1s trước chunk tiếp theo...');
-                    await this.delay(1000);
-                }
-            } catch (error: any) {
-                console.error(`❌ Lỗi xử lý chunk ${i + 1}:`, error.message);
-
-                if (error.status === 429) {
-                    const availableKeys = this.apiKeys.filter(
-                        (key) => !this.failedKeys.has(key)
-                    );
-                    if (availableKeys.length === 0) {
-                        throw new InternalServerErrorException(
-                            `Tất cả ${this.apiKeys.length} API keys đều đã hết quota. Vui lòng thử lại sau ít phút hoặc thêm API keys mới.`
-                        );
-                    } else {
-                        throw new InternalServerErrorException(
-                            `API key hiện tại đã hết quota. Còn ${availableKeys.length}/${this.apiKeys.length} keys khả dụng. Vui lòng thử lại.`
-                        );
-                    }
-                } else {
-                    throw new InternalServerErrorException(
-                        `Lỗi khi xử lý chunk ${i + 1}: ${error.message}`
-                    );
-                }
-            } finally {
-                if (uploadedFile?.name) {
-                    try {
-                        await this.deleteFile(uploadedFile.name);
-                    } catch (cleanupError) {
-                        console.warn('⚠️ Lỗi khi cleanup file:', cleanupError);
-                    }
+                } catch (chunkError) {
+                    errorCount++;
+                    continue;
                 }
             }
-        }
 
-        const parsedResults = results.map((result, idx) => {
-            try {
-                return JSON.parse(result);
-            } catch (err) {
-                console.error(
-                    `❌ Lỗi parse JSON chunk ${idx + 1}:`,
-                    err,
-                    result
-                );
+            if (successCount === 0) {
                 throw new InternalServerErrorException(
-                    `Lỗi khi parse JSON chunk ${idx + 1}`
+                    'Không thể xử lý chunk nào thành công'
                 );
             }
-        });
-
-        const allPages = parsedResults.flatMap((chunk) => chunk.data ?? []);
-
-        await this.saveJsonToDb('default', allPages[0]);
-
-        console.log('Type of allPages:', typeof allPages);
-
-        return JSON.stringify({ data: allPages }, null, 2);
+        } catch (error) {
+            console.error('❌ Error in extractAndSavePdfChunks:', error);
+            throw new InternalServerErrorException(
+                `Failed to extract PDF: ${error.message}`
+            );
+        }
     }
 
     private async saveJsonToDb(
         userStorageId: string,
-        page: { pageNumber: number; title: string; content: string }
+        page: { pageRange: string; title: string; content: string }
     ) {
         try {
             const pageContent = page.content;
 
-            if (!pageContent.trim()) {
-                throw new Error('Content is empty, skip embedding');
+            if (!pageContent || !pageContent.trim()) {
+                console.warn('⚠️ Content is empty, skipping...');
+                return { success: false, reason: 'Empty content' };
             }
 
-            const embeddingResponse = await this.ai.models.embedContent({
-                model: 'gemini-embedding-001',
-                contents: pageContent,
-            });
+            // Create embedding với retry
+            const embeddingResponse = await this.retryWithBackoff(() =>
+                this.ensureClient().models.embedContent({
+                    model: 'gemini-embedding-001',
+                    contents: pageContent,
+                })
+            );
 
             const vector =
                 embeddingResponse.embeddings &&
@@ -357,14 +567,20 @@ export class AIService {
                     ? embeddingResponse.embeddings.map((e) => e.values).flat()
                     : [];
 
+            if (vector.length === 0) {
+                console.warn('⚠️ Empty embedding vector received');
+                throw new Error('Empty embedding vector');
+            }
+
+            // Save to database
             await this.prisma.$executeRawUnsafe(
                 `
-            INSERT INTO "Document" ("id", "userStorageId", "pageNumber", "title", "content", "embeddings")
+            INSERT INTO "Document" ("id", "userStorageId", "pageRange", "title", "content", "embeddings")
             VALUES ($1, $2, $3, $4, $5, $6::vector)
             `,
                 this.generateIdService.generateId(),
                 userStorageId,
-                page.pageNumber,
+                page.pageRange,
                 page.title,
                 pageContent,
                 `[${vector.join(',')}]`
@@ -372,8 +588,381 @@ export class AIService {
 
             return { success: true, length: vector.length };
         } catch (err) {
-            console.error('Error saving JSON to DB:', err);
-            throw new InternalServerErrorException('Không lưu được document');
+            console.error(`❌ Error saving chunk ${page.pageRange}:`, err);
+            throw new InternalServerErrorException(
+                `Failed to save document: ${err.message}`
+            );
         }
+    }
+    /**
+     * Tạo danh sách câu hỏi trắc nghiệm từ file PDF đã được chunk và lưu vào DB
+     * - Truy vấn toàn bộ chunk theo userStorageId
+     * - Sinh câu hỏi cho từng chunk
+     * - Gom, shuffle, giới hạn số lượng
+     * - Trả về danh sách câu hỏi
+     */
+    /**
+     * Sinh câu hỏi trắc nghiệm từ các chunk theo logic groupChunks:
+     * - Nếu số câu hỏi >= số chunk: phân bổ đều cho từng chunk
+     * - Nếu số câu hỏi < số chunk: gộp chunk lại thành numQuestions nhóm, mỗi nhóm sinh 1 câu hỏi
+     */
+    async generateQuizChunkBased(
+        userStorageId: string,
+        numQuestions: number = 40,
+        isNarrowSearch: boolean = false,
+        keyword?: string
+    ) {
+        // 1. Lấy danh sách chunk (Document) theo search type
+        let chunks: any[];
+        if (isNarrowSearch === true && keyword) {
+            // Vector search mode
+            const keywordEmbedding = await this.createKeywordEmbedding(keyword);
+            chunks = await this.findSimilarDocuments(
+                userStorageId,
+                keywordEmbedding,
+                AIService.VECTOR_SEARCH_CONFIG.TOP_K,
+                AIService.VECTOR_SEARCH_CONFIG.SIMILARITY_THRESHOLD
+            );
+            if (!chunks.length) {
+                throw new NotFoundException(
+                    `Không tìm thấy nội dung phù hợp với từ khóa: ${keyword}`
+                );
+            }
+        } else {
+            // Default: lấy tất cả chunk
+            chunks = await this.prisma.document.findMany({
+                where: { userStorageId },
+                orderBy: { id: 'asc' },
+                select: {
+                    id: true,
+                    userStorageId: true,
+                    pageRange: true,
+                    title: true,
+                    content: true,
+                    createdAt: true,
+                    updatedAt: true,
+                },
+            });
+        }
+
+        if (!chunks.length) {
+            throw new NotFoundException(
+                'Không tìm thấy chunk nào cho userStorageId này'
+            );
+        }
+
+        // groupChunks logic
+        function groupChunks<T>(chunks: T[], numGroups: number): T[][] {
+            if (numGroups <= 0) return [];
+            if (numGroups >= chunks.length) {
+                return chunks.map((c) => [c]);
+            }
+            const groups: T[][] = [];
+            const size = Math.ceil(chunks.length / numGroups);
+            for (let i = 0; i < chunks.length; i += size) {
+                groups.push(chunks.slice(i, i + size));
+            }
+            while (groups.length > numGroups) {
+                const last = groups.pop()!;
+                groups[groups.length - 1] =
+                    groups[groups.length - 1].concat(last);
+            }
+            return groups;
+        }
+
+        // Sửa type cho groups: Document[][]
+        type DocumentType = (typeof chunks)[0];
+        let groups: DocumentType[][];
+        let questionsPerGroup: number[];
+        // Adaptive quantity logic for vector search
+        let adaptiveNumQuestions = numQuestions;
+        if (adaptiveNumQuestions >= chunks.length) {
+            groups = chunks.map((c) => [c]);
+            const base = Math.floor(adaptiveNumQuestions / chunks.length);
+            const extra = adaptiveNumQuestions % chunks.length;
+            questionsPerGroup = groups.map(
+                (_, i) => base + (i < extra ? 1 : 0)
+            );
+        } else {
+            groups = groupChunks(chunks, adaptiveNumQuestions);
+            questionsPerGroup = Array(groups.length).fill(1);
+        }
+
+        // Sinh câu hỏi cho từng group
+        const allQuestions: any[] = [];
+        for (let i = 0; i < groups.length; i++) {
+            const group = groups[i];
+            const numForThisGroup = questionsPerGroup[i];
+            if (numForThisGroup <= 0) continue;
+            // Gộp content các chunk trong group
+            const mergedContent = group.map((c) => c.content).join('\n\n');
+            const mergedPageRange = group.map((c) => c.pageRange).join(',');
+            let text = '[]';
+            try {
+                const result = await this.retryWithBackoff(() =>
+                    this.ensureClient().models.generateContent({
+                        model: this.modalName,
+                        contents: [
+                            {
+                                role: 'user',
+                                parts: [
+                                    {
+                                        text: new PromptUtils().generateQuizzPrompt(
+                                            {
+                                                pageRange: mergedPageRange,
+                                                numForThisChunk:
+                                                    numForThisGroup,
+                                                content: {
+                                                    content: mergedContent,
+                                                },
+                                            }
+                                        ),
+                                    },
+                                ],
+                            },
+                        ],
+                        config: {
+                            responseMimeType: 'application/json',
+                            responseSchema: {
+                                type: 'array',
+                                items: {
+                                    type: 'object',
+                                    properties: {
+                                        question: { type: 'string' },
+                                        options: {
+                                            type: 'array',
+                                            items: { type: 'string' },
+                                            minItems: 4,
+                                            maxItems: 4,
+                                        },
+                                        answer: { type: 'string' },
+                                        sourcePageRange: { type: 'string' },
+                                    },
+                                    required: [
+                                        'question',
+                                        'options',
+                                        'answer',
+                                        'sourcePageRange',
+                                    ],
+                                },
+                            },
+                            candidateCount: 1,
+                            maxOutputTokens: parseInt(
+                                process.env.GEMINI_MAX_TOKENS || '2000000'
+                            ),
+                            temperature: 0.3,
+                        },
+                    })
+                );
+                text = result.text || '[]';
+            } catch (err) {
+                console.error('Lỗi gọi model group:', err);
+            }
+            let parsed: any[] = [];
+            try {
+                parsed = JSON.parse(text);
+            } catch (err) {
+                console.error('Lỗi parse JSON câu hỏi group:', err, text);
+            }
+            allQuestions.push(...parsed);
+        }
+
+        // Shuffle ngẫu nhiên
+        allQuestions.sort(() => Math.random() - 0.5);
+        // Lấy tối đa adaptiveNumQuestions câu
+        const finalQuestions = allQuestions.slice(0, adaptiveNumQuestions);
+        console.log('Đã sinh tổng cộng câu hỏi:', finalQuestions.length);
+        return finalQuestions;
+    }
+
+    /**
+     * Sinh flashcards từ các chunk theo logic groupChunks:
+     * - Nếu số flashcards >= số chunk: phân bổ đều cho từng chunk
+     * - Nếu số flashcards < số chunk: gộp chunk lại thành numFlashcards nhóm, mỗi nhóm sinh flashcard tương ứng
+     */
+    async generateFlashcardsChunkBased(
+        userStorageId: string,
+        numFlashcards: number = 40,
+        isNarrowSearch: boolean = false,
+        keyword?: string
+    ) {
+        // 1. Lấy danh sách chunk (Document) theo search type
+        let chunks: any[];
+        if (isNarrowSearch === true && keyword) {
+            // Vector search mode
+            const keywordEmbedding = await this.createKeywordEmbedding(keyword);
+            chunks = await this.findSimilarDocuments(
+                userStorageId,
+                keywordEmbedding,
+                AIService.VECTOR_SEARCH_CONFIG.TOP_K,
+                AIService.VECTOR_SEARCH_CONFIG.SIMILARITY_THRESHOLD
+            );
+            if (!chunks.length) {
+                throw new NotFoundException(
+                    `Không tìm thấy nội dung phù hợp với từ khóa: ${keyword}`
+                );
+            }
+        } else {
+            // Default: lấy tất cả chunk
+            chunks = await this.prisma.document.findMany({
+                where: { userStorageId },
+                orderBy: { id: 'asc' },
+                select: {
+                    id: true,
+                    userStorageId: true,
+                    pageRange: true,
+                    title: true,
+                    content: true,
+                    createdAt: true,
+                    updatedAt: true,
+                },
+            });
+        }
+
+        if (!chunks.length) {
+            throw new NotFoundException(
+                'Không tìm thấy chunk nào cho userStorageId này'
+            );
+        }
+
+        // groupChunks logic (tái sử dụng từ generateQuizChunkBased)
+        function groupChunks<T>(chunks: T[], numGroups: number): T[][] {
+            if (numGroups <= 0) return [];
+            if (numGroups >= chunks.length) {
+                return chunks.map((c) => [c]);
+            }
+            const groups: T[][] = [];
+            const size = Math.ceil(chunks.length / numGroups);
+            for (let i = 0; i < chunks.length; i += size) {
+                groups.push(chunks.slice(i, i + size));
+            }
+            while (groups.length > numGroups) {
+                const last = groups.pop()!;
+                groups[groups.length - 1] =
+                    groups[groups.length - 1].concat(last);
+            }
+            return groups;
+        }
+
+        // Sử dụng type cho groups: Document[][]
+        type DocumentType = (typeof chunks)[0];
+        let groups: DocumentType[][];
+        let flashcardsPerGroup: number[];
+
+        // Adaptive quantity logic for vector search
+        let adaptiveNumFlashcards = numFlashcards;
+
+        if (adaptiveNumFlashcards >= chunks.length) {
+            groups = chunks.map((c) => [c]);
+            const base = Math.floor(adaptiveNumFlashcards / chunks.length);
+            const extra = adaptiveNumFlashcards % chunks.length;
+            flashcardsPerGroup = groups.map(
+                (_, i) => base + (i < extra ? 1 : 0)
+            );
+        } else {
+            groups = groupChunks(chunks, adaptiveNumFlashcards);
+            flashcardsPerGroup = Array(groups.length).fill(1);
+        }
+
+        // Sinh flashcards cho từng group
+        const allFlashcards: any[] = [];
+        for (let i = 0; i < groups.length; i++) {
+            const group = groups[i];
+            const numForThisGroup = flashcardsPerGroup[i];
+            if (numForThisGroup <= 0) continue;
+
+            // Gộp content các chunk trong group
+            const mergedContent = group.map((c) => c.content).join('\n\n');
+            const mergedPageRange = group.map((c) => c.pageRange).join(',');
+
+            let text = '[]';
+            try {
+                const result = await this.retryWithBackoff(() =>
+                    this.ensureClient().models.generateContent({
+                        model: this.modalName,
+                        contents: [
+                            {
+                                role: 'user',
+                                parts: [
+                                    {
+                                        text: new PromptUtils().generateFlashcardPrompt(
+                                            {
+                                                pageRange: mergedPageRange,
+                                                numForThisChunk:
+                                                    numForThisGroup,
+                                                content: {
+                                                    content: mergedContent,
+                                                },
+                                            }
+                                        ),
+                                    },
+                                ],
+                            },
+                        ],
+                        config: {
+                            responseMimeType: 'application/json',
+                            responseSchema: {
+                                type: 'array',
+                                items: {
+                                    type: 'object',
+                                    properties: {
+                                        question: { type: 'string' },
+                                        answer: { type: 'string' },
+                                        sourcePageRange: { type: 'string' },
+                                    },
+                                    required: [
+                                        'question',
+                                        'answer',
+                                        'sourcePageRange',
+                                    ],
+                                },
+                            },
+                            candidateCount: 1,
+                            maxOutputTokens: parseInt(
+                                process.env.GEMINI_MAX_TOKENS || '2000000'
+                            ),
+                            temperature: 0.3,
+                        },
+                    })
+                );
+                text = result.text || '[]';
+            } catch (err) {
+                console.error(`❌ Lỗi gọi model group ${i + 1}:`, err);
+                // Continue with other groups even if one fails
+                continue;
+            }
+
+            let parsed: any[] = [];
+            try {
+                parsed = JSON.parse(text);
+                if (!Array.isArray(parsed)) {
+                    console.warn(
+                        `⚠️ Response không phải array cho group ${i + 1}`
+                    );
+                    parsed = [];
+                }
+            } catch (err) {
+                console.error(
+                    `❌ Lỗi parse JSON flashcards group ${i + 1}:`,
+                    err
+                );
+                console.error('Raw response:', text);
+                parsed = [];
+            }
+
+            allFlashcards.push(...parsed);
+        }
+
+        // Shuffle ngẫu nhiên để tránh bias theo thứ tự chunk
+        allFlashcards.sort(() => Math.random() - 0.5);
+
+        // Lấy tối đa adaptiveNumFlashcards flashcards
+        const finalFlashcards = allFlashcards.slice(0, adaptiveNumFlashcards);
+
+        console.log(
+            `🎯 Đã tạo ${finalFlashcards.length}/${adaptiveNumFlashcards} flashcards từ ${chunks.length} chunks`
+        );
+
+        return finalFlashcards;
     }
 }
