@@ -6,6 +6,7 @@ node_modules/
 [._]ss[a-gi-z]
 [._]sw[a-p]
 .idea
+.vscode
 
 
 /generated/prisma

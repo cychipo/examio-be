@@ -7,13 +7,18 @@ import { SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
     app.enableCors({
-        origin:[ process.env.CORS_ORIGIN || 'http://localhost:3000', 'http://localhost:5173' ],
+        origin: [
+            process.env.CORS_ORIGIN || 'http://localhost:3000',
+            'http://localhost:5173',
+        ],
         methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
         credentials: true,
     });
     app.setGlobalPrefix('api/v1');
     const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup('api', app, document);
+    SwaggerModule.setup('api', app, document, {
+        swaggerOptions: { persistAuthorization: true },
+    });
     console.log(
         'Server is running on port:',
         process.env.PORT || 3000,

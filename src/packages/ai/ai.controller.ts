@@ -53,8 +53,30 @@ export class AIController {
     @ApiFile('file')
     async filePrompt(
         @UploadedFile() file: Express.Multer.File,
-        @Req() req: AuthenticatedRequest
+        @Req() req: AuthenticatedRequest,
+        @Body()
+        {
+            quantityFlashcard,
+            quantityQuizz,
+            typeResult,
+            isNarrowSearch,
+            keyword,
+        }: {
+            quantityFlashcard?: number;
+            quantityQuizz?: number;
+            typeResult: number;
+            isNarrowSearch?: boolean;
+            keyword?: string;
+        }
     ) {
-        return this.aiService.embedTextFromFile(file, req.user);
+        return this.aiService.handleActionsWithFile(
+            file,
+            req.user,
+            typeResult,
+            quantityFlashcard,
+            quantityQuizz,
+            isNarrowSearch,
+            keyword
+        );
     }
 }
