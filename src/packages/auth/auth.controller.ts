@@ -5,7 +5,6 @@ import {
     UseGuards,
     Req,
     Get,
-    Response,
     Res,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
@@ -17,6 +16,7 @@ import {
     ApiOperation,
     ApiExtraModels,
     ApiBearerAuth,
+    ApiCookieAuth,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import {
@@ -46,14 +46,49 @@ export class AuthController {
     }
 
     @Post('login')
-    @ApiOperation({ summary: 'Login a user' })
+    @ApiOperation({
+        summary: 'Login a user',
+        description:
+            'Đăng nhập và tự động set JWT token vào cookie. Sau khi login thành công, các API có khóa sẽ tự động authenticate qua cookie.',
+    })
     @ApiResponse({
         status: 200,
-        description: 'User logged in successfully',
+        description:
+            'User logged in successfully. JWT token is automatically stored in cookie.',
         type: LoginResponse,
     })
-    async login(@Body() loginDto: LoginDto): Promise<LoginResponse> {
-        return this.authService.login(loginDto);
+    async login(
+        @Body() loginDto: LoginDto,
+        @Res({ passthrough: true }) res: ExpressResponse
+    ): Promise<LoginResponse> {
+        const { token, user, success } = await this.authService.login(loginDto);
+
+        // set cookie
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            path: '/',
+        });
+
+        return {
+            user,
+            success,
+        };
+    }
+
+    @Post('logout')
+    @ApiOperation({ summary: 'Logout a user' })
+    @ApiResponse({
+        status: 200,
+        description: 'User logged out successfully',
+    })
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    async logout(@Res({ passthrough: true }) response: ExpressResponse) {
+        response.clearCookie('token');
+        return { success: true };
     }
 
     @Post('sendVerificationEmail')
@@ -63,7 +98,7 @@ export class AuthController {
         description: 'Verification email sent successfully',
     })
     @UseGuards(AuthGuard)
-    @ApiBearerAuth('JWT')
+    @ApiCookieAuth('cookie-auth')
     async sendVerificationEmail(@Req() req: AuthenticatedRequest) {
         return this.authService.sendVerificationEmail(req.user);
     }
@@ -75,7 +110,7 @@ export class AuthController {
         description: 'User account verified successfully',
     })
     @UseGuards(AuthGuard)
-    @ApiBearerAuth('JWT')
+    @ApiCookieAuth('cookie-auth')
     async verifyAccount(
         @Body('code') code: string,
         @Req() req: AuthenticatedRequest
@@ -123,22 +158,17 @@ export class AuthController {
     ) {
         const { token, user } = req.user;
 
-        const html = `
-        <html lang="en">
-            <body>
-                <script>
-                console.log('Google login successful:', ${JSON.stringify({ token, user })});
-                    window.opener.postMessage({
-                        token: ${JSON.stringify(token)},
-                        user: ${JSON.stringify(user)}
-                    }, "*");
-                    window.close();
-                </script>
-            </body>
-        </html>
-    `;
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/',
+        });
 
-        res.send(html);
+        // Redirect về dashboard
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+        res.redirect(`${frontendUrl}/`);
     }
 
     @Get('facebook')
@@ -157,20 +187,17 @@ export class AuthController {
     ) {
         const { token, user } = req.user;
 
-        const html = `
-        <html lang="en">
-            <body>
-                <script>
-                    window.opener.postMessage({
-                        token: ${JSON.stringify(token)},
-                        user: ${JSON.stringify(user)}
-                    }, "*");
-                    window.close();
-                </script>
-            </body>
-        </html>
-    `;
-        res.send(html);
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/',
+        });
+
+        // Redirect về dashboard
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+        res.redirect(`${frontendUrl}/`);
     }
 
     @Get('github')
@@ -189,16 +216,16 @@ export class AuthController {
     ) {
         const { token, user } = req.user;
 
-        const html = `
-    <html lang="en">
-        <body>
-            <script>
-                window.opener.postMessage(${JSON.stringify({ token, user })}, "*");
-                window.close();
-            </script>
-        </body>
-    </html>
-    `;
-        res.send(html);
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/',
+        });
+
+        // Redirect về dashboard
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+        res.redirect(`${frontendUrl}/`);
     }
 }
