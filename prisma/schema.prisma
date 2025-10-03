@@ -78,7 +78,7 @@ model UserStorage {
 model Document {
     id            String                @unique
     userStorageId String
-    pageNumber    Int
+    pageRange     String
     title         String?
     content       String
     embeddings    Unsupported("vector")

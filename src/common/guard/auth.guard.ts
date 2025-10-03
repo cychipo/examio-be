@@ -5,7 +5,9 @@ import {
     UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
 import { PrismaService } from 'src/prisma/prisma.service';
+import * as cookie from 'cookie';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -15,14 +17,18 @@ export class AuthGuard implements CanActivate {
     ) {}
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
-        const request = context.switchToHttp().getRequest<Request>();
-        const authHeader = request.headers['authorization'];
+        const request: Request = context.switchToHttp().getRequest();
 
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            throw new UnauthorizedException('Missing or invalid token');
+        const cookieHeader = request.headers.cookie;
+        const cookies = cookie.parse(cookieHeader || '');
+        let token = cookies.token;
+
+        if (!token) {
+            const authHeader = request.headers.authorization;
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                token = authHeader.substring(7);
+            }
         }
-
-        const token = authHeader.replace('Bearer ', '').trim();
 
         if (!token) {
             throw new UnauthorizedException('Token is required');
@@ -34,7 +40,7 @@ export class AuthGuard implements CanActivate {
             });
 
             const user = await this.prisma.user.findUnique({
-                where: { id: decoded.id },
+                where: { id: decoded.userId },
                 select: {
                     id: true,
                     username: true,
