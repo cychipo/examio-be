@@ -7,11 +7,8 @@ import { SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
     app.enableCors({
-        origin: [
-            process.env.CORS_ORIGIN || 'http://localhost:3000',
-            'http://localhost:5173',
-        ],
-        methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+        origin: 'http://localhost:3001',
+        methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
         credentials: true,
     });
     app.setGlobalPrefix('api/v1');
@@ -22,7 +19,7 @@ async function bootstrap() {
     console.log(
         'Server is running on port:',
         process.env.PORT || 3000,
-        'http://localhost:3000/api'
+        `http://localhost:${process.env.PORT || 3000}/api`
     );
     await app.listen(process.env.PORT || 3000);
 }

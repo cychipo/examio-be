@@ -54,7 +54,7 @@ export class AuthService {
             // Generate JWT token
             const token = this.jwtService.sign({ userId: user.id });
 
-            return { token, user: sanitizeUser(user) };
+            return { token, user: sanitizeUser(user), success: true };
         } catch (error) {
             if (
                 error instanceof NotFoundException ||
@@ -118,6 +118,7 @@ export class AuthService {
             return {
                 message: 'Đăng ký thành công',
                 user: sanitizeUser(newUser),
+                success: true,
             };
         } catch (error) {
             if (error instanceof ConflictException) {
@@ -342,6 +343,7 @@ export class AuthService {
         return {
             token,
             user: sanitizeUser(existingUser),
+            success: true,
         };
     }
 
@@ -376,6 +378,7 @@ export class AuthService {
         return {
             token,
             user: sanitizeUser(existingUser),
+            success: true,
         };
     }
 
@@ -404,6 +407,7 @@ export class AuthService {
         return {
             token,
             user: sanitizeUser(existingUser),
+            success: true,
         };
     }
 }

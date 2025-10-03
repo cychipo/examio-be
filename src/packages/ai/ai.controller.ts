@@ -14,6 +14,7 @@ import {
     ApiOperation,
     ApiExtraModels,
     ApiBearerAuth,
+    ApiCookieAuth,
     ApiConsumes,
     ApiBody,
 } from '@nestjs/swagger';
@@ -42,7 +43,7 @@ export class AIController {
 
     @Post('embedde-file')
     @UseGuards(AuthGuard)
-    @ApiBearerAuth('JWT')
+    @ApiCookieAuth('cookie-auth')
     @UseInterceptors(FileInterceptor('file'))
     @ApiOperation({ summary: 'Extract and embed text from an uploaded file' })
     @ApiResponse({
