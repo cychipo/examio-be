@@ -1,0 +1,64 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check required secrets and variables
+        run: |
+          MISSING=()
+          [[ -z "${{ secrets.SERVER_HOST }}" ]] && MISSING+=("secrets.SERVER_HOST")
+          [[ -z "${{ secrets.SERVER_SSH_PORT }}" ]] && MISSING+=("secrets.SERVER_SSH_PORT")
+          [[ -z "${{ secrets.SERVER_USER }}" ]] && MISSING+=("secrets.SERVER_USER")
+          [[ -z "${{ secrets.SERVER_SSH_KEY }}" ]] && MISSING+=("secrets.SERVER_SSH_KEY")
+          [[ -z "${{ secrets.SERVER_DEPLOY_DIR }}" ]] && MISSING+=("secrets.SERVER_DEPLOY_DIR")
+          
+          [ ${#MISSING[@]} -gt 0 ] && { echo "❌ Missing: ${MISSING[*]}"; exit 1; }
+
+          OPTIONAL_MISSING=()
+          [[ -z "${{ secrets.PAT_TOKEN }}" ]] && OPTIONAL_MISSING+=("secrets.PAT_TOKEN")
+          [ ${#OPTIONAL_MISSING[@]} -gt 0 ] && { echo "⚠ Optional missing: ${OPTIONAL_MISSING[*]}"; }
+
+          echo "✅ All configured"
+
+      - name: Build and deploy on server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_SSH_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -e
+            DEPLOY_DIR="${{ secrets.SERVER_DEPLOY_DIR }}"
+            TOKEN="${{ secrets.PAT_TOKEN }}"
+            BRANCH="${{ github.ref_name }}"
+            REPO="${{ github.repository }}"
+
+            cd "$DEPLOY_DIR" || exit 1
+            [ -d ".git" ] || { echo "❌ Not a git repo"; exit 1; }
+
+            # Determine which docker-compose file to use
+            # If branch is main, use docker-compose.yml
+            # Otherwise, use docker-compose.<branch-name>.yml, with slashes replaced by dashes
+            # e.g., feature/abc -> docker-compose.feature-abc.yml
+            COMPOSE_FILE="docker-compose.yml"
+            [ "$BRANCH" != "main" ] && COMPOSE_FILE="docker-compose.${BRANCH//\//-}.yml"
+            [ -f "$COMPOSE_FILE" ] || { echo "❌ $COMPOSE_FILE not found"; exit 1; }
+
+            GIT_URL="https://github.com/$REPO.git"
+            [ -n "$TOKEN" ] && GIT_URL="https://$TOKEN@github.com/$REPO.git"
+
+            git fetch "$GIT_URL" "$BRANCH"
+            git reset --hard FETCH_HEAD
+
+            echo "🚀 $BRANCH → $COMPOSE_FILE"
+            docker compose -f "$COMPOSE_FILE" build
+            docker compose -f "$COMPOSE_FILE" down
+            docker compose -f "$COMPOSE_FILE" up -d
