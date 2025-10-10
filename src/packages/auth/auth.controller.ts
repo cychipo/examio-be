@@ -34,6 +34,49 @@ import { GithubAuthGuard } from 'src/common/guard/github-auth.guard';
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
 
+    /**
+     * Helper: Get cookie options based on environment
+     * - Development: no domain, sameSite=lax, http allowed
+     * - Production: shared domain, sameSite=none, https required
+     */
+    private getCookieOptions() {
+        const isProduction = process.env.NODE_ENV === 'production';
+
+        const options: any = {
+            httpOnly: true,
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            path: '/',
+        };
+
+        // Only set domain in production for cross-subdomain cookie sharing
+        if (isProduction && process.env.COOKIE_DOMAIN) {
+            options.domain = process.env.COOKIE_DOMAIN;
+        }
+
+        return options;
+    }
+
+    private handleOAuthCallback(
+        res: ExpressResponse,
+        token: string | undefined,
+        provider: string
+    ) {
+        if (!token) {
+            const frontendUrl =
+                process.env.FRONTEND_URL || 'http://localhost:3001';
+            return res.redirect(
+                `${frontendUrl}/login?error=oauth_failed&provider=${provider}`
+            );
+        }
+
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+        const callbackUrl = `${frontendUrl}/auth/callback?token=${token}&provider=${provider}`;
+
+        res.redirect(callbackUrl);
+    }
+
     @Post('register')
     @ApiOperation({ summary: 'Register a new user' })
     @ApiResponse({
@@ -63,14 +106,8 @@ export class AuthController {
     ): Promise<LoginResponse> {
         const { token, user, success } = await this.authService.login(loginDto);
 
-        // set cookie
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            path: '/',
-        });
+        // Set cookie using helper
+        res.cookie('token', token, this.getCookieOptions());
 
         return {
             user,
@@ -151,24 +188,17 @@ export class AuthController {
 
     @Get('google/callback')
     @UseGuards(GoogleAuthGuard)
-    @ApiOperation({ summary: 'Google OAuth callback' })
+    @ApiOperation({
+        summary: 'Google OAuth callback',
+        description:
+            'Redirects to frontend with token in URL. Frontend will set cookie.',
+    })
     async googleAuthRedirect(
         @Req() req: AuthenticatedOauthRequest,
         @Res({ passthrough: true }) res: ExpressResponse
     ) {
-        const { token, user } = req.user;
-
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-            path: '/',
-        });
-
-        // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL;
-        res.redirect(`${frontendUrl}/`);
+        const { token } = req.user;
+        this.handleOAuthCallback(res, token, 'google');
     }
 
     @Get('facebook')
@@ -180,24 +210,17 @@ export class AuthController {
 
     @Get('facebook/callback')
     @UseGuards(FacebookAuthGuard)
-    @ApiOperation({ summary: 'Facebook OAuth callback' })
+    @ApiOperation({
+        summary: 'Facebook OAuth callback',
+        description:
+            'Redirects to frontend with token in URL. Frontend will set cookie.',
+    })
     async facebookCallback(
         @Req() req: AuthenticatedOauthRequest,
         @Res({ passthrough: true }) res: ExpressResponse
     ) {
-        const { token, user } = req.user;
-
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-            path: '/',
-        });
-
-        // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL;
-        res.redirect(`${frontendUrl}/`);
+        const { token } = req.user;
+        this.handleOAuthCallback(res, token, 'facebook');
     }
 
     @Get('github')
@@ -209,23 +232,16 @@ export class AuthController {
 
     @Get('github/callback')
     @UseGuards(GithubAuthGuard)
-    @ApiOperation({ summary: 'GitHub OAuth callback' })
+    @ApiOperation({
+        summary: 'GitHub OAuth callback',
+        description:
+            'Redirects to frontend with token in URL. Frontend will set cookie.',
+    })
     async githubLoginCallback(
         @Req() req: AuthenticatedOauthRequest,
         @Res({ passthrough: true }) res: ExpressResponse
     ) {
-        const { token, user } = req.user;
-
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-            path: '/',
-        });
-
-        // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL;
-        res.redirect(`${frontendUrl}/`);
+        const { token } = req.user;
+        this.handleOAuthCallback(res, token, 'github');
     }
 }
