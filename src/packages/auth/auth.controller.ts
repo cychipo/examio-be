@@ -63,15 +63,24 @@ export class AuthController {
     ): Promise<LoginResponse> {
         const { token, user, success } = await this.authService.login(loginDto);
 
-        // set cookie
-        res.cookie('token', token, {
+        const cookies = {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'none',
+            sameSite: (process.env.NODE_ENV === 'production'
+                ? 'none'
+                : 'lax') as 'none' | 'lax',
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             path: '/',
-            domain: '.fayedark.com',
-        });
+        };
+
+        if (process.env.NODE_ENV === 'production') {
+            Object.assign(cookies, {
+                domain: '.fayedark.com',
+            });
+        }
+
+        // set cookie
+        res.cookie('token', token, cookies);
 
         return {
             user,
@@ -158,18 +167,26 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse
     ) {
         const { token, user } = req.user;
-
-        res.cookie('token', token, {
+        const cookies = {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'none',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
+            sameSite: (process.env.NODE_ENV === 'production'
+                ? 'none'
+                : 'lax') as 'none' | 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             path: '/',
-            domain: '.fayedark.com',
-        });
+        };
+
+        if (process.env.NODE_ENV === 'production') {
+            Object.assign(cookies, {
+                domain: '.fayedark.com',
+            });
+        }
+
+        res.cookie('token', token, cookies);
 
         // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+        const frontendUrl = process.env.FRONTEND_URL;
         res.redirect(`${frontendUrl}/`);
     }
 
@@ -188,18 +205,26 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse
     ) {
         const { token, user } = req.user;
-
-        res.cookie('token', token, {
+        const cookies = {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'none',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
+            sameSite: (process.env.NODE_ENV === 'production'
+                ? 'none'
+                : 'lax') as 'none' | 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             path: '/',
-            domain: '.fayedark.com',
-        });
+        };
+
+        if (process.env.NODE_ENV === 'production') {
+            Object.assign(cookies, {
+                domain: '.fayedark.com',
+            });
+        }
+
+        res.cookie('token', token, cookies);
 
         // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+        const frontendUrl = process.env.FRONTEND_URL;
         res.redirect(`${frontendUrl}/`);
     }
 
@@ -218,18 +243,26 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse
     ) {
         const { token, user } = req.user;
-
-        res.cookie('token', token, {
+        const cookies = {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'none',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
+            sameSite: (process.env.NODE_ENV === 'production'
+                ? 'none'
+                : 'lax') as 'none' | 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             path: '/',
-            domain: '.fayedark.com',
-        });
+        };
+
+        if (process.env.NODE_ENV === 'production') {
+            Object.assign(cookies, {
+                domain: '.fayedark.com',
+            });
+        }
+
+        res.cookie('token', token, cookies);
 
         // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+        const frontendUrl = process.env.FRONTEND_URL;
         res.redirect(`${frontendUrl}/`);
     }
 }
