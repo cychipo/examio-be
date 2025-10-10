@@ -11,3 +11,9 @@ node_modules/
 
 /generated/prisma
 .env
+
+# docker compose files
+docker-compose.yml
+docker-compose.*.yml
+!docker-compose.example.yml
+

@@ -30,7 +30,7 @@ COPY prisma ./prisma
 COPY . .
 
 # Merge prisma schemas và generate Prisma Client
-RUN pnpm prisma:merge && pnpm exec prisma generate
+RUN pnpm prisma:merge && pnpm prisma:generate
 
 # Build ứng dụng NestJS
 RUN pnpm build
@@ -68,7 +68,7 @@ COPY --from=production-dependencies /app/node_modules ./node_modules
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
-# Copy prisma schema và generated client
+# Copy prisma schema và client
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
@@ -80,19 +80,8 @@ COPY --from=builder /app/vie.traineddata ./vie.traineddata
 # Copy templates nếu có
 COPY --from=builder /app/src/templates ./src/templates
 
-# Tạo non-root user để chạy application (security best practice)
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nestjs -u 1001 && \
-    chown -R nestjs:nodejs /app
-
-USER nestjs
-
 # Expose port
 EXPOSE 3000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
 # Start application
 CMD ["node", "dist/src/main"]
