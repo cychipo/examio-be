@@ -1,0 +1,112 @@
+# Git - Exclude entire git history (saves a lot of space)
+.git
+.gitignore
+.gitattributes
+.gitmodules
+
+# Docker - No need to copy Docker files into the image
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+.dockerenv
+
+# CI/CD - Not needed in production
+.github
+.gitlab-ci.yml
+.travis.yml
+.circleci
+.jenkins
+azure-pipelines.yml
+
+# IDE & Editors - Personal editor configurations
+.vscode
+.idea
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+.vs
+.editorconfig
+
+# Dependencies - Will be installed fresh in Docker
+node_modules
+.pnpm-store
+.npm
+.yarn
+.cache
+
+# Build output - Will be built fresh in Docker
+dist
+build
+out
+.next
+*.tsbuildinfo
+
+# Environment & Secrets - Security
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+
+# Testing - Not needed in production
+coverage
+.nyc_output
+*.test.ts
+*.spec.ts
+*.test.js
+*.spec.js
+test/
+tests/
+__tests__/
+.jest
+jest.config.*
+
+# Documentation - Not needed at runtime
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+LICENSE
+LICENSE.md
+docs/
+*.md
+!node_modules/**/*.md
+
+# Prisma - Keep schema only, exclude migrations
+prisma/migrations/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Logs & Debug
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Temporary files
+tmp
+temp
+*.tmp
+*.temp
+*.cache
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Editor backup files
+*~
+*.bak
+*.backup
+*.old
+*.orig
