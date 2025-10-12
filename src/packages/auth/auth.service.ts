@@ -15,6 +15,7 @@ import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { sanitizeUser } from 'src/common/utils/sanitize-user';
 import { User } from '@prisma/client';
 import { generateCode } from 'src/common/utils/generate-code';
+import { WalletService } from 'src/packages/finance/modules/wallet/wallet.service';
 
 @Injectable()
 export class AuthService {
@@ -23,7 +24,8 @@ export class AuthService {
         private readonly jwtService: JwtService,
         private readonly mailService: MailService,
         private readonly passwordService: PasswordService,
-        private readonly generateIdService: GenerateIdService
+        private readonly generateIdService: GenerateIdService,
+        private readonly walletService: WalletService
     ) {}
 
     async login(loginDto: LoginDto) {
@@ -70,21 +72,25 @@ export class AuthService {
 
     async register(registerDto: RegisterDto) {
         const { username, email, password } = registerDto;
+        if (!username || !email || !password) {
+            throw new BadRequestException('Thông tin đăng ký không hợp lệ');
+        }
 
         try {
-            // Check if user already exists
-            const existingUser = await this.prisma.user.findUnique({
-                where: { email: email.toLowerCase() },
-            });
+            // check valid email and username
+            const [existingEmail, existingUsername] = await Promise.all([
+                this.prisma.user.findUnique({
+                    where: { email: email.toLowerCase() },
+                }),
+                this.prisma.user.findUnique({
+                    where: { username: username.toLowerCase() },
+                }),
+            ]);
 
-            if (existingUser) {
+            if (existingEmail) {
                 throw new ConflictException('Email đã được sử dụng');
             }
 
-            // Check if username already exists
-            const existingUsername = await this.prisma.user.findUnique({
-                where: { username: username.toLowerCase() },
-            });
             if (existingUsername) {
                 throw new ConflictException('Username đã được sử dụng');
             }
@@ -94,17 +100,29 @@ export class AuthService {
                 await this.passwordService.hashPassword(password);
 
             // Create new user
-            const newUser = await this.prisma.user.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    username,
-                    email,
-                    password: hashedPassword,
-                },
+            const newUser = await this.prisma.$transaction(async (tx) => {
+                const user = await tx.user.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        username,
+                        email,
+                        password: hashedPassword,
+                    },
+                });
+
+                await tx.wallet.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: user.id,
+                        balance: 20,
+                    },
+                });
+
+                return user;
             });
 
             // Send welcome email
-            await this.mailService.sendMail(
+            this.mailService.sendMail(
                 email,
                 'Chào mừng bạn đến với CodeCraft',
                 'welcome.template',
@@ -318,33 +336,62 @@ export class AuthService {
         }
     }
 
-    async googleLogin(user: any) {
-        const { email, picture } = user;
-
+    private async handleOAuthLogin(
+        email: string,
+        username: string,
+        avatar?: string
+    ) {
         let existingUser = await this.prisma.user.findUnique({
             where: { email },
         });
 
         if (!existingUser) {
-            existingUser = await this.prisma.user.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    email,
-                    username: email.split('@')[0],
-                    avatar: picture,
-                    isVerified: true,
-                    password: null,
-                },
+            existingUser = await this.prisma.$transaction(async (tx) => {
+                const user = await tx.user.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        email,
+                        username,
+                        avatar,
+                        isVerified: true,
+                        password: null,
+                    },
+                });
+
+                await tx.wallet.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: user.id,
+                        balance: 0,
+                    },
+                });
+
+                return user;
             });
+        } else {
+            const walletExists = await this.prisma.wallet.findUnique({
+                where: { userId: existingUser.id },
+            });
+
+            if (!walletExists) {
+                await this.walletService.createWallet(existingUser);
+            }
         }
 
-        const token = this.jwtService.sign({ userId: user.id });
+        const token = this.jwtService.sign({ userId: existingUser.id });
 
         return {
             token,
             user: sanitizeUser(existingUser),
             success: true,
         };
+    }
+
+    async googleLogin(user: any) {
+        const { email, picture } = user;
+        const username = email.split('@')[0];
+
+        return this.handleOAuthLogin(email, username, picture);
     }
 
     async facebookLogin(user: any) {
@@ -356,58 +403,20 @@ export class AuthService {
             );
         }
 
-        let existingUser = await this.prisma.user.findUnique({
-            where: { email },
-        });
-
-        if (!existingUser) {
-            existingUser = await this.prisma.user.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    email,
-                    username: username || email.split('@')[0],
-                    avatar: picture,
-                    isVerified: true,
-                    password: null,
-                },
-            });
-        }
-
-        const token = this.jwtService.sign({ userId: existingUser.id });
-
-        return {
-            token,
-            user: sanitizeUser(existingUser),
-            success: true,
-        };
+        return this.handleOAuthLogin(
+            email,
+            username || email.split('@')[0],
+            picture
+        );
     }
 
     async githubLogin(user: any) {
         const { email, avatar, username } = user;
 
-        let existingUser = await this.prisma.user.findUnique({
-            where: { email },
-        });
-
-        if (!existingUser) {
-            existingUser = await this.prisma.user.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    email,
-                    username: username || email.split('@')[0],
-                    avatar,
-                    isVerified: true,
-                    password: null,
-                },
-            });
-        }
-
-        const token = this.jwtService.sign({ userId: existingUser.id });
-
-        return {
-            token,
-            user: sanitizeUser(existingUser),
-            success: true,
-        };
+        return this.handleOAuthLogin(
+            email,
+            username || email.split('@')[0],
+            avatar
+        );
     }
 }

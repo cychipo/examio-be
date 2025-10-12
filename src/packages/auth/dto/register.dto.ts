@@ -20,7 +20,7 @@ export const RegisterSchema = z.object({
 export class RegisterDto extends createZodDto(RegisterSchema) {
     @ApiProperty({
         description: 'Username of the user',
-        example: 'john_doe',
+        example: 'jodn_123',
     })
     username: string;
 

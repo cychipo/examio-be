@@ -15,7 +15,6 @@ import {
     ApiResponse,
     ApiOperation,
     ApiExtraModels,
-    ApiBearerAuth,
     ApiCookieAuth,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/common/guard/auth.guard';

@@ -1,0 +1,27 @@
+model UserStorage {
+    id        String   @unique
+    userId    String
+    filename  String
+    url       String
+    mimetype  String
+    size      Int
+    keyR2     String   @unique
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+    documents Document[]
+}
+
+model Document {
+    id            String                @unique
+    userStorageId String
+    pageRange     String
+    title         String?
+    content       String
+    embeddings    Unsupported("vector")
+
+    createdAt   DateTime    @default(now())
+    updatedAt   DateTime    @default(now()) @updatedAt
+    userStorage UserStorage @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+}

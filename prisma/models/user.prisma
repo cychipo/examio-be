@@ -12,17 +12,16 @@ model User {
     createdAt  DateTime @default(now())
     updatedAt  DateTime @updatedAt
 
-    verifyAccountCode VerifyAccountCode?
-    resetPasswordCode ResetPasswordCode?
-    userStorage       UserStorage[]
-}
-
-model TempSocialUser {
-    id        String   @unique
-    username  String   @unique
-    avatar    String?
-    provider  String
-    createdAt DateTime @default(now())
+    verifyAccountCode       VerifyAccountCode?
+    resetPasswordCode       ResetPasswordCode?
+    userStorage             UserStorage[]
+    wallet                  Wallet?
+    payments                Payment[]
+    quizSets                QuizSet[]
+    flashCardSets           FlashCardSet[]
+    examRooms               ExamRoom[]
+    examAttempts            ExamAttempt[]
+    examSessionParticipants ExamSessionParticipant[]
 }
 
 model VerifyAccountCode {
@@ -45,32 +44,4 @@ model ResetPasswordCode {
     updatedAt DateTime @default(now()) @updatedAt
 
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model UserStorage {
-    id        String   @unique
-    userId    String
-    filename  String
-    url       String
-    mimetype  String
-    size      Int
-    keyR2     String   @unique
-    createdAt DateTime @default(now())
-    updatedAt DateTime @default(now()) @updatedAt
-
-    user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-    documents Document[]
-}
-
-model Document {
-    id            String                @unique
-    userStorageId String
-    pageRange     String
-    title         String?
-    content       String
-    embeddings    Unsupported("vector")
-
-    createdAt   DateTime    @default(now())
-    updatedAt   DateTime    @default(now()) @updatedAt
-    userStorage UserStorage @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
 }
