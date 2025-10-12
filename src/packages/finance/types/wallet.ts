@@ -1,0 +1,7 @@
+export enum WALLET_TYPE {
+    BUY_CREDIT = 0,
+    BUY_SUBSCRIPTION = 1,
+    REFUND = 2,
+    ADMIN_ADJUSTMENT = 3,
+    USE_SERVICES = 4,
+}

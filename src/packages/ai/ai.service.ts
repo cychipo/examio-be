@@ -1,6 +1,5 @@
 import {
     Injectable,
-    ConflictException,
     NotFoundException,
     InternalServerErrorException,
     BadRequestException,
@@ -14,6 +13,7 @@ import { R2Service } from '../r2/r2.service';
 import { User } from '@prisma/client';
 import { TYPE_RESULT } from './constant/type-result';
 import { PdfService } from 'src/common/services/pdf.service';
+import { WALLET_TYPE } from '../finance/types/wallet';
 
 @Injectable()
 export class AIService {
@@ -345,6 +345,26 @@ export class AIService {
         }
     }
 
+    private async decrementUserCredit(userId: string, fileSize: number) {
+        const cost = Math.max(1, Math.ceil(fileSize / (1024 * 1024))); // 1 credit per MB
+        await this.prisma.$transaction(async (tx) => {
+            const wallet = await tx.wallet.update({
+                where: { userId },
+                data: { balance: { decrement: cost } },
+            });
+
+            await tx.walletTransaction.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    walletId: wallet.id,
+                    amount: cost,
+                    type: WALLET_TYPE.USE_SERVICES,
+                    description: `Sử dụng dịch vụ AI với file ${(fileSize / (1024 * 1024)).toFixed(2)} MB`,
+                },
+            });
+        });
+    }
+
     async handleActionsWithFile(
         file: any,
         user: User,
@@ -396,6 +416,7 @@ export class AIService {
                     isNarrowSearch,
                     keyword
                 );
+                await this.decrementUserCredit(user.id, file.size);
                 return JSON.stringify(quiz, null, 2);
             } else if (Number(typeResult) === TYPE_RESULT.FLASHCARD) {
                 const flashcards = await this.generateFlashcardsChunkBased(
@@ -404,6 +425,7 @@ export class AIService {
                     isNarrowSearch,
                     keyword
                 );
+                await this.decrementUserCredit(user.id, file.size);
                 return JSON.stringify(flashcards, null, 2);
             } else {
                 throw new BadRequestException(

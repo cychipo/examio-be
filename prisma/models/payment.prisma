@@ -1,0 +1,33 @@
+model Payment {
+    id        String   @unique
+    userId    String
+    amount    Float
+    currency  String
+    status    Int // 0 = unpaid, 1 = paid, 2 = overdue, 3 = cancelled
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Wallet {
+    id        String   @unique
+    userId    String   @unique
+    balance   Float    @default(0)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+    transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+    id          String   @unique
+    walletId    String
+    amount      Float
+    type        Int // 0 = buy credits, 1 = buy subscription, 2 = refund, 3 = admin adjustment, 4 = use services
+    description String?
+    createdAt   DateTime @default(now())
+
+    wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}

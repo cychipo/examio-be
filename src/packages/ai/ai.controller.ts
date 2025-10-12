@@ -13,10 +13,7 @@ import {
     ApiResponse,
     ApiOperation,
     ApiExtraModels,
-    ApiBearerAuth,
     ApiCookieAuth,
-    ApiConsumes,
-    ApiBody,
 } from '@nestjs/swagger';
 import { GenerateDto } from './dto/generate.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -37,11 +34,13 @@ export class AIController {
         description: 'Content generated successfully',
         type: String,
     })
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
     async generate(@Body() generateDto: GenerateDto) {
         return this.aiService.generateContent(generateDto.prompt);
     }
 
-    @Post('embedde-file')
+    @Post('generate-from-file')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
     @UseInterceptors(FileInterceptor('file'))

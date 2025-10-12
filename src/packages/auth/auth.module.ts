@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtService } from '@nestjs/jwt';
 import { MailService } from 'src/common/services/mail.service';
 import { PasswordService } from 'src/common/services/password.service';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
@@ -11,6 +11,7 @@ import { PassportModule } from '@nestjs/passport';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { FacebookStrategy } from './strategies/facebook.strategy';
 import { GithubStrategy } from './strategies/github.strategy';
+import { WalletService } from '../finance/modules/wallet/wallet.service';
 
 @Module({
     imports: [
@@ -30,8 +31,9 @@ import { GithubStrategy } from './strategies/github.strategy';
         AuthService,
         MailService,
         AuthGuard,
+        WalletService,
     ],
     controllers: [AuthController],
-    exports: [AuthService, JwtModule, AuthGuard],
+    exports: [AuthService, JwtModule, AuthGuard, JwtModule],
 })
 export class AuthModule {}

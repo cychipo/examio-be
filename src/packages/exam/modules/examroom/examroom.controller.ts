@@ -1,0 +1,132 @@
+import {
+    Controller,
+    Post,
+    Body,
+    UseGuards,
+    Req,
+    Get,
+    Put,
+    Delete,
+    Param,
+} from '@nestjs/common';
+import {
+    ApiTags,
+    ApiResponse,
+    ApiOperation,
+    ApiExtraModels,
+    ApiCookieAuth,
+    ApiParam,
+} from '@nestjs/swagger';
+import { AuthGuard } from 'src/common/guard/auth.guard';
+import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import { ExamRoomService } from './examroom.service';
+import { CreateExamRoomDto } from './dto/create-examroom.dto';
+import { UpdateExamRoomDto } from './dto/update-examroom.dto';
+import { GetExamRoomsDto } from './dto/get-examroom.dto';
+
+@ApiTags('ExamRooms')
+@ApiExtraModels(CreateExamRoomDto, UpdateExamRoomDto, GetExamRoomsDto)
+@Controller('examrooms')
+export class ExamRoomController {
+    constructor(private readonly examRoomService: ExamRoomService) {}
+
+    @Post()
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Create a new exam room' })
+    @ApiResponse({
+        status: 201,
+        description: 'Exam room created successfully',
+        type: Object,
+    })
+    async createExamRoom(
+        @Req() req: AuthenticatedRequest,
+        @Body() createExamRoomDto: CreateExamRoomDto
+    ) {
+        return this.examRoomService.createExamRoom(req.user, createExamRoomDto);
+    }
+
+    @Get('get-by-id/:id')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get an exam room by ID' })
+    @ApiParam({ name: 'id', description: 'Exam room ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam room retrieved successfully',
+        type: Object,
+    })
+    async getExamRoomById(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string
+    ) {
+        return this.examRoomService.getExamRoomById(id, req.user);
+    }
+
+    @Put(':id')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Update an exam room by ID' })
+    @ApiParam({ name: 'id', description: 'Exam room ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam room updated successfully',
+        type: Object,
+    })
+    async updateExamRoom(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string,
+        @Body() updateExamRoomDto: UpdateExamRoomDto
+    ) {
+        return this.examRoomService.updateExamRoom(
+            id,
+            req.user,
+            updateExamRoomDto
+        );
+    }
+
+    @Get('list')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get a list of exam rooms' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam rooms retrieved successfully',
+        type: [Object],
+    })
+    async getExamRooms(
+        @Req() req: AuthenticatedRequest,
+        @Body() getExamRoomsDto: GetExamRoomsDto
+    ) {
+        return this.examRoomService.getExamRooms(req.user, getExamRoomsDto);
+    }
+
+    @Delete(':id')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Delete an exam room by ID' })
+    @ApiParam({ name: 'id', description: 'Exam room ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam room deleted successfully',
+        type: Object,
+    })
+    async deleteExamRoom(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string
+    ) {
+        return this.examRoomService.deleteExamRoom(id, req.user);
+    }
+
+    @Get('get-public/:id')
+    @ApiOperation({ summary: 'Get a public exam room by ID' })
+    @ApiParam({ name: 'id', description: 'Exam room ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Public exam room retrieved successfully',
+        type: Object,
+    })
+    async getPublicExamRoomById(@Param('id') id: string) {
+        return this.examRoomService.getExamRoomPublicById(id);
+    }
+}
