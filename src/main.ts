@@ -11,7 +11,7 @@ async function bootstrap() {
             process.env.FRONTEND_URL,
             'http://localhost:3001',
             'http://localhost:3002',
-        ].filter((u) => typeof u === 'string'),
+        ].join(','),
         methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
         credentials: true,
     });
