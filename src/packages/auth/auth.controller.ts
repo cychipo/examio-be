@@ -264,4 +264,12 @@ export class AuthController {
         const frontendUrl = process.env.FRONTEND_URL;
         res.redirect(`${frontendUrl}/`);
     }
+
+    @Get('me')
+    @UseGuards(AuthGuard)
+    @ApiOperation({ summary: 'Lấy thông tin người dùng hiện tại' })
+    @ApiCookieAuth('cookie-auth')
+    async getUser(@Req() req: AuthenticatedRequest) {
+        return this.authService.getUser(req.user);
+    }
 }
