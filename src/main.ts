@@ -4,14 +4,25 @@ import { AppModule } from './app.module';
 import { swaggerConfig } from './config/swagger.config';
 import { SwaggerModule } from '@nestjs/swagger';
 
+const whitelist = [
+    process.env.FRONTEND_URL,
+    'http://localhost:3001',
+    'http://localhost:3002'
+].filter(u => typeof u === 'string');
+
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
     app.enableCors({
-        origin: [
-            process.env.FRONTEND_URL,
-            'http://localhost:3001',
-            'http://localhost:3002',
-        ].join(','),
+        origin: function (origin, callback) {
+            // Check if the incoming request's 'origin' is in our whitelist
+            if (whitelist.indexOf(origin) !== -1 || !origin) {
+                // If it is, allow it by reflecting the origin
+                callback(null, true);
+            } else {
+                // If it's not, block it
+                callback(new Error('Not allowed by CORS'));
+            }
+        },
         methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
         credentials: true,
     });
