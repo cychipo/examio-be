@@ -419,4 +419,19 @@ export class AuthService {
             avatar
         );
     }
+
+    async getUser(user: User) {
+        const foundUser = await this.prisma.user.findUnique({
+            where: { id: user.id },
+            include: {
+                wallet: {
+                    select: { balance: true },
+                },
+            },
+        });
+        if (!foundUser) {
+            throw new NotFoundException('Người dùng không tồn tại');
+        }
+        return { user: sanitizeUser(foundUser) };
+    }
 }

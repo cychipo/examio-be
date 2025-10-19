@@ -7,7 +7,7 @@
         "build": "nest build",
         "start": "nest start",
         "prisma:merge": "prisma-merge -b prisma/base.prisma -s 'prisma/models/*.prisma' -o prisma/schema.prisma",
-        "prisma:generate": "pnpm prisma:push && prisma generate",
+        "prisma:generate": "prisma generate",
         "prisma:migrate": "pnpm prisma:merge && prisma migrate dev",
         "prisma:push": "pnpm prisma:merge && prisma db push",
         "start:dev": "pnpm prisma:merge && nest start --watch",
