@@ -109,7 +109,11 @@ export class ExamAttemptService {
                             include: {
                                 quizSet: {
                                     include: {
-                                        questions: true,
+                                        detailsQuizQuestions: {
+                                            include: {
+                                                quizQuestion: true,
+                                            },
+                                        },
                                     },
                                 },
                             },

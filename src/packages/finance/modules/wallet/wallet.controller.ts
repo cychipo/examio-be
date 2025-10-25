@@ -17,9 +17,10 @@ import {
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { WalletService } from './wallet.service';
 import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import { WalletDto } from './dto/wallet-response.dto';
 
 @ApiTags('Wallet')
-@ApiExtraModels()
+@ApiExtraModels(WalletDto)
 @Controller('wallet')
 export class WalletController {
     constructor(private readonly walletService: WalletService) {}
@@ -31,7 +32,7 @@ export class WalletController {
     @ApiResponse({
         status: 200,
         description: 'Wallet information retrieved successfully',
-        type: Object,
+        type: WalletDto,
     })
     async getWallet(@Req() req: AuthenticatedRequest) {
         return this.walletService.getWallet(req.user);

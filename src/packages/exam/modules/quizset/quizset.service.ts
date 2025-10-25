@@ -10,6 +10,7 @@ import { User } from '@prisma/client';
 import { CreateQuizsetDto } from './dto/create-quizset.dto';
 import { GetQuizsetsDto } from './dto/get-quizset.dto';
 import { UpdateQuizSetDto } from './dto/update-quizset.dto';
+import { SetQuizzToQuizsetDto } from './dto/set-quizz-to-quizset.dto';
 
 @Injectable()
 export class QuizsetService {
@@ -47,12 +48,26 @@ export class QuizsetService {
     async getQuizSetById(id: string, user: User) {
         const quizSet = await this.prisma.quizSet.findUnique({
             where: { id, userId: user.id },
-            include: { questions: true },
+            include: {
+                detailsQuizQuestions: {
+                    include: {
+                        quizQuestion: true,
+                    },
+                },
+            },
         });
         if (!quizSet) {
             throw new NotFoundException('Bộ câu hỏi không tồn tại');
         }
-        return quizSet;
+
+        // Transform để trả về questions như cũ
+        const { detailsQuizQuestions, ...quizSetData } = quizSet;
+        return {
+            ...quizSetData,
+            questions: detailsQuizQuestions.map(
+                (detail) => detail.quizQuestion
+            ),
+        };
     }
 
     async deleteQuizSet(id: string, user: User) {
@@ -73,12 +88,26 @@ export class QuizsetService {
     async getQuizSetPublicById(id: string) {
         const quizSet = await this.prisma.quizSet.findUnique({
             where: { id, isPublic: true },
-            include: { questions: true },
+            include: {
+                detailsQuizQuestions: {
+                    include: {
+                        quizQuestion: true,
+                    },
+                },
+            },
         });
         if (!quizSet) {
             throw new NotFoundException('Bộ câu hỏi không tồn tại');
         }
-        return quizSet;
+
+        // Transform để trả về questions như cũ
+        const { detailsQuizQuestions, ...quizSetData } = quizSet;
+        return {
+            ...quizSetData,
+            questions: detailsQuizQuestions.map(
+                (detail) => detail.quizQuestion
+            ),
+        };
     }
 
     async getQuizSets(user: User, dto: GetQuizsetsDto) {
@@ -154,6 +183,96 @@ export class QuizsetService {
             }
             throw new InternalServerErrorException(
                 'Cập nhật bộ câu hỏi thất bại'
+            );
+        }
+    }
+
+    async setQuizzsToQuizSet(user: User, dto: SetQuizzToQuizsetDto) {
+        try {
+            // Validate input
+            if (!dto.quizsetIds || dto.quizsetIds.length === 0) {
+                throw new ConflictException('Quizset IDs không được để trống');
+            }
+
+            if (!dto.quizzes || dto.quizzes.length === 0) {
+                throw new ConflictException(
+                    'Danh sách câu hỏi không được để trống'
+                );
+            }
+
+            const result = await this.prisma.$transaction(async (tx) => {
+                const quizSets = await tx.quizSet.findMany({
+                    where: {
+                        id: { in: dto.quizsetIds },
+                        userId: user.id,
+                    },
+                    select: { id: true },
+                });
+
+                if (quizSets.length === 0) {
+                    throw new NotFoundException(
+                        'Không tìm thấy bộ câu hỏi nào'
+                    );
+                }
+
+                if (quizSets.length !== dto.quizsetIds.length) {
+                    throw new NotFoundException(
+                        'Một số bộ câu hỏi không tồn tại hoặc không thuộc về bạn'
+                    );
+                }
+
+                const quizSetIds = quizSets.map((qs) => qs.id);
+
+                const createdQuestions = await Promise.all(
+                    dto.quizzes.map(async (quiz) => {
+                        const questionId = this.generateIdService.generateId();
+
+                        await tx.quizQuestion.create({
+                            data: {
+                                id: questionId,
+                                question: quiz.question,
+                                options: quiz.options,
+                                answer: quiz.answer,
+                            },
+                        });
+
+                        await Promise.all(
+                            quizSetIds.map((quizSetId) =>
+                                tx.detailsQuizQuestion.create({
+                                    data: {
+                                        id: this.generateIdService.generateId(),
+                                        quizSetId: quizSetId,
+                                        quizQuestionId: questionId,
+                                    },
+                                })
+                            )
+                        );
+
+                        return questionId;
+                    })
+                );
+
+                return {
+                    createdQuestionsCount: createdQuestions.length,
+                    affectedQuizSetsCount: quizSetIds.length,
+                };
+            });
+
+            return {
+                message: `Thêm ${result.createdQuestionsCount} câu hỏi vào ${result.affectedQuizSetsCount} bộ câu hỏi thành công`,
+                createdCount: result.createdQuestionsCount,
+                affectedQuizSets: result.affectedQuizSetsCount,
+            };
+        } catch (error) {
+            console.log('Error in setQuizzsToQuizSet:', error);
+            if (
+                error instanceof NotFoundException ||
+                error instanceof ConflictException
+            ) {
+                throw error;
+            }
+            throw new InternalServerErrorException(
+                'Thêm câu hỏi vào bộ câu hỏi thất bại'
             );
         }
     }

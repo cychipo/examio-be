@@ -21,3 +21,14 @@ export enum PARTICIPANT_STATUS {
     REJECTED = 2,
     LEFT = 3,
 }
+
+export interface Quizz {
+    question: string;
+    options: string[];
+    answer: string;
+}
+
+export interface Flashcard {
+    question: string;
+    answer: string;
+}

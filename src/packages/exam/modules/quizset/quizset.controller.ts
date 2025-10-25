@@ -8,6 +8,7 @@ import {
     Res,
     Put,
     Delete,
+    Param,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -22,9 +23,28 @@ import { QuizsetService } from './quizset.service';
 import { CreateQuizsetDto } from './dto/create-quizset.dto';
 import { UpdateQuizSetDto } from './dto/update-quizset.dto';
 import { GetQuizsetsDto } from './dto/get-quizset.dto';
+import { SetQuizzToQuizsetDto } from './dto/set-quizz-to-quizset.dto';
+import {
+    CreateQuizSetResponseDto,
+    UpdateQuizSetResponseDto,
+    GetQuizSetsResponseDto,
+    DeleteQuizSetResponseDto,
+    SetQuizzesToQuizSetResponseDto,
+    QuizSetDto,
+} from './dto/quizset-response.dto';
 
 @ApiTags('Quizsets')
-@ApiExtraModels(CreateQuizsetDto, UpdateQuizSetDto, GetQuizsetsDto)
+@ApiExtraModels(
+    CreateQuizsetDto,
+    UpdateQuizSetDto,
+    GetQuizsetsDto,
+    CreateQuizSetResponseDto,
+    UpdateQuizSetResponseDto,
+    GetQuizSetsResponseDto,
+    DeleteQuizSetResponseDto,
+    SetQuizzesToQuizSetResponseDto,
+    QuizSetDto
+)
 @Controller('quizsets')
 export class QuizsetController {
     constructor(private readonly quizsetService: QuizsetService) {}
@@ -36,7 +56,7 @@ export class QuizsetController {
     @ApiResponse({
         status: 201,
         description: 'Quiz set created successfully',
-        type: Object,
+        type: CreateQuizSetResponseDto,
     })
     async createQuizSet(
         @Req() req: AuthenticatedRequest,
@@ -52,7 +72,7 @@ export class QuizsetController {
     @ApiResponse({
         status: 200,
         description: 'Quiz set retrieved successfully',
-        type: Object,
+        type: QuizSetDto,
     })
     async getQuizSetById(
         @Req() req: AuthenticatedRequest,
@@ -68,7 +88,7 @@ export class QuizsetController {
     @ApiResponse({
         status: 200,
         description: 'Quiz set updated successfully',
-        type: Object,
+        type: UpdateQuizSetResponseDto,
     })
     async updateQuizSet(
         @Req() req: AuthenticatedRequest,
@@ -89,11 +109,11 @@ export class QuizsetController {
     @ApiResponse({
         status: 200,
         description: 'Quiz sets retrieved successfully',
-        type: [Object],
+        type: GetQuizSetsResponseDto,
     })
     async getQuizSets(
         @Req() req: AuthenticatedRequest,
-        @Body() getQuizsetsDto: GetQuizsetsDto
+        @Param() getQuizsetsDto: GetQuizsetsDto
     ) {
         return this.quizsetService.getQuizSets(req.user, getQuizsetsDto);
     }
@@ -105,7 +125,7 @@ export class QuizsetController {
     @ApiResponse({
         status: 200,
         description: 'Quiz set deleted successfully',
-        type: Object,
+        type: DeleteQuizSetResponseDto,
     })
     async deleteQuizSet(
         @Req() req: AuthenticatedRequest,
@@ -119,9 +139,25 @@ export class QuizsetController {
     @ApiResponse({
         status: 200,
         description: 'Public quiz set retrieved successfully',
-        type: Object,
+        type: QuizSetDto,
     })
     async getPublicQuizSetById(@Body('id') id: string) {
         return this.quizsetService.getQuizSetPublicById(id);
+    }
+
+    @Post('set-quizzes-to-quizset')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Set quizz to quizset' })
+    @ApiResponse({
+        status: 200,
+        description: 'Set quizz to quizset successfully',
+        type: SetQuizzesToQuizSetResponseDto,
+    })
+    async setQuizzToQuizset(
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: SetQuizzToQuizsetDto
+    ) {
+        return this.quizsetService.setQuizzsToQuizSet(req.user, dto);
     }
 }

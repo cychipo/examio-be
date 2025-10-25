@@ -26,9 +26,24 @@ import { GoogleAuthGuard } from 'src/common/guard/google-auth.guard';
 import { Response as ExpressResponse } from 'express';
 import { FacebookAuthGuard } from '../../common/guard/facebook-auth.guard';
 import { GithubAuthGuard } from 'src/common/guard/github-auth.guard';
+import {
+    LoginResponseDto,
+    RegisterResponseDto,
+    LogoutResponseDto,
+    MessageResponseDto,
+    GetUserResponseDto,
+} from './dto/auth-response.dto';
 
 @ApiTags('Auth')
-@ApiExtraModels(RegisterDto, LoginDto)
+@ApiExtraModels(
+    RegisterDto,
+    LoginDto,
+    RegisterResponseDto,
+    LoginResponseDto,
+    LogoutResponseDto,
+    MessageResponseDto,
+    GetUserResponseDto
+)
 @Controller('auth')
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
@@ -38,7 +53,7 @@ export class AuthController {
     @ApiResponse({
         status: 201,
         description: 'User registered successfully',
-        type: RegisterDto,
+        type: RegisterResponseDto,
     })
     async register(@Body() registerDto: RegisterDto) {
         return this.authService.register(registerDto);
@@ -54,7 +69,7 @@ export class AuthController {
         status: 200,
         description:
             'User logged in successfully. JWT token is automatically stored in cookie.',
-        type: LoginResponse,
+        type: LoginResponseDto,
     })
     async login(
         @Body() loginDto: LoginDto,
@@ -92,6 +107,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'User logged out successfully',
+        type: LogoutResponseDto,
     })
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
@@ -105,6 +121,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'Verification email sent successfully',
+        type: MessageResponseDto,
     })
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
@@ -117,6 +134,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'User account verified successfully',
+        type: MessageResponseDto,
     })
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
@@ -132,6 +150,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'Code sent successfully',
+        type: MessageResponseDto,
     })
     async sendCodeResetPassword(@Body('email') email: string) {
         return this.authService.sendCodeToResetPassword(email);
@@ -142,6 +161,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'Password reset successfully',
+        type: MessageResponseDto,
     })
     async resetPassword(
         @Body('email') email: string,
@@ -269,6 +289,11 @@ export class AuthController {
     @UseGuards(AuthGuard)
     @ApiOperation({ summary: 'Lấy thông tin người dùng hiện tại' })
     @ApiCookieAuth('cookie-auth')
+    @ApiResponse({
+        status: 200,
+        description: 'User information retrieved successfully',
+        type: GetUserResponseDto,
+    })
     async getUser(@Req() req: AuthenticatedRequest) {
         return this.authService.getUser(req.user);
     }
