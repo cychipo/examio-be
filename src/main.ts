@@ -7,8 +7,9 @@ import { SwaggerModule } from '@nestjs/swagger';
 const whitelist = [
     process.env.FRONTEND_URL,
     'http://localhost:3001',
-    'http://localhost:3002'
-].filter(u => typeof u === 'string');
+    'http://localhost:3002',
+    'http://localhost:3000',
+].filter((u) => typeof u === 'string');
 
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);

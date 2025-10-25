@@ -7,6 +7,7 @@ import {
     Get,
     Put,
     Delete,
+    Param,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -21,12 +22,27 @@ import { FlashcardsetService } from './flashcardset.service';
 import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
 import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
+import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
+import {
+    CreateFlashCardSetResponseDto,
+    UpdateFlashCardSetResponseDto,
+    GetFlashCardSetsResponseDto,
+    DeleteFlashCardSetResponseDto,
+    SetFlashcardsToFlashcardSetResponseDto,
+    FlashCardSetDto,
+} from './dto/flashcardset-response.dto';
 
 @ApiTags('Flashcardsets')
 @ApiExtraModels(
     CreateFlashcardsetDto,
     UpdateFlashcardSetDto,
-    GetFlashcardsetsDto
+    GetFlashcardsetsDto,
+    CreateFlashCardSetResponseDto,
+    UpdateFlashCardSetResponseDto,
+    GetFlashCardSetsResponseDto,
+    DeleteFlashCardSetResponseDto,
+    SetFlashcardsToFlashcardSetResponseDto,
+    FlashCardSetDto
 )
 @Controller('flashcardsets')
 export class FlashcardsetController {
@@ -39,7 +55,7 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 201,
         description: 'Flashcard set created successfully',
-        type: Object,
+        type: CreateFlashCardSetResponseDto,
     })
     async createFlashcardSet(
         @Req() req: AuthenticatedRequest,
@@ -58,7 +74,7 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 200,
         description: 'Flashcard set retrieved successfully',
-        type: Object,
+        type: FlashCardSetDto,
     })
     async getFlashcardSetById(
         @Req() req: AuthenticatedRequest,
@@ -74,7 +90,7 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 200,
         description: 'Flashcard set updated successfully',
-        type: Object,
+        type: UpdateFlashCardSetResponseDto,
     })
     async updateFlashcardSet(
         @Req() req: AuthenticatedRequest,
@@ -95,11 +111,11 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 200,
         description: 'Flashcard sets retrieved successfully',
-        type: [Object],
+        type: GetFlashCardSetsResponseDto,
     })
     async getFlashcardSets(
         @Req() req: AuthenticatedRequest,
-        @Body() getFlashcardsetsDto: GetFlashcardsetsDto
+        @Param() getFlashcardsetsDto: GetFlashcardsetsDto
     ) {
         return this.flashcardsetService.getFlashcardSets(
             req.user,
@@ -114,7 +130,7 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 200,
         description: 'Flashcard set deleted successfully',
-        type: Object,
+        type: DeleteFlashCardSetResponseDto,
     })
     async deleteFlashcardSet(
         @Req() req: AuthenticatedRequest,
@@ -128,9 +144,28 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 200,
         description: 'Public flashcard set retrieved successfully',
-        type: Object,
+        type: FlashCardSetDto,
     })
     async getPublicFlashcardSetById(@Body('id') id: string) {
         return this.flashcardsetService.getFlashcardSetPublicById(id);
+    }
+
+    @Post('set-flashcards-to-flashcardset')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Set flashcards to a flashcard set' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcards set to flashcard set successfully',
+        type: SetFlashcardsToFlashcardSetResponseDto,
+    })
+    async setFlashcardsToFlashcardset(
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: SetFlashcardToFlashcardsetDto
+    ) {
+        return this.flashcardsetService.setFlashcardsToFlashcardSet(
+            req.user,
+            dto
+        );
     }
 }

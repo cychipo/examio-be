@@ -10,6 +10,7 @@ import { User } from '@prisma/client';
 import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
 import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
 import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
+import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
 
 @Injectable()
 export class FlashcardsetService {
@@ -49,12 +50,24 @@ export class FlashcardsetService {
     async getFlashcardSetById(id: string, user: User) {
         const flashcardSet = await this.prisma.flashCardSet.findUnique({
             where: { id, userId: user.id },
-            include: { flashCards: true },
+            include: {
+                detailsFlashCard: {
+                    include: {
+                        flashCard: true,
+                    },
+                },
+            },
         });
         if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
-        return flashcardSet;
+
+        // Transform để trả về flashCards như cũ
+        const { detailsFlashCard, ...flashcardSetData } = flashcardSet;
+        return {
+            ...flashcardSetData,
+            flashCards: detailsFlashCard.map((detail) => detail.flashCard),
+        };
     }
 
     async deleteFlashcardSet(id: string, user: User) {
@@ -75,12 +88,24 @@ export class FlashcardsetService {
     async getFlashcardSetPublicById(id: string) {
         const flashcardSet = await this.prisma.flashCardSet.findUnique({
             where: { id, isPublic: true },
-            include: { flashCards: true },
+            include: {
+                detailsFlashCard: {
+                    include: {
+                        flashCard: true,
+                    },
+                },
+            },
         });
         if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
-        return flashcardSet;
+
+        // Transform để trả về flashCards như cũ
+        const { detailsFlashCard, ...flashcardSetData } = flashcardSet;
+        return {
+            ...flashcardSetData,
+            flashCards: detailsFlashCard.map((detail) => detail.flashCard),
+        };
     }
 
     async getFlashcardSets(user: User, dto: GetFlashcardsetsDto) {
@@ -160,6 +185,83 @@ export class FlashcardsetService {
             }
             throw new InternalServerErrorException(
                 'Cập nhật bộ thẻ ghi nhớ thất bại'
+            );
+        }
+    }
+
+    async setFlashcardsToFlashcardSet(
+        user: User,
+        dto: SetFlashcardToFlashcardsetDto
+    ) {
+        try {
+            const result = await this.prisma.$transaction(async (tx) => {
+                const flashcardSets = await tx.flashCardSet.findMany({
+                    where: {
+                        id: { in: dto.flashcardsetIds },
+                        userId: user.id,
+                    },
+                    select: { id: true },
+                });
+
+                if (flashcardSets.length === 0) {
+                    throw new NotFoundException(
+                        'Không tìm thấy bộ thẻ ghi nhớ nào'
+                    );
+                }
+
+                if (flashcardSets.length !== dto.flashcardsetIds.length) {
+                    throw new NotFoundException(
+                        'Một số bộ thẻ ghi nhớ không tồn tại hoặc không thuộc về bạn'
+                    );
+                }
+
+                const flashcardSetIds = flashcardSets.map((fs) => fs.id);
+
+                const createdFlashcards = await Promise.all(
+                    dto.flashcards.map(async (flashcard) => {
+                        const flashcardId = this.generateIdService.generateId();
+
+                        await tx.flashCard.create({
+                            data: {
+                                id: flashcardId,
+                                question: flashcard.question,
+                                answer: flashcard.answer,
+                            },
+                        });
+
+                        await Promise.all(
+                            flashcardSetIds.map((flashcardSetId) =>
+                                tx.detailsFlashCard.create({
+                                    data: {
+                                        id: this.generateIdService.generateId(),
+                                        flashCardSetId: flashcardSetId,
+                                        flashCardId: flashcardId,
+                                    },
+                                })
+                            )
+                        );
+
+                        return flashcardId;
+                    })
+                );
+
+                return {
+                    createdFlashcardsCount: createdFlashcards.length,
+                    affectedFlashcardSetsCount: flashcardSetIds.length,
+                };
+            });
+
+            return {
+                message: `Thêm ${result.createdFlashcardsCount} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ thành công`,
+                createdCount: result.createdFlashcardsCount,
+                affectedFlashcardSets: result.affectedFlashcardSetsCount,
+            };
+        } catch (error) {
+            if (error instanceof NotFoundException) {
+                throw error;
+            }
+            throw new InternalServerErrorException(
+                'Thêm thẻ ghi nhớ vào bộ thẻ ghi nhớ thất bại'
             );
         }
     }

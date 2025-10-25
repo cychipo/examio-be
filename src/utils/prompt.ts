@@ -19,14 +19,16 @@ export class PromptUtils {
             - Only ask about knowledge, information, facts, concepts, definitions, figures, or specific content in the document.
             - Each question has 4 answers (A, B, C, D), only 1 answer is correct.
             - The correct answer is clearly marked.
-            - The result content for the fields in json must be in Vietnamese (field name is in English and the content is in Vietnamese or numbers)
+            - The result content for the fields in json must be in Vietnamese (field name is in English and the content is in Vietnamese or numbers). Except in the case where the uploaded file is for a foreign language subject (for example, English, Korean, ...). It must be the question in the original language in the file (note that it is the question for a foreign language subject such as English, Chinese, ... and not based on the language in the file).
             - The result returns a JSON array, each item has the form:
             {
             "question": "...",
-            "options": ["A", "B", "C", "D"],
+            "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
             "answer": "C",
             "sourcePageRange": "${pageRange}"
             }
+            - Note that each answer must have the letter A/B/C/D at the beginning, not missing
+            - The correct answer only needs the letter A/B/C/D at the beginning, not the answer content
 
             Content:
             ${content.content}
@@ -54,7 +56,7 @@ export class PromptUtils {
             - Each flashcard has:
             - A short question (≤ 20 words, in Vietnamese).
             - A concise and precise answer (1–3 sentences, in Vietnamese).
-            - The result content for the fields in JSON must be in Vietnamese (field name is in English, content in Vietnamese or numbers).
+            - The result content for the fields in JSON must be in Vietnamese (field name is in English, content in Vietnamese or numbers). Except in the case where the uploaded file is for a foreign language subject (for example, English, Korean, ...). It must be the question in the original language in the file (note that it is the question for a foreign language subject such as English, Chinese, ... and not based on the language in the file).
             - The result returns a JSON array, each item has the form:
             {
                 "question": "...",
