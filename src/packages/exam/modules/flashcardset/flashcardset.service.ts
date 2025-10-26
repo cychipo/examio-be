@@ -4,6 +4,7 @@ import {
     ConflictException,
     NotFoundException,
     InternalServerErrorException,
+    BadRequestException,
 } from '@nestjs/common';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { User } from '@prisma/client';
@@ -11,6 +12,7 @@ import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
 import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
 import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
+import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
 
 @Injectable()
 export class FlashcardsetService {
@@ -262,6 +264,179 @@ export class FlashcardsetService {
             }
             throw new InternalServerErrorException(
                 'Thêm thẻ ghi nhớ vào bộ thẻ ghi nhớ thất bại'
+            );
+        }
+    }
+
+    /**
+     * Lưu flashcards từ HistoryGeneratedFlashcard vào FlashCardSet
+     * - 1 historyId chứa nhiều flashcards (JSON array)
+     * - Lấy tất cả flashcards từ history.flashcards
+     * - Tạo FlashCard từ mỗi flashcard trong array
+     * - Tạo DetailsFlashCard với historyGeneratedFlashcardId để track và prevent duplicate
+     * - Constraint @@unique([flashCardSetId, historyGeneratedFlashcardId]) sẽ tự động ngăn lưu trùng
+     */
+    async saveHistoryToFlashcardSet(
+        user: User,
+        dto: SaveHistoryToFlashcardsetDto
+    ) {
+        try {
+            // Validate input
+            if (!dto.flashcardsetIds || dto.flashcardsetIds.length === 0) {
+                throw new BadRequestException(
+                    'Flashcardset IDs không được để trống'
+                );
+            }
+
+            if (!dto.historyId) {
+                throw new BadRequestException('History ID không được để trống');
+            }
+
+            const result = await this.prisma.$transaction(async (tx) => {
+                // Validate flashcardSets thuộc về user
+                const flashcardSets = await tx.flashCardSet.findMany({
+                    where: {
+                        id: { in: dto.flashcardsetIds },
+                        userId: user.id,
+                    },
+                    select: { id: true },
+                });
+
+                if (flashcardSets.length === 0) {
+                    throw new NotFoundException(
+                        'Không tìm thấy bộ thẻ ghi nhớ nào'
+                    );
+                }
+
+                if (flashcardSets.length !== dto.flashcardsetIds.length) {
+                    throw new NotFoundException(
+                        'Một số bộ thẻ ghi nhớ không tồn tại hoặc không thuộc về bạn'
+                    );
+                }
+
+                // Validate history record thuộc về user
+                const history = await tx.historyGeneratedFlashcard.findUnique({
+                    where: {
+                        id: dto.historyId,
+                        userId: user.id,
+                    },
+                });
+
+                if (!history) {
+                    throw new NotFoundException(
+                        'Không tìm thấy history hoặc không thuộc về bạn'
+                    );
+                }
+
+                // Parse flashcards array từ JSON field
+                const flashcards = Array.isArray(history.flashcards)
+                    ? history.flashcards
+                    : [];
+
+                if (flashcards.length === 0) {
+                    throw new BadRequestException(
+                        'History không có flashcard nào'
+                    );
+                }
+
+                const flashcardSetIds = flashcardSets.map((fs) => fs.id);
+                let createdCount = 0;
+                let skippedCount = 0;
+
+                // Kiểm tra history đã được lưu vào flashcardSet nào chưa
+                const existingDetails = await tx.detailsFlashCard.findMany({
+                    where: {
+                        flashCardSetId: { in: flashcardSetIds },
+                        historyGeneratedFlashcardId: dto.historyId,
+                    },
+                    select: {
+                        flashCardSetId: true,
+                    },
+                });
+
+                // Tạo Set các flashcardSetId đã có history này
+                const existingFlashcardSetIds = new Set(
+                    existingDetails.map((d) => d.flashCardSetId)
+                );
+
+                // Tạo FlashCard cho mỗi flashcard trong history
+                for (const flashcard of flashcards) {
+                    if (
+                        !flashcard ||
+                        typeof flashcard !== 'object' ||
+                        Array.isArray(flashcard)
+                    ) {
+                        continue;
+                    }
+
+                    const flashcardData = flashcard as {
+                        question?: string;
+                        answer?: string;
+                    };
+
+                    const flashcardId = this.generateIdService.generateId();
+
+                    // Tạo FlashCard từ flashcard data
+                    await tx.flashCard.create({
+                        data: {
+                            id: flashcardId,
+                            question: flashcardData.question || '',
+                            answer: flashcardData.answer || '',
+                        },
+                    });
+
+                    // Tạo DetailsFlashCard cho mỗi flashcardSet chưa có history này
+                    for (const flashcardSetId of flashcardSetIds) {
+                        // Skip nếu flashcardSet này đã có history này rồi
+                        if (existingFlashcardSetIds.has(flashcardSetId)) {
+                            console.log(
+                                `⚠️ History ${history.id} đã được lưu vào FlashcardSet ${flashcardSetId} trước đó`
+                            );
+                            skippedCount++;
+                            continue;
+                        }
+
+                        await tx.detailsFlashCard.create({
+                            data: {
+                                id: this.generateIdService.generateId(),
+                                flashCardSetId: flashcardSetId,
+                                flashCardId: flashcardId,
+                                historyGeneratedFlashcardId: history.id,
+                            },
+                        });
+                        createdCount++;
+                    }
+
+                    // Sau khi tạo xong flashcard này cho tất cả flashcardSets, mark tất cả là đã có
+                    flashcardSetIds.forEach((id) =>
+                        existingFlashcardSetIds.add(id)
+                    );
+                }
+
+                return {
+                    createdCount,
+                    skippedCount,
+                    totalFlashcards: flashcards.length,
+                    affectedFlashcardSetsCount: flashcardSetIds.length,
+                };
+            });
+
+            return {
+                message: `Đã lưu ${result.totalFlashcards} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ${result.skippedCount > 0 ? ` (${result.skippedCount} đã tồn tại)` : ''}`,
+                createdCount: result.createdCount,
+                skippedCount: result.skippedCount,
+                affectedFlashcardSets: result.affectedFlashcardSetsCount,
+            };
+        } catch (error) {
+            console.log('Error in saveHistoryToFlashcardSet:', error);
+            if (
+                error instanceof NotFoundException ||
+                error instanceof BadRequestException
+            ) {
+                throw error;
+            }
+            throw new InternalServerErrorException(
+                'Lưu thẻ ghi nhớ từ history thất bại'
             );
         }
     }

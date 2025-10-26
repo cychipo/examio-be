@@ -23,6 +23,7 @@ import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
 import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
+import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
 import {
     CreateFlashCardSetResponseDto,
     UpdateFlashCardSetResponseDto,
@@ -164,6 +165,27 @@ export class FlashcardsetController {
         @Body() dto: SetFlashcardToFlashcardsetDto
     ) {
         return this.flashcardsetService.setFlashcardsToFlashcardSet(
+            req.user,
+            dto
+        );
+    }
+
+    @Post('save-history-to-flashcardset')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Save history generated flashcards to flashcard set',
+    })
+    @ApiResponse({
+        status: 200,
+        description: 'Save history to flashcard set successfully',
+        type: SetFlashcardsToFlashcardSetResponseDto,
+    })
+    async saveHistoryToFlashcardset(
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: SaveHistoryToFlashcardsetDto
+    ) {
+        return this.flashcardsetService.saveHistoryToFlashcardSet(
             req.user,
             dto
         );

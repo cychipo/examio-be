@@ -43,12 +43,16 @@ model QuizQuestion {
 }
 
 model DetailsQuizQuestion {
-    id             String @unique
-    quizSetId      String
-    quizQuestionId String @unique
+    id                      String  @unique
+    quizSetId               String
+    quizQuestionId          String  @unique
+    historyGeneratedQuizzId String?
 
-    quizSet      QuizSet      @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
-    quizQuestion QuizQuestion @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade)
+    quizSet               QuizSet                @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+    quizQuestion          QuizQuestion           @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade)
+    historyGeneratedQuizz HistoryGeneratedQuizz? @relation(fields: [historyGeneratedQuizzId], references: [id], onDelete: SetNull)
+
+    @@unique([quizSetId, historyGeneratedQuizzId])
 }
 
 model FlashCard {
@@ -62,12 +66,16 @@ model FlashCard {
 }
 
 model DetailsFlashCard {
-    id             String @unique
-    flashCardSetId String
-    flashCardId    String @unique
+    id                          String  @unique
+    flashCardSetId              String
+    flashCardId                 String  @unique
+    historyGeneratedFlashcardId String?
 
-    flashCardSet FlashCardSet @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
-    flashCard    FlashCard    @relation(fields: [flashCardId], references: [id], onDelete: Cascade)
+    flashCardSet              FlashCardSet               @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
+    flashCard                 FlashCard                  @relation(fields: [flashCardId], references: [id], onDelete: Cascade)
+    historyGeneratedFlashcard HistoryGeneratedFlashcard? @relation(fields: [historyGeneratedFlashcardId], references: [id], onDelete: SetNull)
+
+    @@unique([flashCardSetId, historyGeneratedFlashcardId])
 }
 
 model ExamRoom {
@@ -127,4 +135,30 @@ model ExamSessionParticipant {
 
     examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
     user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model HistoryGeneratedQuizz {
+    id            String   @unique
+    userId        String
+    userStorageId String
+    quizzes       Json // Lưu mảng câu hỏi dưới dạng JSON: [{question, options, answer}, ...]
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @default(now()) @updatedAt
+
+    user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userStorage          UserStorage           @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+    detailsQuizQuestions DetailsQuizQuestion[]
+}
+
+model HistoryGeneratedFlashcard {
+    id            String   @unique
+    userId        String
+    userStorageId String
+    flashcards    Json // Lưu mảng flashcards dưới dạng JSON: [{question, answer}, ...]
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @default(now()) @updatedAt
+
+    user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userStorage       UserStorage        @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+    detailsFlashCards DetailsFlashCard[]
 }
