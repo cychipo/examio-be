@@ -24,6 +24,7 @@ import { CreateQuizsetDto } from './dto/create-quizset.dto';
 import { UpdateQuizSetDto } from './dto/update-quizset.dto';
 import { GetQuizsetsDto } from './dto/get-quizset.dto';
 import { SetQuizzToQuizsetDto } from './dto/set-quizz-to-quizset.dto';
+import { SaveHistoryToQuizsetDto } from './dto/save-history-to-quizset.dto';
 import {
     CreateQuizSetResponseDto,
     UpdateQuizSetResponseDto,
@@ -159,5 +160,21 @@ export class QuizsetController {
         @Body() dto: SetQuizzToQuizsetDto
     ) {
         return this.quizsetService.setQuizzsToQuizSet(req.user, dto);
+    }
+
+    @Post('save-history-to-quizset')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Save history generated quizzes to quizset' })
+    @ApiResponse({
+        status: 200,
+        description: 'Save history to quizset successfully',
+        type: SetQuizzesToQuizSetResponseDto,
+    })
+    async saveHistoryToQuizset(
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: SaveHistoryToQuizsetDto
+    ) {
+        return this.quizsetService.saveHistoryToQuizSet(req.user, dto);
     }
 }

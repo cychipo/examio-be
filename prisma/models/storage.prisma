@@ -9,8 +9,10 @@ model UserStorage {
     createdAt DateTime @default(now())
     updatedAt DateTime @default(now()) @updatedAt
 
-    user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-    documents Document[]
+    user                      User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    documents                 Document[]
+    historyGeneratedQuizz     HistoryGeneratedQuizz[]
+    historyGeneratedFlashcard HistoryGeneratedFlashcard[]
 }
 
 model Document {

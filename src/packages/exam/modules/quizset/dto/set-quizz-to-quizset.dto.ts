@@ -22,6 +22,7 @@ export const SetQuizzToQuizsetSchema = z.object({
             })
         )
         .min(1, { message: 'At least one quiz is required' }),
+    historyGeneratedQuizzId: z.string().optional(),
 });
 
 export class SetQuizzToQuizsetDto extends createZodDto(
@@ -51,4 +52,11 @@ export class SetQuizzToQuizsetDto extends createZodDto(
         ],
     })
     quizzes: Quizz[];
+    @ApiProperty({
+        description:
+            'ID of the history generated quizz, used to track the source of the quizzes',
+        required: false,
+        example: 'historyQuizz12345',
+    })
+    historyGeneratedQuizzId?: string;
 }

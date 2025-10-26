@@ -362,7 +362,7 @@ export class AuthService {
                     data: {
                         id: this.generateIdService.generateId(),
                         userId: user.id,
-                        balance: 0,
+                        balance: 20,
                     },
                 });
 

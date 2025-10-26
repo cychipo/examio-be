@@ -12,16 +12,18 @@ model User {
     createdAt  DateTime @default(now())
     updatedAt  DateTime @updatedAt
 
-    verifyAccountCode       VerifyAccountCode?
-    resetPasswordCode       ResetPasswordCode?
-    userStorage             UserStorage[]
-    wallet                  Wallet?
-    payments                Payment[]
-    quizSets                QuizSet[]
-    flashCardSets           FlashCardSet[]
-    examRooms               ExamRoom[]
-    examAttempts            ExamAttempt[]
-    examSessionParticipants ExamSessionParticipant[]
+    verifyAccountCode         VerifyAccountCode?
+    resetPasswordCode         ResetPasswordCode?
+    userStorage               UserStorage[]
+    wallet                    Wallet?
+    payments                  Payment[]
+    quizSets                  QuizSet[]
+    flashCardSets             FlashCardSet[]
+    examRooms                 ExamRoom[]
+    examAttempts              ExamAttempt[]
+    examSessionParticipants   ExamSessionParticipant[]
+    historyGeneratedQuizz     HistoryGeneratedQuizz[]
+    historyGeneratedFlashcard HistoryGeneratedFlashcard[]
 }
 
 model VerifyAccountCode {

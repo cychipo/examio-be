@@ -19,6 +19,7 @@ export const SetFlashcardToFlashcardsetSchema = z.object({
             })
         )
         .min(1, { message: 'At least one flashcard is required' }),
+    historyGeneratedFlashcardId: z.string().optional(),
 });
 
 export class SetFlashcardToFlashcardsetDto extends createZodDto(
@@ -46,4 +47,11 @@ export class SetFlashcardToFlashcardsetDto extends createZodDto(
         ],
     })
     flashcards: Flashcard[];
+    @ApiProperty({
+        description:
+            'ID of the history generated flashcard, used to track the source of the flashcards',
+        required: false,
+        example: 'historyFlashcard12345',
+    })
+    historyGeneratedFlashcardId?: string;
 }

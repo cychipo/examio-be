@@ -416,8 +416,16 @@ export class AIService {
                     isNarrowSearch,
                     keyword
                 );
+
+                // Lưu vào bảng HistoryGeneratedQuizz
+                const savedQuizzes = await this.saveQuizzesToHistory(
+                    quiz,
+                    user.id,
+                    userStorage.id
+                );
+
                 await this.decrementUserCredit(user.id, file.size);
-                return JSON.stringify(quiz, null, 2);
+                return savedQuizzes;
             } else if (Number(typeResult) === TYPE_RESULT.FLASHCARD) {
                 const flashcards = await this.generateFlashcardsChunkBased(
                     userStorage.id,
@@ -425,8 +433,16 @@ export class AIService {
                     isNarrowSearch,
                     keyword
                 );
+
+                // Lưu vào bảng HistoryGeneratedFlashcard
+                const savedFlashcards = await this.saveFlashcardsToHistory(
+                    flashcards,
+                    user.id,
+                    userStorage.id
+                );
+
                 await this.decrementUserCredit(user.id, file.size);
-                return JSON.stringify(flashcards, null, 2);
+                return savedFlashcards;
             } else {
                 throw new BadRequestException(
                     `Invalid typeResult: ${typeResult}`
@@ -436,6 +452,52 @@ export class AIService {
             console.error('❌ Error in handleActionsWithFile:', error);
             throw error;
         }
+    }
+
+    /**
+     * Lưu danh sách quiz vào bảng HistoryGeneratedQuizz (1 record cho cả batch)
+     */
+    private async saveQuizzesToHistory(
+        quizzes: any[],
+        userId: string,
+        userStorageId: string
+    ) {
+        const savedHistory = await this.prisma.historyGeneratedQuizz.create({
+            data: {
+                id: this.generateIdService.generateId(),
+                userId: userId,
+                userStorageId: userStorageId,
+                quizzes: quizzes, // Lưu toàn bộ mảng vào JSON field
+            },
+        });
+
+        console.log(`✅ Đã lưu ${quizzes.length} câu hỏi vào 1 history record`);
+        return savedHistory;
+    }
+
+    /**
+     * Lưu danh sách flashcards vào bảng HistoryGeneratedFlashcard (1 record cho cả batch)
+     */
+    private async saveFlashcardsToHistory(
+        flashcards: any[],
+        userId: string,
+        userStorageId: string
+    ) {
+        const savedHistory = await this.prisma.historyGeneratedFlashcard.create(
+            {
+                data: {
+                    id: this.generateIdService.generateId(),
+                    userId: userId,
+                    userStorageId: userStorageId,
+                    flashcards: flashcards, // Lưu toàn bộ mảng vào JSON field
+                },
+            }
+        );
+
+        console.log(
+            `✅ Đã lưu ${flashcards.length} flashcards vào 1 history record`
+        );
+        return savedHistory;
     }
 
     private validatePdfFile(file: any) {
