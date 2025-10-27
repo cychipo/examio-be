@@ -548,7 +548,7 @@ export class AIService {
                 mimetype: file.mimetype,
                 size: file.size,
                 keyR2: r2Key,
-                url: r2File,
+                url: `https://examio-r2.fayedark.com/${r2File}`,
             },
         });
     }
