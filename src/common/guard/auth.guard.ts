@@ -18,17 +18,7 @@ export class AuthGuard implements CanActivate {
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
         const request: Request = context.switchToHttp().getRequest();
-
-        const cookieHeader = request.headers.cookie;
-        const cookies = cookie.parse(cookieHeader || '');
-        let token = cookies.token;
-
-        if (!token) {
-            const authHeader = request.headers.authorization;
-            if (authHeader && authHeader.startsWith('Bearer ')) {
-                token = authHeader.substring(7);
-            }
-        }
+        const token = this.extractTokenFromRequest(request);
 
         if (!token) {
             throw new UnauthorizedException('Token is required');
@@ -61,5 +51,29 @@ export class AuthGuard implements CanActivate {
         } catch (err) {
             throw new UnauthorizedException('Invalid or expired token');
         }
+    }
+
+    /**
+     * Extract token từ request theo thứ tự ưu tiên:
+     * 1. Cookie (ưu tiên cao nhất - secure với httpOnly)
+     * 2. Authorization header (fallback cho localStorage)
+     */
+    private extractTokenFromRequest(request: Request): string | undefined {
+        // 1. Ưu tiên: Check Cookie trước
+        const cookieHeader = request.headers.cookie;
+        if (cookieHeader) {
+            const cookies = cookie.parse(cookieHeader);
+            if (cookies.token) {
+                return cookies.token;
+            }
+        }
+
+        // 2. Fallback: Authorization header (cho localStorage)
+        const authHeader = request.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            return authHeader.substring(7);
+        }
+
+        return undefined;
     }
 }
