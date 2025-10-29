@@ -23,7 +23,7 @@ import {
     AuthenticatedOauthRequest,
 } from './dto/request-with-auth.dto';
 import { GoogleAuthGuard } from 'src/common/guard/google-auth.guard';
-import { Response as ExpressResponse } from 'express';
+import { Response as ExpressResponse, Request } from 'express';
 import { FacebookAuthGuard } from '../../common/guard/facebook-auth.guard';
 import { GithubAuthGuard } from 'src/common/guard/github-auth.guard';
 import {
@@ -73,21 +73,24 @@ export class AuthController {
     })
     async login(
         @Body() loginDto: LoginDto,
-        @Res({ passthrough: true }) res: ExpressResponse
+        @Res({ passthrough: true }) res: ExpressResponse,
+        @Req() request: Request
     ): Promise<LoginResponse> {
         const { token, user, success } = await this.authService.login(loginDto);
+        const feOrigin = request.headers.origin;
+        const isLocalDev = feOrigin?.includes('localhost:3001');
 
         const cookies = {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: (process.env.NODE_ENV === 'production'
+            secure: process.env.NODE_ENV === 'production' && !isLocalDev,
+            sameSite: (process.env.NODE_ENV === 'production' && !isLocalDev
                 ? 'none'
                 : 'lax') as 'none' | 'lax',
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             path: '/',
         };
 
-        if (process.env.NODE_ENV === 'production') {
+        if (process.env.NODE_ENV === 'production' && !isLocalDev) {
             Object.assign(cookies, {
                 domain: '.fayedark.com',
             });
@@ -183,20 +186,23 @@ export class AuthController {
     @ApiOperation({ summary: 'Google OAuth callback' })
     async googleAuthRedirect(
         @Req() req: AuthenticatedOauthRequest,
-        @Res({ passthrough: true }) res: ExpressResponse
+        @Res({ passthrough: true }) res: ExpressResponse,
+        @Req() request: Request
     ) {
-        const { token, user } = req.user;
+        const { token } = req.user;
+        const feOrigin = request.headers.origin;
+        const isLocalDev = feOrigin?.includes('localhost:3001');
         const cookies = {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: (process.env.NODE_ENV === 'production'
+            secure: process.env.NODE_ENV === 'production' && !isLocalDev,
+            sameSite: (process.env.NODE_ENV === 'production' && !isLocalDev
                 ? 'none'
                 : 'lax') as 'none' | 'lax',
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             path: '/',
         };
 
-        if (process.env.NODE_ENV === 'production') {
+        if (process.env.NODE_ENV === 'production' && !isLocalDev) {
             Object.assign(cookies, {
                 domain: '.fayedark.com',
             });
@@ -205,7 +211,9 @@ export class AuthController {
         res.cookie('token', token, cookies);
 
         // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL;
+        const frontendUrl = !isLocalDev
+            ? process.env.FRONTEND_URL
+            : 'http://localhost:3001';
         res.redirect(`${frontendUrl}/`);
     }
 
@@ -221,20 +229,23 @@ export class AuthController {
     @ApiOperation({ summary: 'Facebook OAuth callback' })
     async facebookCallback(
         @Req() req: AuthenticatedOauthRequest,
-        @Res({ passthrough: true }) res: ExpressResponse
+        @Res({ passthrough: true }) res: ExpressResponse,
+        @Req() request: Request
     ) {
-        const { token, user } = req.user;
+        const { token } = req.user;
+        const feOrigin = request.headers.origin;
+        const isLocalDev = feOrigin?.includes('localhost:3001');
         const cookies = {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: (process.env.NODE_ENV === 'production'
+            secure: process.env.NODE_ENV === 'production' && !isLocalDev,
+            sameSite: (process.env.NODE_ENV === 'production' && !isLocalDev
                 ? 'none'
                 : 'lax') as 'none' | 'lax',
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             path: '/',
         };
 
-        if (process.env.NODE_ENV === 'production') {
+        if (process.env.NODE_ENV === 'production' && !isLocalDev) {
             Object.assign(cookies, {
                 domain: '.fayedark.com',
             });
@@ -243,7 +254,9 @@ export class AuthController {
         res.cookie('token', token, cookies);
 
         // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL;
+        const frontendUrl = !isLocalDev
+            ? process.env.FRONTEND_URL
+            : 'http://localhost:3001';
         res.redirect(`${frontendUrl}/`);
     }
 
@@ -259,20 +272,23 @@ export class AuthController {
     @ApiOperation({ summary: 'GitHub OAuth callback' })
     async githubLoginCallback(
         @Req() req: AuthenticatedOauthRequest,
-        @Res({ passthrough: true }) res: ExpressResponse
+        @Res({ passthrough: true }) res: ExpressResponse,
+        @Req() request: Request
     ) {
-        const { token, user } = req.user;
+        const { token } = req.user;
+        const feOrigin = request.headers.origin;
+        const isLocalDev = feOrigin?.includes('localhost:3001');
         const cookies = {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: (process.env.NODE_ENV === 'production'
+            secure: process.env.NODE_ENV === 'production' && !isLocalDev,
+            sameSite: (process.env.NODE_ENV === 'production' && !isLocalDev
                 ? 'none'
                 : 'lax') as 'none' | 'lax',
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             path: '/',
         };
 
-        if (process.env.NODE_ENV === 'production') {
+        if (process.env.NODE_ENV === 'production' && !isLocalDev) {
             Object.assign(cookies, {
                 domain: '.fayedark.com',
             });
@@ -281,7 +297,9 @@ export class AuthController {
         res.cookie('token', token, cookies);
 
         // Redirect về dashboard
-        const frontendUrl = process.env.FRONTEND_URL;
+        const frontendUrl = !isLocalDev
+            ? process.env.FRONTEND_URL
+            : 'http://localhost:3001';
         res.redirect(`${frontendUrl}/`);
     }
 
