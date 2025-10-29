@@ -35,4 +35,12 @@ export class LoginResponse {
         example: true,
     })
     success: boolean;
+
+    @ApiProperty({
+        description:
+            'JWT token (fallback cho trường hợp cookie không hoạt động)',
+        example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        required: false,
+    })
+    token?: string;
 }

@@ -26,6 +26,13 @@ async function bootstrap() {
         },
         methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
         credentials: true,
+        allowedHeaders: [
+            'Content-Type',
+            'Authorization',
+            'Cookie',
+            'X-Requested-With',
+        ],
+        exposedHeaders: ['Set-Cookie'],
     });
     app.setGlobalPrefix('api/v1');
     const document = SwaggerModule.createDocument(app, swaggerConfig);

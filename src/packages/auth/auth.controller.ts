@@ -33,6 +33,7 @@ import {
     MessageResponseDto,
     GetUserResponseDto,
 } from './dto/auth-response.dto';
+import { getCookieConfig } from 'src/common/utils/cookie-config';
 
 @ApiTags('Auth')
 @ApiExtraModels(
@@ -77,31 +78,18 @@ export class AuthController {
         @Req() request: Request
     ): Promise<LoginResponse> {
         const { token, user, success } = await this.authService.login(loginDto);
-        const feOrigin = request.headers.origin;
-        const isLocalDev = feOrigin?.includes('localhost:3001');
 
-        const cookies = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production' && !isLocalDev,
-            sameSite: (process.env.NODE_ENV === 'production' && !isLocalDev
-                ? 'none'
-                : 'lax') as 'none' | 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            path: '/',
-        };
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
 
-        if (process.env.NODE_ENV === 'production' && !isLocalDev) {
-            Object.assign(cookies, {
-                domain: '.fayedark.com',
-            });
-        }
-
-        // set cookie
-        res.cookie('token', token, cookies);
+        res.cookie('token', token, cookieConfig);
 
         return {
             user,
             success,
+            token,
         };
     }
 
@@ -190,28 +178,18 @@ export class AuthController {
         @Req() request: Request
     ) {
         const { token } = req.user;
-        const feOrigin = request.headers.origin;
-        const isLocalDev = feOrigin?.includes('localhost:3001');
-        const cookies = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production' && !isLocalDev,
-            sameSite: (process.env.NODE_ENV === 'production' && !isLocalDev
-                ? 'none'
-                : 'lax') as 'none' | 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            path: '/',
-        };
 
-        if (process.env.NODE_ENV === 'production' && !isLocalDev) {
-            Object.assign(cookies, {
-                domain: '.fayedark.com',
-            });
-        }
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
 
-        res.cookie('token', token, cookies);
+        res.cookie('token', token, cookieConfig);
 
-        // Redirect về dashboard
-        const frontendUrl = !isLocalDev
+        const isLocalFE =
+            request.headers.origin?.includes('localhost') ||
+            request.headers.origin?.includes('127.0.0.1');
+        const frontendUrl = !isLocalFE
             ? process.env.FRONTEND_URL
             : 'http://localhost:3001';
         res.redirect(`${frontendUrl}/`);
@@ -233,28 +211,18 @@ export class AuthController {
         @Req() request: Request
     ) {
         const { token } = req.user;
-        const feOrigin = request.headers.origin;
-        const isLocalDev = feOrigin?.includes('localhost:3001');
-        const cookies = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production' && !isLocalDev,
-            sameSite: (process.env.NODE_ENV === 'production' && !isLocalDev
-                ? 'none'
-                : 'lax') as 'none' | 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            path: '/',
-        };
 
-        if (process.env.NODE_ENV === 'production' && !isLocalDev) {
-            Object.assign(cookies, {
-                domain: '.fayedark.com',
-            });
-        }
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
 
-        res.cookie('token', token, cookies);
+        res.cookie('token', token, cookieConfig);
 
-        // Redirect về dashboard
-        const frontendUrl = !isLocalDev
+        const isLocalFE =
+            request.headers.origin?.includes('localhost') ||
+            request.headers.origin?.includes('127.0.0.1');
+        const frontendUrl = !isLocalFE
             ? process.env.FRONTEND_URL
             : 'http://localhost:3001';
         res.redirect(`${frontendUrl}/`);
@@ -276,28 +244,18 @@ export class AuthController {
         @Req() request: Request
     ) {
         const { token } = req.user;
-        const feOrigin = request.headers.origin;
-        const isLocalDev = feOrigin?.includes('localhost:3001');
-        const cookies = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production' && !isLocalDev,
-            sameSite: (process.env.NODE_ENV === 'production' && !isLocalDev
-                ? 'none'
-                : 'lax') as 'none' | 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            path: '/',
-        };
 
-        if (process.env.NODE_ENV === 'production' && !isLocalDev) {
-            Object.assign(cookies, {
-                domain: '.fayedark.com',
-            });
-        }
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
 
-        res.cookie('token', token, cookies);
+        res.cookie('token', token, cookieConfig);
 
-        // Redirect về dashboard
-        const frontendUrl = !isLocalDev
+        const isLocalFE =
+            request.headers.origin?.includes('localhost') ||
+            request.headers.origin?.includes('127.0.0.1');
+        const frontendUrl = !isLocalFE
             ? process.env.FRONTEND_URL
             : 'http://localhost:3001';
         res.redirect(`${frontendUrl}/`);
