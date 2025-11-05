@@ -9,6 +9,7 @@ const whitelist = [
     'http://localhost:3001',
     'http://localhost:3002',
     'http://localhost:3000',
+    'https://examio-api.fayedark.com',
 ].filter((u) => typeof u === 'string');
 
 async function bootstrap() {
