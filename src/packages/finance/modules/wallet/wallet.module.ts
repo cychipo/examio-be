@@ -5,11 +5,20 @@ import { WalletController } from './wallet.controller';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { AuthModule } from 'src/packages/auth/auth.module';
+import { WalletRepository } from './wallet.repository';
+import { WalletTransactionRepository } from './wallettransaction.repository';
 
 @Module({
     imports: [AuthModule],
-    providers: [PrismaService, WalletService, GenerateIdService, AuthGuard],
+    providers: [
+        PrismaService,
+        WalletService,
+        GenerateIdService,
+        AuthGuard,
+        WalletRepository,
+        WalletTransactionRepository,
+    ],
     controllers: [WalletController],
-    exports: [WalletService],
+    exports: [WalletService, WalletRepository, WalletTransactionRepository],
 })
 export class WalletModule {}

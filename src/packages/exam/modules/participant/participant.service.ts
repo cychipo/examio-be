@@ -13,21 +13,26 @@ import { ASSESS_TYPE, PARTICIPANT_STATUS } from '../../types';
 import { CreateParticipantDto } from './dto/create-participant.dto';
 import { GetParticipantsDto } from './dto/get-participant.dto';
 import { UpdateParticipantDto } from './dto/update-participant.dto';
+import { ParticipantRepository } from './participant.repository';
+import { ExamSessionRepository } from '../examsession/examsession.repository';
 
 @Injectable()
 export class ParticipantService {
     constructor(
         private readonly prisma: PrismaService,
+        private readonly participantRepository: ParticipantRepository,
+        private readonly examSessionRepository: ExamSessionRepository,
         private readonly generateIdService: GenerateIdService
     ) {}
 
     async joinExamSession(user: User, dto: CreateParticipantDto) {
         // Verify exam session exists
-        const examSession = await this.prisma.examSession.findUnique({
+        const examSession = await this.examSessionRepository.findOne({
             where: { id: dto.examSessionId },
             include: {
                 examRoom: true,
             },
+            cache: true,
         });
 
         if (!examSession) {
@@ -35,13 +40,13 @@ export class ParticipantService {
         }
 
         // Check if already joined
-        const existingParticipant =
-            await this.prisma.examSessionParticipant.findFirst({
-                where: {
-                    examSessionId: dto.examSessionId,
-                    userId: user.id,
-                },
-            });
+        const existingParticipant = await this.participantRepository.findOne({
+            where: {
+                examSessionId: dto.examSessionId,
+                userId: user.id,
+            },
+            cache: false,
+        });
 
         if (existingParticipant) {
             throw new ConflictException('Bạn đã tham gia phiên thi này');
@@ -49,24 +54,27 @@ export class ParticipantService {
 
         // For private rooms, need approval. For public rooms with autoJoinByLink, auto-approve
         const initialStatus =
-            examSession.examRoom.assessType === ASSESS_TYPE.PUBLIC &&
-            examSession.autoJoinByLink
+            (examSession as any).examRoom.assessType === ASSESS_TYPE.PUBLIC &&
+            (examSession as any).autoJoinByLink
                 ? PARTICIPANT_STATUS.APPROVED
                 : PARTICIPANT_STATUS.PENDING;
 
         try {
-            const newParticipant =
-                await this.prisma.examSessionParticipant.create({
-                    data: {
-                        id: this.generateIdService.generateId(),
-                        examSessionId: dto.examSessionId,
-                        userId: user.id,
-                        status: initialStatus,
-                        joinedAt:
-                            initialStatus === PARTICIPANT_STATUS.APPROVED
-                                ? new Date()
-                                : null,
-                    },
+            const newParticipant = await this.participantRepository.create({
+                id: this.generateIdService.generateId(),
+                examSessionId: dto.examSessionId,
+                userId: user.id,
+                status: initialStatus,
+                joinedAt:
+                    initialStatus === PARTICIPANT_STATUS.APPROVED
+                        ? new Date()
+                        : null,
+            });
+
+            // Load relations for response
+            const participantWithRelations =
+                await this.participantRepository.findOne({
+                    where: { id: newParticipant.id },
                     include: {
                         examSession: {
                             include: {
@@ -91,13 +99,15 @@ export class ParticipantService {
                             },
                         },
                     },
+                    cache: false,
                 });
+
             return {
                 message:
                     initialStatus === PARTICIPANT_STATUS.APPROVED
                         ? 'Tham gia phiên thi thành công'
                         : 'Đã gửi yêu cầu tham gia',
-                participant: newParticipant,
+                participant: participantWithRelations,
             };
         } catch (error) {
             throw new InternalServerErrorException(
@@ -107,35 +117,34 @@ export class ParticipantService {
     }
 
     async getParticipantById(id: string, user: User) {
-        const participant = await this.prisma.examSessionParticipant.findUnique(
-            {
-                where: { id },
-                include: {
-                    examSession: {
-                        include: {
-                            examRoom: {
-                                include: {
-                                    host: {
-                                        select: {
-                                            id: true,
-                                            email: true,
-                                            name: true,
-                                        },
+        const participant = await this.participantRepository.findOne({
+            where: { id },
+            include: {
+                examSession: {
+                    include: {
+                        examRoom: {
+                            include: {
+                                host: {
+                                    select: {
+                                        id: true,
+                                        email: true,
+                                        name: true,
                                     },
                                 },
                             },
                         },
                     },
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            name: true,
-                        },
+                },
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        name: true,
                     },
                 },
-            }
-        );
+            },
+            cache: true,
+        });
 
         if (!participant) {
             throw new NotFoundException('Người tham gia không tồn tại');
@@ -143,8 +152,8 @@ export class ParticipantService {
 
         // User can view their own participation, or host can view all participants
         if (
-            participant.userId !== user.id &&
-            participant.examSession.examRoom.hostId !== user.id
+            (participant as any).userId !== user.id &&
+            (participant as any).examSession.examRoom.hostId !== user.id
         ) {
             throw new ForbiddenException(
                 'Bạn không có quyền xem thông tin này'
@@ -155,37 +164,37 @@ export class ParticipantService {
     }
 
     async leaveExamSession(id: string, user: User) {
-        const participant = await this.prisma.examSessionParticipant.findUnique(
-            {
-                where: { id },
-                include: {
-                    examSession: {
-                        include: {
-                            examRoom: true,
-                        },
+        const participant = await this.participantRepository.findOne({
+            where: { id },
+            include: {
+                examSession: {
+                    include: {
+                        examRoom: true,
                     },
                 },
-            }
-        );
+            },
+            cache: false,
+        });
 
         if (!participant) {
             throw new NotFoundException('Người tham gia không tồn tại');
         }
 
-        if (participant.userId !== user.id) {
+        if ((participant as any).userId !== user.id) {
             throw new ForbiddenException(
                 'Bạn không có quyền thực hiện hành động này'
             );
         }
 
         try {
-            await this.prisma.examSessionParticipant.update({
-                where: { id },
-                data: {
+            await this.participantRepository.update(
+                id,
+                {
                     status: PARTICIPANT_STATUS.LEFT,
                     leftAt: new Date(),
                 },
-            });
+                user.id
+            );
             return { message: 'Rời khỏi phiên thi thành công' };
         } catch (error) {
             throw new InternalServerErrorException(
@@ -195,52 +204,43 @@ export class ParticipantService {
     }
 
     async removeParticipant(id: string, user: User) {
-        const participant = await this.prisma.examSessionParticipant.findUnique(
-            {
-                where: { id },
-                include: {
-                    examSession: {
-                        include: {
-                            examRoom: true,
-                        },
+        const participant = await this.participantRepository.findOne({
+            where: { id },
+            include: {
+                examSession: {
+                    include: {
+                        examRoom: true,
                     },
                 },
-            }
-        );
+            },
+            cache: false,
+        });
 
         if (!participant) {
             throw new NotFoundException('Người tham gia không tồn tại');
         }
 
         // Only host can remove participants
-        if (participant.examSession.examRoom.hostId !== user.id) {
+        if ((participant as any).examSession.examRoom.hostId !== user.id) {
             throw new ForbiddenException(
                 'Bạn không có quyền xóa người tham gia'
             );
         }
 
-        try {
-            await this.prisma.examSessionParticipant.delete({
-                where: { id },
-            });
-            return { message: 'Xóa người tham gia thành công' };
-        } catch (error) {
-            throw new InternalServerErrorException(
-                'Xóa người tham gia thất bại'
-            );
-        }
+        // Hard delete
+        await this.participantRepository.delete(id);
+        return { message: 'Xóa người tham gia thành công' };
     }
 
     async getParticipants(user: User, dto: GetParticipantsDto) {
-        const skip = ((dto.page || 1) - 1) * (dto.limit || 10);
-
         const where: any = {};
 
         if (dto.examSessionId) {
             // Verify user has access to this exam session
-            const examSession = await this.prisma.examSession.findUnique({
+            const examSession = await this.examSessionRepository.findOne({
                 where: { id: dto.examSessionId },
                 include: { examRoom: true },
+                cache: true,
             });
 
             if (!examSession) {
@@ -248,14 +248,14 @@ export class ParticipantService {
             }
 
             // Only host or participants can view participant list
-            const isHost = examSession.examRoom.hostId === user.id;
-            const isParticipant =
-                await this.prisma.examSessionParticipant.findFirst({
-                    where: {
-                        examSessionId: dto.examSessionId,
-                        userId: user.id,
-                    },
-                });
+            const isHost = (examSession as any).examRoom.hostId === user.id;
+            const isParticipant = await this.participantRepository.findOne({
+                where: {
+                    examSessionId: dto.examSessionId,
+                    userId: user.id,
+                },
+                cache: true,
+            });
 
             if (!isHost && !isParticipant) {
                 throw new ForbiddenException(
@@ -273,75 +273,73 @@ export class ParticipantService {
             where.status = dto.status;
         }
 
-        const [participants, total] = await Promise.all([
-            this.prisma.examSessionParticipant.findMany({
-                where,
-                skip,
-                take: dto.limit || 10,
-                orderBy: { createdAt: 'desc' },
-                include: {
-                    examSession: {
-                        select: {
-                            id: true,
-                            startTime: true,
-                            endTime: true,
-                            status: true,
-                            examRoom: {
-                                select: {
-                                    id: true,
-                                    title: true,
-                                    quizSet: {
-                                        select: {
-                                            id: true,
-                                            title: true,
-                                            thumbnail: true,
-                                        },
+        const result = await this.participantRepository.paginate({
+            page: dto.page || 1,
+            size: dto.limit || 10,
+            ...where,
+            include: {
+                examSession: {
+                    select: {
+                        id: true,
+                        startTime: true,
+                        endTime: true,
+                        status: true,
+                        examRoom: {
+                            select: {
+                                id: true,
+                                title: true,
+                                quizSet: {
+                                    select: {
+                                        id: true,
+                                        title: true,
+                                        thumbnail: true,
                                     },
                                 },
                             },
                         },
                     },
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            name: true,
-                        },
+                },
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        name: true,
                     },
                 },
-            }),
-            this.prisma.examSessionParticipant.count({ where }),
-        ]);
+            },
+            sortBy: 'createdAt',
+            sortType: 'desc',
+            cache: true,
+        });
 
         return {
-            participants,
-            total,
-            page: dto.page || 1,
-            limit: dto.limit || 10,
-            totalPages: Math.ceil(total / (dto.limit || 10)),
+            participants: result.data,
+            total: result.total,
+            page: result.page,
+            limit: result.size,
+            totalPages: result.totalPages,
         };
     }
 
     async updateParticipant(id: string, user: User, dto: UpdateParticipantDto) {
-        const participant = await this.prisma.examSessionParticipant.findUnique(
-            {
-                where: { id },
-                include: {
-                    examSession: {
-                        include: {
-                            examRoom: true,
-                        },
+        const participant = await this.participantRepository.findOne({
+            where: { id },
+            include: {
+                examSession: {
+                    include: {
+                        examRoom: true,
                     },
                 },
-            }
-        );
+            },
+            cache: false,
+        });
 
         if (!participant) {
             throw new NotFoundException('Người tham gia không tồn tại');
         }
 
         // Only host can approve/reject participants
-        if (participant.examSession.examRoom.hostId !== user.id) {
+        if ((participant as any).examSession.examRoom.hostId !== user.id) {
             throw new ForbiddenException(
                 'Bạn không có quyền chỉnh sửa trạng thái người tham gia'
             );
@@ -358,21 +356,26 @@ export class ParticipantService {
         // If approving, set joinedAt
         if (
             dto.status === PARTICIPANT_STATUS.APPROVED &&
-            !participant.joinedAt
+            !(participant as any).joinedAt
         ) {
             updateData.joinedAt = new Date();
         }
 
         // If leaving, set leftAt
-        if (dto.status === PARTICIPANT_STATUS.LEFT && !participant.leftAt) {
+        if (
+            dto.status === PARTICIPANT_STATUS.LEFT &&
+            !(participant as any).leftAt
+        ) {
             updateData.leftAt = new Date();
         }
 
         try {
-            const updatedParticipant =
-                await this.prisma.examSessionParticipant.update({
+            await this.participantRepository.update(id, updateData, user.id);
+
+            // Load with relations for response
+            const updatedParticipant = await this.participantRepository.findOne(
+                {
                     where: { id },
-                    data: updateData,
                     include: {
                         examSession: {
                             include: {
@@ -397,7 +400,9 @@ export class ParticipantService {
                             },
                         },
                     },
-                });
+                    cache: false,
+                }
+            );
 
             return {
                 message: 'Cập nhật trạng thái người tham gia thành công',

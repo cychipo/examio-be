@@ -16,11 +16,13 @@ import { sanitizeUser } from 'src/common/utils/sanitize-user';
 import { User } from '@prisma/client';
 import { generateCode } from 'src/common/utils/generate-code';
 import { WalletService } from 'src/packages/finance/modules/wallet/wallet.service';
+import { UserRepository } from './repositories/user.repository';
 
 @Injectable()
 export class AuthService {
     constructor(
         private readonly prisma: PrismaService,
+        private readonly userRepository: UserRepository,
         private readonly jwtService: JwtService,
         private readonly mailService: MailService,
         private readonly passwordService: PasswordService,
@@ -34,16 +36,12 @@ export class AuthService {
             throw new BadRequestException('Thông tin đăng nhập không hợp lệ');
         }
         try {
-            // Validate user credentials
-            const user = await this.prisma.user.findFirst({
-                where: {
-                    OR: [{ email: credential }, { username: credential }],
-                },
-            });
+            // Validate user credentials using repository
+            const user = await this.userRepository.findByCredential(credential);
             if (!user) {
                 throw new NotFoundException('Không tìm thấy người dùng');
             }
-            // Check password (assuming bcrypt is used for hashing)
+            // Check password
             const isPasswordValid = await this.passwordService.comparePasswords(
                 password,
                 user.password || ''
@@ -77,21 +75,17 @@ export class AuthService {
         }
 
         try {
-            // check valid email and username
-            const [existingEmail, existingUsername] = await Promise.all([
-                this.prisma.user.findUnique({
-                    where: { email: email.toLowerCase() },
-                }),
-                this.prisma.user.findUnique({
-                    where: { username: username.toLowerCase() },
-                }),
+            // check valid email and username using repository
+            const [emailExists, usernameExists] = await Promise.all([
+                this.userRepository.emailExists(email),
+                this.userRepository.usernameExists(username),
             ]);
 
-            if (existingEmail) {
+            if (emailExists) {
                 throw new ConflictException('Email đã được sử dụng');
             }
 
-            if (existingUsername) {
+            if (usernameExists) {
                 throw new ConflictException('Username đã được sử dụng');
             }
 
@@ -99,17 +93,17 @@ export class AuthService {
             const hashedPassword =
                 await this.passwordService.hashPassword(password);
 
-            // Create new user
+            // Create new user and wallet using transaction
             const newUser = await this.prisma.$transaction(async (tx) => {
-                const user = await tx.user.create({
-                    data: {
-                        id: this.generateIdService.generateId(),
-                        username,
-                        email,
-                        password: hashedPassword,
-                    },
+                // Create user using repository
+                const user = await this.userRepository.create({
+                    id: this.generateIdService.generateId(),
+                    username,
+                    email,
+                    password: hashedPassword,
                 });
 
+                // Create wallet
                 await tx.wallet.create({
                     data: {
                         id: this.generateIdService.generateId(),
@@ -198,11 +192,8 @@ export class AuthService {
                 throw new BadRequestException('Mã xác minh đã hết hạn');
             }
 
-            // Mark user as verified
-            await this.prisma.user.update({
-                where: { id: userId },
-                data: { isVerified: true },
-            });
+            // Mark user as verified using repository
+            await this.userRepository.update(userId, { isVerified: true });
 
             // Clean up verification code
             await this.prisma.verifyAccountCode.delete({
@@ -225,9 +216,7 @@ export class AuthService {
 
     async sendCodeToResetPassword(email: string) {
         try {
-            const user = await this.prisma.user.findFirst({
-                where: { email: email },
-            });
+            const user = await this.userRepository.findByEmail(email, false);
 
             if (!user) {
                 throw new NotFoundException('Không tìm thấy người dùng');
@@ -282,9 +271,7 @@ export class AuthService {
 
     async resetPassword(email: string, code: string, newPassword: string) {
         try {
-            const user = await this.prisma.user.findUnique({
-                where: { email: email.toLowerCase() },
-            });
+            const user = await this.userRepository.findByEmail(email, false);
 
             if (!user) {
                 throw new NotFoundException('Không tìm thấy người dùng');
@@ -308,13 +295,9 @@ export class AuthService {
                 throw new BadRequestException('Mã đặt lại mật khẩu đã hết hạn');
             }
 
-            // Update user password
-            await this.prisma.user.update({
-                where: { id: user.id },
-                data: {
-                    password:
-                        await this.passwordService.hashPassword(newPassword),
-                },
+            // Update user password using repository
+            await this.userRepository.update(user.id, {
+                password: await this.passwordService.hashPassword(newPassword),
             });
 
             // Clean up reset code
@@ -341,21 +324,18 @@ export class AuthService {
         username: string,
         avatar?: string
     ) {
-        let existingUser = await this.prisma.user.findUnique({
-            where: { email },
-        });
+        let existingUser = await this.userRepository.findByEmail(email, false);
 
         if (!existingUser) {
+            // Create new user and wallet
             existingUser = await this.prisma.$transaction(async (tx) => {
-                const user = await tx.user.create({
-                    data: {
-                        id: this.generateIdService.generateId(),
-                        email,
-                        username,
-                        avatar,
-                        isVerified: true,
-                        password: null,
-                    },
+                const user = await this.userRepository.create({
+                    id: this.generateIdService.generateId(),
+                    email,
+                    username,
+                    avatar,
+                    isVerified: true,
+                    password: null,
                 });
 
                 await tx.wallet.create({
@@ -369,6 +349,7 @@ export class AuthService {
                 return user;
             });
         } else {
+            // Check if wallet exists for existing user
             const walletExists = await this.prisma.wallet.findUnique({
                 where: { userId: existingUser.id },
             });
@@ -421,14 +402,11 @@ export class AuthService {
     }
 
     async getUser(user: User) {
-        const foundUser = await this.prisma.user.findUnique({
-            where: { id: user.id },
-            include: {
-                wallet: {
-                    select: { balance: true },
-                },
-            },
-        });
+        const foundUser = await this.userRepository.findByIdWithRelations(
+            user.id,
+            ['wallet'],
+            true
+        );
         if (!foundUser) {
             throw new NotFoundException('Người dùng không tồn tại');
         }

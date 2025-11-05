@@ -12,18 +12,23 @@ import { EXAM_SESSION_STATUS, ASSESS_TYPE } from '../../types';
 import { CreateExamSessionDto } from './dto/create-examsession.dto';
 import { GetExamSessionsDto } from './dto/get-examsession.dto';
 import { UpdateExamSessionDto } from './dto/update-examsession.dto';
+import { ExamSessionRepository } from './examsession.repository';
+import { ExamRoomRepository } from '../examroom/examroom.repository';
 
 @Injectable()
 export class ExamSessionService {
     constructor(
         private readonly prisma: PrismaService,
+        private readonly examSessionRepository: ExamSessionRepository,
+        private readonly examRoomRepository: ExamRoomRepository,
         private readonly generateIdService: GenerateIdService
     ) {}
 
     async createExamSession(user: User, dto: CreateExamSessionDto) {
         // Verify exam room exists and belongs to user
-        const examRoom = await this.prisma.examRoom.findUnique({
+        const examRoom = await this.examRoomRepository.findOne({
             where: { id: dto.examRoomId },
+            cache: true,
         });
 
         if (!examRoom) {
@@ -46,33 +51,39 @@ export class ExamSessionService {
         }
 
         try {
-            const newExamSession = await this.prisma.examSession.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    examRoomId: dto.examRoomId,
-                    startTime,
-                    endTime,
-                    autoJoinByLink: dto.autoJoinByLink || false,
-                    status: EXAM_SESSION_STATUS.UPCOMING,
-                },
-                include: {
-                    examRoom: {
-                        include: {
-                            quizSet: true,
-                            host: {
-                                select: {
-                                    id: true,
-                                    email: true,
-                                    name: true,
+            const newExamSession = await this.examSessionRepository.create({
+                id: this.generateIdService.generateId(),
+                examRoomId: dto.examRoomId,
+                startTime,
+                endTime,
+                autoJoinByLink: dto.autoJoinByLink || false,
+                status: EXAM_SESSION_STATUS.UPCOMING,
+            });
+
+            // Load relations for response
+            const examSessionWithRelations =
+                await this.examSessionRepository.findOne({
+                    where: { id: newExamSession.id },
+                    include: {
+                        examRoom: {
+                            include: {
+                                quizSet: true,
+                                host: {
+                                    select: {
+                                        id: true,
+                                        email: true,
+                                        name: true,
+                                    },
                                 },
                             },
                         },
                     },
-                },
-            });
+                    cache: false,
+                });
+
             return {
                 message: 'Tạo phiên thi thành công',
-                examSession: newExamSession,
+                examSession: examSessionWithRelations,
             };
         } catch (error) {
             throw new InternalServerErrorException('Tạo phiên thi thất bại');
@@ -80,7 +91,7 @@ export class ExamSessionService {
     }
 
     async getExamSessionById(id: string, user: User) {
-        const examSession = await this.prisma.examSession.findUnique({
+        const examSession = await this.examSessionRepository.findOne({
             where: { id },
             include: {
                 examRoom: {
@@ -112,13 +123,14 @@ export class ExamSessionService {
                     },
                 },
             },
+            cache: true,
         });
 
         if (!examSession) {
             throw new NotFoundException('Phiên thi không tồn tại');
         }
 
-        if (examSession.examRoom.hostId !== user.id) {
+        if ((examSession as any).examRoom.hostId !== user.id) {
             throw new ForbiddenException(
                 'Bạn không có quyền xem phiên thi này'
             );
@@ -128,33 +140,29 @@ export class ExamSessionService {
     }
 
     async deleteExamSession(id: string, user: User) {
-        const examSession = await this.prisma.examSession.findUnique({
+        const examSession = await this.examSessionRepository.findOne({
             where: { id },
             include: { examRoom: true },
+            cache: false,
         });
 
         if (!examSession) {
             throw new NotFoundException('Phiên thi không tồn tại');
         }
 
-        if (examSession.examRoom.hostId !== user.id) {
+        if ((examSession as any).examRoom.hostId !== user.id) {
             throw new ForbiddenException(
                 'Bạn không có quyền xóa phiên thi này'
             );
         }
 
-        try {
-            await this.prisma.examSession.delete({
-                where: { id },
-            });
-            return { message: 'Xóa phiên thi thành công' };
-        } catch (error) {
-            throw new InternalServerErrorException('Xóa phiên thi thất bại');
-        }
+        // Hard delete
+        await this.examSessionRepository.delete(id);
+        return { message: 'Xóa phiên thi thành công' };
     }
 
     async getExamSessionPublicById(id: string) {
-        const examSession = await this.prisma.examSession.findUnique({
+        const examSession = await this.examSessionRepository.findOne({
             where: { id },
             include: {
                 examRoom: {
@@ -177,12 +185,13 @@ export class ExamSessionService {
                     },
                 },
             },
+            cache: true,
         });
 
         if (
             !examSession ||
-            !examSession.examRoom ||
-            examSession.examRoom.assessType !== ASSESS_TYPE.PUBLIC
+            !(examSession as any).examRoom ||
+            (examSession as any).examRoom.assessType !== ASSESS_TYPE.PUBLIC
         ) {
             throw new NotFoundException(
                 'Phiên thi không tồn tại hoặc không công khai'
@@ -193,8 +202,6 @@ export class ExamSessionService {
     }
 
     async getExamSessions(user: User, dto: GetExamSessionsDto) {
-        const skip = ((dto.page || 1) - 1) * (dto.limit || 10);
-
         const where: any = {
             examRoom: {
                 hostId: user.id,
@@ -209,57 +216,57 @@ export class ExamSessionService {
             where.status = dto.status;
         }
 
-        const [examSessions, total] = await Promise.all([
-            this.prisma.examSession.findMany({
-                where,
-                skip,
-                take: dto.limit || 10,
-                orderBy: { startTime: 'desc' },
-                include: {
-                    examRoom: {
-                        select: {
-                            id: true,
-                            title: true,
-                            quizSet: {
-                                select: {
-                                    id: true,
-                                    title: true,
-                                    thumbnail: true,
-                                },
+        const result = await this.examSessionRepository.paginate({
+            page: dto.page || 1,
+            size: dto.limit || 10,
+            ...where,
+            include: {
+                examRoom: {
+                    select: {
+                        id: true,
+                        title: true,
+                        quizSet: {
+                            select: {
+                                id: true,
+                                title: true,
+                                thumbnail: true,
                             },
                         },
                     },
-                    _count: {
-                        select: {
-                            participants: true,
-                            examAttempts: true,
-                        },
+                },
+                _count: {
+                    select: {
+                        participants: true,
+                        examAttempts: true,
                     },
                 },
-            }),
-            this.prisma.examSession.count({ where }),
-        ]);
+            },
+            sortBy: 'startTime',
+            sortType: 'desc',
+            cache: true,
+        });
 
         return {
-            examSessions,
-            total,
-            page: dto.page || 1,
-            limit: dto.limit || 10,
-            totalPages: Math.ceil(total / (dto.limit || 10)),
+            examSessions: result.data,
+            total: result.total,
+            page: result.page,
+            limit: result.size,
+            totalPages: result.totalPages,
         };
     }
 
     async updateExamSession(id: string, user: User, dto: UpdateExamSessionDto) {
-        const examSession = await this.prisma.examSession.findUnique({
+        const examSession = await this.examSessionRepository.findOne({
             where: { id },
             include: { examRoom: true },
+            cache: false,
         });
 
         if (!examSession) {
             throw new NotFoundException('Phiên thi không tồn tại');
         }
 
-        if (examSession.examRoom.hostId !== user.id) {
+        if ((examSession as any).examRoom.hostId !== user.id) {
             throw new ForbiddenException(
                 'Bạn không có quyền chỉnh sửa phiên thi này'
             );
@@ -292,24 +299,29 @@ export class ExamSessionService {
         }
 
         try {
-            const updatedExamSession = await this.prisma.examSession.update({
-                where: { id },
-                data: updateData,
-                include: {
-                    examRoom: {
-                        include: {
-                            quizSet: true,
-                            host: {
-                                select: {
-                                    id: true,
-                                    email: true,
-                                    name: true,
+            await this.examSessionRepository.update(id, updateData, user.id);
+
+            // Load with relations for response
+            const updatedExamSession = await this.examSessionRepository.findOne(
+                {
+                    where: { id },
+                    include: {
+                        examRoom: {
+                            include: {
+                                quizSet: true,
+                                host: {
+                                    select: {
+                                        id: true,
+                                        email: true,
+                                        name: true,
+                                    },
                                 },
                             },
                         },
                     },
-                },
-            });
+                    cache: false,
+                }
+            );
 
             return {
                 message: 'Cập nhật phiên thi thành công',

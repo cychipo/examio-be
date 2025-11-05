@@ -13,11 +13,13 @@ import { GetQuizsetsDto } from './dto/get-quizset.dto';
 import { UpdateQuizSetDto } from './dto/update-quizset.dto';
 import { SetQuizzToQuizsetDto } from './dto/set-quizz-to-quizset.dto';
 import { SaveHistoryToQuizsetDto } from './dto/save-history-to-quizset.dto';
+import { QuizSetRepository } from './quizset.repository';
 
 @Injectable()
 export class QuizsetService {
     constructor(
         private readonly prisma: PrismaService,
+        private readonly quizSetRepository: QuizSetRepository,
         private readonly generateIdService: GenerateIdService
     ) {}
 
@@ -27,17 +29,17 @@ export class QuizsetService {
         }
 
         try {
-            const newQuizSet = await this.prisma.quizSet.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    title: dto.title,
-                    description: dto.description || '',
-                    isPublic: dto.isPublic || false,
-                    tags: dto.tags || [],
-                    userId: user.id,
-                    thumbnail: dto.thumbnail || null,
-                },
+            // Use repository to create quizset
+            const newQuizSet = await this.quizSetRepository.create({
+                id: this.generateIdService.generateId(),
+                title: dto.title,
+                description: dto.description || '',
+                isPublic: dto.isPublic || false,
+                tags: dto.tags || [],
+                userId: user.id,
+                thumbnail: dto.thumbnail || null,
             });
+
             return {
                 message: 'Tạo bộ câu hỏi thành công',
                 quizSet: newQuizSet,
@@ -48,7 +50,8 @@ export class QuizsetService {
     }
 
     async getQuizSetById(id: string, user: User) {
-        const quizSet = await this.prisma.quizSet.findUnique({
+        // Use repository with cache
+        const quizSet = await this.quizSetRepository.findOne({
             where: { id, userId: user.id },
             include: {
                 detailsQuizQuestions: {
@@ -57,38 +60,43 @@ export class QuizsetService {
                     },
                 },
             },
+            cache: true, // Enable cache
         });
+
         if (!quizSet) {
             throw new NotFoundException('Bộ câu hỏi không tồn tại');
         }
 
         // Transform để trả về questions như cũ
-        const { detailsQuizQuestions, ...quizSetData } = quizSet;
+        const { detailsQuizQuestions, ...quizSetData } = quizSet as any;
         return {
             ...quizSetData,
             questions: detailsQuizQuestions.map(
-                (detail) => detail.quizQuestion
+                (detail: any) => detail.quizQuestion
             ),
         };
     }
 
     async deleteQuizSet(id: string, user: User) {
-        const result = await this.prisma.quizSet.deleteMany({
-            where: {
-                id,
-                userId: user.id,
-            },
+        // Check ownership first
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id, userId: user.id },
+            cache: false,
         });
 
-        if (result.count === 0) {
+        if (!quizSet) {
             throw new NotFoundException('Bộ câu hỏi không tồn tại');
         }
+
+        // Hard delete using repository
+        await this.quizSetRepository.delete(id);
 
         return { message: 'Xóa bộ câu hỏi thành công' };
     }
 
     async getQuizSetPublicById(id: string) {
-        const quizSet = await this.prisma.quizSet.findUnique({
+        // Use repository with cache for public quizsets
+        const quizSet = await this.quizSetRepository.findOne({
             where: { id, isPublic: true },
             include: {
                 detailsQuizQuestions: {
@@ -97,24 +105,24 @@ export class QuizsetService {
                     },
                 },
             },
+            cache: true,
         });
+
         if (!quizSet) {
             throw new NotFoundException('Bộ câu hỏi không tồn tại');
         }
 
         // Transform để trả về questions như cũ
-        const { detailsQuizQuestions, ...quizSetData } = quizSet;
+        const { detailsQuizQuestions, ...quizSetData } = quizSet as any;
         return {
             ...quizSetData,
             questions: detailsQuizQuestions.map(
-                (detail) => detail.quizQuestion
+                (detail: any) => detail.quizQuestion
             ),
         };
     }
 
     async getQuizSets(user: User, dto: GetQuizsetsDto) {
-        const skip = ((dto.page || 1) - 1) * (dto.limit || 10);
-
         const where: any = {
             userId: user.id,
         };
@@ -138,33 +146,41 @@ export class QuizsetService {
             where.isPinned = dto.isPinned;
         }
 
-        const [quizSets, total] = await Promise.all([
-            this.prisma.quizSet.findMany({
-                where,
-                skip,
-                take: dto.limit || 10,
-                orderBy: { createdAt: 'desc' },
-            }),
-            this.prisma.quizSet.count({ where }),
-        ]);
+        // Use repository pagination with cache
+        const result = await this.quizSetRepository.paginate({
+            page: dto.page || 1,
+            size: dto.limit || 10,
+            ...where,
+            sortBy: 'createdAt',
+            sortType: 'desc',
+            cache: true,
+        });
 
         return {
-            quizSets,
-            total,
-            page: dto.page || 1,
-            limit: dto.limit || 10,
-            totalPages: Math.ceil(total / (dto.limit || 10)),
+            quizSets: result.data,
+            total: result.total,
+            page: result.page,
+            limit: result.size,
+            totalPages: result.totalPages,
         };
     }
 
     async updateQuizSet(id: string, user: User, dto: UpdateQuizSetDto) {
         try {
-            const updatedQuizSet = await this.prisma.quizSet.update({
-                where: {
-                    id,
-                    userId: user.id,
-                },
-                data: {
+            // Check ownership first
+            const quizSet = await this.quizSetRepository.findOne({
+                where: { id, userId: user.id },
+                cache: false,
+            });
+
+            if (!quizSet) {
+                throw new NotFoundException('Bộ câu hỏi không tồn tại');
+            }
+
+            // Update using repository (auto invalidate cache)
+            const updatedQuizSet = await this.quizSetRepository.update(
+                id,
+                {
                     ...(dto.title && { title: dto.title }),
                     ...(dto.description && { description: dto.description }),
                     ...(dto.isPublic !== undefined && {
@@ -173,15 +189,16 @@ export class QuizsetService {
                     ...(dto.tags && { tags: dto.tags }),
                     ...(dto.thumbnail && { thumbnail: dto.thumbnail }),
                 },
-            });
+                user.id
+            );
 
             return {
                 message: 'Cập nhật bộ câu hỏi thành công',
                 quizSet: updatedQuizSet,
             };
         } catch (error) {
-            if (error.code === 'P2025') {
-                throw new NotFoundException('Bộ câu hỏi không tồn tại');
+            if (error instanceof NotFoundException) {
+                throw error;
             }
             throw new InternalServerErrorException(
                 'Cập nhật bộ câu hỏi thất bại'
@@ -203,6 +220,7 @@ export class QuizsetService {
             }
 
             const result = await this.prisma.$transaction(async (tx) => {
+                // Check quizsets ownership
                 const quizSets = await tx.quizSet.findMany({
                     where: {
                         id: { in: dto.quizsetIds },
