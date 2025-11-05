@@ -4,10 +4,13 @@ import { ApiProperty } from '@nestjs/swagger';
 import { ASSESS_TYPE } from '../../../types';
 
 export const GetExamRoomsSchema = z.object({
-    page: z.number().min(1).default(1),
-    limit: z.number().min(1).max(100).default(10),
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10),
     search: z.string().optional(),
-    assessType: z.nativeEnum(ASSESS_TYPE).optional(),
+    assessType: z.coerce
+        .number()
+        .optional()
+        .transform((val) => val as ASSESS_TYPE),
     quizSetId: z.string().optional(),
 });
 
