@@ -1,46 +1,46 @@
-import { PrismaService } from 'src/prisma/prisma.service';
 import {
     Injectable,
     ConflictException,
     NotFoundException,
     ForbiddenException,
-    InternalServerErrorException,
 } from '@nestjs/common';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { User } from '@prisma/client';
+import { WalletRepository } from './wallet.repository';
 
 @Injectable()
 export class WalletService {
     constructor(
-        private readonly prisma: PrismaService,
+        private readonly walletRepository: WalletRepository,
         private readonly generateIdService: GenerateIdService
     ) {}
 
     async createWallet(user: User) {
-        const existingWallet = await this.prisma.wallet.findUnique({
-            where: { userId: user.id },
-        });
+        // Check if wallet already exists
+        const existingWallet = await this.walletRepository.findByUserId(
+            user.id,
+            true
+        );
+
         if (existingWallet) {
             throw new ConflictException('Người dùng đã có ví rồi');
         }
 
-        const wallet = await this.prisma.wallet.create({
-            data: {
-                id: this.generateIdService.generateId(),
-                userId: user.id,
-                balance: 20,
-            },
-        });
-        return wallet;
+        // Create wallet using repository
+        return this.walletRepository.createForUser(
+            user.id,
+            20,
+            this.generateIdService.generateId()
+        );
     }
 
     async getWallet(user: User) {
-        const wallet = await this.prisma.wallet.findUnique({
-            where: { userId: user.id },
-        });
+        const wallet = await this.walletRepository.findByUserId(user.id, true);
+
         if (!wallet) {
             throw new NotFoundException('Không tìm thấy ví của người dùng này');
         }
+
         return wallet;
     }
 
@@ -49,16 +49,8 @@ export class WalletService {
             throw new ForbiddenException('Số tiền nạp phải là số dương');
         }
 
-        const wallet = await this.getWallet(user);
-        try {
-            const updatedWallet = await this.prisma.wallet.update({
-                where: { id: wallet.id },
-                data: { balance: { increment: amount } },
-            });
-            return updatedWallet;
-        } catch (error) {
-            throw new InternalServerErrorException('Không thể nạp tiền vào ví');
-        }
+        // Use repository's updateBalance method
+        return this.walletRepository.updateBalance(user.id, amount, 'add');
     }
 
     async deduct(user: User, amount: number) {
@@ -67,18 +59,12 @@ export class WalletService {
         }
 
         const wallet = await this.getWallet(user);
+
         if (wallet.balance < amount) {
             throw new ForbiddenException('Số dư trong ví không đủ');
         }
 
-        try {
-            const updatedWallet = await this.prisma.wallet.update({
-                where: { id: wallet.id },
-                data: { balance: { decrement: amount } },
-            });
-            return updatedWallet;
-        } catch (error) {
-            throw new InternalServerErrorException('Không thể trừ tiền từ ví');
-        }
+        // Use repository's updateBalance method
+        return this.walletRepository.updateBalance(user.id, amount, 'subtract');
     }
 }

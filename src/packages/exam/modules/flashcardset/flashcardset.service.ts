@@ -13,11 +13,13 @@ import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
 import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
 import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
+import { FlashCardSetRepository } from './flashcardset.repository';
 
 @Injectable()
 export class FlashcardsetService {
     constructor(
         private readonly prisma: PrismaService,
+        private readonly flashcardSetRepository: FlashCardSetRepository,
         private readonly generateIdService: GenerateIdService
     ) {}
 
@@ -27,16 +29,14 @@ export class FlashcardsetService {
         }
 
         try {
-            const newFlashcardSet = await this.prisma.flashCardSet.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    title: dto.title,
-                    description: dto.description || '',
-                    isPublic: dto.isPublic || false,
-                    tag: dto.tag || [],
-                    userId: user.id,
-                    thumbnail: dto.thumbnail || null,
-                },
+            const newFlashcardSet = await this.flashcardSetRepository.create({
+                id: this.generateIdService.generateId(),
+                title: dto.title,
+                description: dto.description || '',
+                isPublic: dto.isPublic || false,
+                tag: dto.tag || [],
+                userId: user.id,
+                thumbnail: dto.thumbnail || null,
             });
             return {
                 message: 'Tạo bộ thẻ ghi nhớ thành công',
@@ -50,7 +50,7 @@ export class FlashcardsetService {
     }
 
     async getFlashcardSetById(id: string, user: User) {
-        const flashcardSet = await this.prisma.flashCardSet.findUnique({
+        const flashcardSet = await this.flashcardSetRepository.findOne({
             where: { id, userId: user.id },
             include: {
                 detailsFlashCard: {
@@ -59,36 +59,40 @@ export class FlashcardsetService {
                     },
                 },
             },
+            cache: true,
         });
+
         if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
         // Transform để trả về flashCards như cũ
-        const { detailsFlashCard, ...flashcardSetData } = flashcardSet;
+        const { detailsFlashCard, ...flashcardSetData } = flashcardSet as any;
         return {
             ...flashcardSetData,
-            flashCards: detailsFlashCard.map((detail) => detail.flashCard),
+            flashCards: detailsFlashCard.map((detail: any) => detail.flashCard),
         };
     }
 
     async deleteFlashcardSet(id: string, user: User) {
-        const result = await this.prisma.flashCardSet.deleteMany({
-            where: {
-                id,
-                userId: user.id,
-            },
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id, userId: user.id },
+            cache: false,
         });
 
-        if (result.count === 0) {
+        if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
+
+        // Hard delete
+        await this.flashcardSetRepository.delete(id);
 
         return { message: 'Xóa bộ thẻ ghi nhớ thành công' };
     }
 
     async getFlashcardSetPublicById(id: string) {
-        const flashcardSet = await this.prisma.flashCardSet.findUnique({
+        const flashcardSet = await this.flashcardSetRepository.findOne({
             where: { id, isPublic: true },
             include: {
                 detailsFlashCard: {
@@ -97,22 +101,22 @@ export class FlashcardsetService {
                     },
                 },
             },
+            cache: true,
         });
+
         if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
         // Transform để trả về flashCards như cũ
-        const { detailsFlashCard, ...flashcardSetData } = flashcardSet;
+        const { detailsFlashCard, ...flashcardSetData } = flashcardSet as any;
         return {
             ...flashcardSetData,
-            flashCards: detailsFlashCard.map((detail) => detail.flashCard),
+            flashCards: detailsFlashCard.map((detail: any) => detail.flashCard),
         };
     }
 
     async getFlashcardSets(user: User, dto: GetFlashcardsetsDto) {
-        const skip = ((dto.page || 1) - 1) * (dto.limit || 10);
-
         const where: any = {
             userId: user.id,
         };
@@ -136,22 +140,22 @@ export class FlashcardsetService {
             where.isPinned = dto.isPinned;
         }
 
-        const [flashcardSets, total] = await Promise.all([
-            this.prisma.flashCardSet.findMany({
-                where,
-                skip,
-                take: dto.limit || 10,
-                orderBy: { createdAt: 'desc' },
-            }),
-            this.prisma.flashCardSet.count({ where }),
-        ]);
+        // Use repository pagination with cache
+        const result = await this.flashcardSetRepository.paginate({
+            page: dto.page || 1,
+            size: dto.limit || 10,
+            ...where,
+            sortBy: 'createdAt',
+            sortType: 'desc',
+            cache: true,
+        });
 
         return {
-            flashcardSets,
-            total,
-            page: dto.page || 1,
-            limit: dto.limit || 10,
-            totalPages: Math.ceil(total / (dto.limit || 10)),
+            flashcardSets: result.data,
+            total: result.total,
+            page: result.page,
+            limit: result.size,
+            totalPages: result.totalPages,
         };
     }
 
@@ -161,29 +165,41 @@ export class FlashcardsetService {
         dto: UpdateFlashcardSetDto
     ) {
         try {
-            const updatedFlashcardSet = await this.prisma.flashCardSet.update({
-                where: {
-                    id,
-                    userId: user.id,
-                },
-                data: {
-                    ...(dto.title && { title: dto.title }),
-                    ...(dto.description && { description: dto.description }),
-                    ...(dto.isPublic !== undefined && {
-                        isPublic: dto.isPublic,
-                    }),
-                    ...(dto.tag && { tag: dto.tag }),
-                    ...(dto.thumbnail && { thumbnail: dto.thumbnail }),
-                },
+            // Check ownership
+            const flashcardSet = await this.flashcardSetRepository.findOne({
+                where: { id, userId: user.id },
+                cache: false,
             });
+
+            if (!flashcardSet) {
+                throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+            }
+
+            // Update using repository
+            const updatedFlashcardSet =
+                await this.flashcardSetRepository.update(
+                    id,
+                    {
+                        ...(dto.title && { title: dto.title }),
+                        ...(dto.description && {
+                            description: dto.description,
+                        }),
+                        ...(dto.isPublic !== undefined && {
+                            isPublic: dto.isPublic,
+                        }),
+                        ...(dto.tag && { tag: dto.tag }),
+                        ...(dto.thumbnail && { thumbnail: dto.thumbnail }),
+                    },
+                    user.id
+                );
 
             return {
                 message: 'Cập nhật bộ thẻ ghi nhớ thành công',
                 flashcardSet: updatedFlashcardSet,
             };
         } catch (error) {
-            if (error.code === 'P2025') {
-                throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+            if (error instanceof NotFoundException) {
+                throw error;
             }
             throw new InternalServerErrorException(
                 'Cập nhật bộ thẻ ghi nhớ thất bại'

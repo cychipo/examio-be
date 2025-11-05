@@ -5,6 +5,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { AuthModule } from 'src/packages/auth/auth.module';
 import { AuthGuard } from 'src/common/guard/auth.guard';
+import { ExamSessionRepository } from './examsession.repository';
+import { ExamRoomRepository } from '../examroom/examroom.repository';
 
 @Module({
     imports: [AuthModule],
@@ -13,8 +15,10 @@ import { AuthGuard } from 'src/common/guard/auth.guard';
         ExamSessionService,
         GenerateIdService,
         AuthGuard,
+        ExamSessionRepository,
+        ExamRoomRepository,
     ],
     controllers: [ExamSessionController],
-    exports: [ExamSessionService],
+    exports: [ExamSessionService, ExamSessionRepository],
 })
 export class ExamSessionModule {}

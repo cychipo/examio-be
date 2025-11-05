@@ -12,21 +12,26 @@ import { EXAM_SESSION_STATUS, EXAM_ATTEMPT_STATUS } from '../../types';
 import { CreateExamAttemptDto } from './dto/create-examattempt.dto';
 import { GetExamAttemptsDto } from './dto/get-examattempt.dto';
 import { UpdateExamAttemptDto } from './dto/update-examattempt.dto';
+import { ExamAttemptRepository } from './examattempt.repository';
+import { ExamSessionRepository } from '../examsession/examsession.repository';
 
 @Injectable()
 export class ExamAttemptService {
     constructor(
         private readonly prisma: PrismaService,
+        private readonly examAttemptRepository: ExamAttemptRepository,
+        private readonly examSessionRepository: ExamSessionRepository,
         private readonly generateIdService: GenerateIdService
     ) {}
 
     async createExamAttempt(user: User, dto: CreateExamAttemptDto) {
         // Verify exam session exists
-        const examSession = await this.prisma.examSession.findUnique({
+        const examSession = await this.examSessionRepository.findOne({
             where: { id: dto.examSessionId },
             include: {
                 examRoom: true,
             },
+            cache: true,
         });
 
         if (!examSession) {
@@ -34,65 +39,74 @@ export class ExamAttemptService {
         }
 
         // Check if exam has started
-        if (examSession.status === EXAM_SESSION_STATUS.UPCOMING) {
+        if ((examSession as any).status === EXAM_SESSION_STATUS.UPCOMING) {
             throw new BadRequestException('Phiên thi chưa bắt đầu');
         }
 
-        if (examSession.status === EXAM_SESSION_STATUS.ENDED) {
+        if ((examSession as any).status === EXAM_SESSION_STATUS.ENDED) {
             throw new BadRequestException('Phiên thi đã kết thúc');
         }
 
         // Check if user has reached max attempts
-        const attemptCount = await this.prisma.examAttempt.count({
+        const existingAttempts = await this.examAttemptRepository.findAll({
             where: {
                 examSessionId: dto.examSessionId,
                 userId: user.id,
             },
+            cache: true,
         });
 
-        if (!examSession.examRoom.allowRetake && attemptCount > 0) {
+        const attemptCount = existingAttempts.length;
+
+        if (!(examSession as any).examRoom.allowRetake && attemptCount > 0) {
             throw new BadRequestException('Bạn đã hết lượt thi');
         }
 
-        if (attemptCount >= examSession.examRoom.maxAttempts) {
+        if (attemptCount >= (examSession as any).examRoom.maxAttempts) {
             throw new BadRequestException(
-                `Bạn đã đạt số lần thi tối đa (${examSession.examRoom.maxAttempts})`
+                `Bạn đã đạt số lần thi tối đa (${(examSession as any).examRoom.maxAttempts})`
             );
         }
 
         try {
-            const newExamAttempt = await this.prisma.examAttempt.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    examSessionId: dto.examSessionId,
-                    userId: user.id,
-                    score: 0,
-                    violationCount: 0,
-                    startedAt: new Date(),
-                    status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-                },
-                include: {
-                    examSession: {
-                        include: {
-                            examRoom: {
-                                include: {
-                                    quizSet: true,
+            const newExamAttempt = await this.examAttemptRepository.create({
+                id: this.generateIdService.generateId(),
+                examSessionId: dto.examSessionId,
+                userId: user.id,
+                score: 0,
+                violationCount: 0,
+                startedAt: new Date(),
+                status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+            });
+
+            // Load relations for response
+            const examAttemptWithRelations =
+                await this.examAttemptRepository.findOne({
+                    where: { id: newExamAttempt.id },
+                    include: {
+                        examSession: {
+                            include: {
+                                examRoom: {
+                                    include: {
+                                        quizSet: true,
+                                    },
                                 },
                             },
                         },
-                    },
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            name: true,
+                        user: {
+                            select: {
+                                id: true,
+                                email: true,
+                                name: true,
+                            },
                         },
                     },
-                },
-            });
+                    cache: false,
+                });
+
             return {
                 message: 'Bắt đầu làm bài thành công',
-                examAttempt: newExamAttempt,
+                examAttempt: examAttemptWithRelations,
             };
         } catch (error) {
             throw new InternalServerErrorException('Bắt đầu làm bài thất bại');
@@ -100,7 +114,7 @@ export class ExamAttemptService {
     }
 
     async getExamAttemptById(id: string, user: User) {
-        const examAttempt = await this.prisma.examAttempt.findUnique({
+        const examAttempt = await this.examAttemptRepository.findOne({
             where: { id },
             include: {
                 examSession: {
@@ -128,6 +142,7 @@ export class ExamAttemptService {
                     },
                 },
             },
+            cache: true,
         });
 
         if (!examAttempt) {
@@ -136,8 +151,8 @@ export class ExamAttemptService {
 
         // User can only view their own attempts, or host can view all attempts
         if (
-            examAttempt.userId !== user.id &&
-            examAttempt.examSession.examRoom.hostId !== user.id
+            (examAttempt as any).userId !== user.id &&
+            (examAttempt as any).examSession.examRoom.hostId !== user.id
         ) {
             throw new ForbiddenException('Bạn không có quyền xem bài làm này');
         }
@@ -146,7 +161,7 @@ export class ExamAttemptService {
     }
 
     async deleteExamAttempt(id: string, user: User) {
-        const examAttempt = await this.prisma.examAttempt.findUnique({
+        const examAttempt = await this.examAttemptRepository.findOne({
             where: { id },
             include: {
                 examSession: {
@@ -155,6 +170,7 @@ export class ExamAttemptService {
                     },
                 },
             },
+            cache: false,
         });
 
         if (!examAttempt) {
@@ -162,30 +178,24 @@ export class ExamAttemptService {
         }
 
         // Only host can delete attempts
-        if (examAttempt.examSession.examRoom.hostId !== user.id) {
+        if ((examAttempt as any).examSession.examRoom.hostId !== user.id) {
             throw new ForbiddenException('Bạn không có quyền xóa bài làm này');
         }
 
-        try {
-            await this.prisma.examAttempt.delete({
-                where: { id },
-            });
-            return { message: 'Xóa bài làm thành công' };
-        } catch (error) {
-            throw new InternalServerErrorException('Xóa bài làm thất bại');
-        }
+        // Hard delete
+        await this.examAttemptRepository.delete(id);
+        return { message: 'Xóa bài làm thành công' };
     }
 
     async getExamAttempts(user: User, dto: GetExamAttemptsDto) {
-        const skip = ((dto.page || 1) - 1) * (dto.limit || 10);
-
         const where: any = {};
 
         // If examSessionId is provided, check if user is host or participant
         if (dto.examSessionId) {
-            const examSession = await this.prisma.examSession.findUnique({
+            const examSession = await this.examSessionRepository.findOne({
                 where: { id: dto.examSessionId },
                 include: { examRoom: true },
+                cache: true,
             });
 
             if (!examSession) {
@@ -193,7 +203,7 @@ export class ExamAttemptService {
             }
 
             // Host can view all attempts, participants can only view their own
-            if (examSession.examRoom.hostId === user.id) {
+            if ((examSession as any).examRoom.hostId === user.id) {
                 where.examSessionId = dto.examSessionId;
             } else {
                 where.examSessionId = dto.examSessionId;
@@ -205,7 +215,7 @@ export class ExamAttemptService {
         }
 
         if (dto.userId && dto.userId !== user.id) {
-            // Only host can filter by other users
+            // Only host can filter by other users - use Prisma directly for complex nested query
             const examSessions = await this.prisma.examSession.findMany({
                 where: {
                     examRoom: {
@@ -224,56 +234,55 @@ export class ExamAttemptService {
             where.status = dto.status;
         }
 
-        const [examAttempts, total] = await Promise.all([
-            this.prisma.examAttempt.findMany({
-                where,
-                skip,
-                take: dto.limit || 10,
-                orderBy: { startedAt: 'desc' },
-                include: {
-                    examSession: {
-                        select: {
-                            id: true,
-                            startTime: true,
-                            endTime: true,
-                            examRoom: {
-                                select: {
-                                    id: true,
-                                    title: true,
-                                    quizSet: {
-                                        select: {
-                                            id: true,
-                                            title: true,
-                                            thumbnail: true,
-                                        },
+        const result = await this.examAttemptRepository.paginate({
+            page: dto.page || 1,
+            size: dto.limit || 10,
+            ...where,
+            include: {
+                examSession: {
+                    select: {
+                        id: true,
+                        startTime: true,
+                        endTime: true,
+                        examRoom: {
+                            select: {
+                                id: true,
+                                title: true,
+                                quizSet: {
+                                    select: {
+                                        id: true,
+                                        title: true,
+                                        thumbnail: true,
                                     },
                                 },
                             },
                         },
                     },
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            name: true,
-                        },
+                },
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        name: true,
                     },
                 },
-            }),
-            this.prisma.examAttempt.count({ where }),
-        ]);
+            },
+            sortBy: 'startedAt',
+            sortType: 'desc',
+            cache: true,
+        });
 
         return {
-            examAttempts,
-            total,
-            page: dto.page || 1,
-            limit: dto.limit || 10,
-            totalPages: Math.ceil(total / (dto.limit || 10)),
+            examAttempts: result.data,
+            total: result.total,
+            page: result.page,
+            limit: result.size,
+            totalPages: result.totalPages,
         };
     }
 
     async updateExamAttempt(id: string, user: User, dto: UpdateExamAttemptDto) {
-        const examAttempt = await this.prisma.examAttempt.findUnique({
+        const examAttempt = await this.examAttemptRepository.findOne({
             where: { id },
             include: {
                 examSession: {
@@ -282,6 +291,7 @@ export class ExamAttemptService {
                     },
                 },
             },
+            cache: false,
         });
 
         if (!examAttempt) {
@@ -290,8 +300,8 @@ export class ExamAttemptService {
 
         // User can update their own attempt, host can update any attempt
         if (
-            examAttempt.userId !== user.id &&
-            examAttempt.examSession.examRoom.hostId !== user.id
+            (examAttempt as any).userId !== user.id &&
+            (examAttempt as any).examSession.examRoom.hostId !== user.id
         ) {
             throw new ForbiddenException(
                 'Bạn không có quyền chỉnh sửa bài làm này'
@@ -320,28 +330,33 @@ export class ExamAttemptService {
         }
 
         try {
-            const updatedExamAttempt = await this.prisma.examAttempt.update({
-                where: { id },
-                data: updateData,
-                include: {
-                    examSession: {
-                        include: {
-                            examRoom: {
-                                include: {
-                                    quizSet: true,
+            await this.examAttemptRepository.update(id, updateData, user.id);
+
+            // Load with relations for response
+            const updatedExamAttempt = await this.examAttemptRepository.findOne(
+                {
+                    where: { id },
+                    include: {
+                        examSession: {
+                            include: {
+                                examRoom: {
+                                    include: {
+                                        quizSet: true,
+                                    },
                                 },
                             },
                         },
-                    },
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            name: true,
+                        user: {
+                            select: {
+                                id: true,
+                                email: true,
+                                name: true,
+                            },
                         },
                     },
-                },
-            });
+                    cache: false,
+                }
+            );
 
             return {
                 message: 'Cập nhật bài làm thành công',

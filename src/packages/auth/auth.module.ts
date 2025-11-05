@@ -12,6 +12,8 @@ import { GoogleStrategy } from './strategies/google.strategy';
 import { FacebookStrategy } from './strategies/facebook.strategy';
 import { GithubStrategy } from './strategies/github.strategy';
 import { WalletService } from '../finance/modules/wallet/wallet.service';
+import { UserRepository } from './repositories/user.repository';
+import { WalletRepository } from '../finance/modules/wallet/wallet.repository';
 
 @Module({
     imports: [
@@ -32,8 +34,10 @@ import { WalletService } from '../finance/modules/wallet/wallet.service';
         MailService,
         AuthGuard,
         WalletService,
+        WalletRepository,
+        UserRepository,
     ],
     controllers: [AuthController],
-    exports: [AuthService, JwtModule, AuthGuard, JwtModule],
+    exports: [AuthService, JwtModule, AuthGuard, JwtModule, UserRepository],
 })
 export class AuthModule {}
