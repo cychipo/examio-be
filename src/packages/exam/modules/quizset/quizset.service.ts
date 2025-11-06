@@ -146,18 +146,31 @@ export class QuizsetService {
             where.isPinned = dto.isPinned;
         }
 
-        // Use repository pagination with cache
+        // Use repository pagination with cache and include a count of questions
         const result = await this.quizSetRepository.paginate({
             page: dto.page || 1,
             size: dto.limit || 10,
             ...where,
+            include: {
+                _count: {
+                    select: {
+                        detailsQuizQuestions: true,
+                    },
+                },
+            },
             sortBy: 'createdAt',
             sortType: 'desc',
             cache: true,
         });
 
+        // Map the returned data to expose a flat `questionCount` property per quiz set
+        const quizSetsWithCount = (result.data as any[]).map((qs) => ({
+            ...qs,
+            questionCount: qs._count?.detailsQuizQuestions ?? 0,
+        }));
+
         return {
-            quizSets: result.data,
+            quizSets: quizSetsWithCount,
             total: result.total,
             page: result.page,
             limit: result.size,
