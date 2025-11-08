@@ -8,6 +8,7 @@ import {
     Put,
     Delete,
     Param,
+    Query,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -68,7 +69,7 @@ export class FlashcardsetController {
         );
     }
 
-    @Get('get-by-id/:id')
+    @Get(':id')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Get a flashcard set by ID' })
@@ -79,7 +80,7 @@ export class FlashcardsetController {
     })
     async getFlashcardSetById(
         @Req() req: AuthenticatedRequest,
-        @Body('id') id: string
+        @Param('id') id: string
     ) {
         return this.flashcardsetService.getFlashcardSetById(id, req.user);
     }
@@ -95,7 +96,7 @@ export class FlashcardsetController {
     })
     async updateFlashcardSet(
         @Req() req: AuthenticatedRequest,
-        @Body('id') id: string,
+        @Param('id') id: string,
         @Body() updateFlashcardSetDto: UpdateFlashcardSetDto
     ) {
         return this.flashcardsetService.updateFlashcardSet(
@@ -105,7 +106,7 @@ export class FlashcardsetController {
         );
     }
 
-    @Get('list')
+    @Get()
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Get a list of flashcard sets' })
@@ -116,7 +117,7 @@ export class FlashcardsetController {
     })
     async getFlashcardSets(
         @Req() req: AuthenticatedRequest,
-        @Param() getFlashcardsetsDto: GetFlashcardsetsDto
+        @Query() getFlashcardsetsDto: GetFlashcardsetsDto
     ) {
         return this.flashcardsetService.getFlashcardSets(
             req.user,
@@ -135,19 +136,19 @@ export class FlashcardsetController {
     })
     async deleteFlashcardSet(
         @Req() req: AuthenticatedRequest,
-        @Body('id') id: string
+        @Param('id') id: string
     ) {
         return this.flashcardsetService.deleteFlashcardSet(id, req.user);
     }
 
-    @Get('get-public/:id')
+    @Get('public/:id')
     @ApiOperation({ summary: 'Get a public flashcard set by ID' })
     @ApiResponse({
         status: 200,
         description: 'Public flashcard set retrieved successfully',
         type: FlashCardSetDto,
     })
-    async getPublicFlashcardSetById(@Body('id') id: string) {
+    async getPublicFlashcardSetById(@Param('id') id: string) {
         return this.flashcardsetService.getFlashcardSetPublicById(id);
     }
 

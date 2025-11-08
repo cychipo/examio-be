@@ -36,7 +36,15 @@ export abstract class BaseRepository<T> {
         const key = pattern
             ? this.getCacheKey(pattern)
             : `${this.cachePrefix}:*`;
-        await this.redis.del(key);
+
+        console.log(`[BaseRepository] Invalidating cache with key: ${key}`);
+
+        // Nếu có wildcard, dùng delPattern, ngược lại dùng del
+        if (key.includes('*')) {
+            await this.redis.delPattern(key);
+        } else {
+            await this.redis.del(key);
+        }
     }
 
     /**
@@ -340,6 +348,11 @@ export abstract class BaseRepository<T> {
         const where: any = {
             ...filters,
         };
+
+        for (const key in where) {
+            if (where[key] === 'true') where[key] = true;
+            else if (where[key] === 'false') where[key] = false;
+        }
 
         // Xử lý tìm kiếm
         if (text && searchBy.length > 0) {
