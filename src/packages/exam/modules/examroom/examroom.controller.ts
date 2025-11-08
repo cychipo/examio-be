@@ -8,6 +8,7 @@ import {
     Put,
     Delete,
     Param,
+    Query,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -96,7 +97,7 @@ export class ExamRoomController {
     })
     async getExamRooms(
         @Req() req: AuthenticatedRequest,
-        @Body() getExamRoomsDto: GetExamRoomsDto
+        @Query() getExamRoomsDto: GetExamRoomsDto
     ) {
         return this.examRoomService.getExamRooms(req.user, getExamRoomsDto);
     }

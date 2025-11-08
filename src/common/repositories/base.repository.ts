@@ -36,7 +36,15 @@ export abstract class BaseRepository<T> {
         const key = pattern
             ? this.getCacheKey(pattern)
             : `${this.cachePrefix}:*`;
-        await this.redis.del(key);
+
+        console.log(`[BaseRepository] Invalidating cache with key: ${key}`);
+
+        // Nếu có wildcard, dùng delPattern, ngược lại dùng del
+        if (key.includes('*')) {
+            await this.redis.delPattern(key);
+        } else {
+            await this.redis.del(key);
+        }
     }
 
     /**
@@ -328,12 +336,23 @@ export abstract class BaseRepository<T> {
             text,
             cache = false,
             cacheTTL = this.defaultCacheTTL,
+            include,
+            select,
             ...filters
         } = params;
+
+        // Ensure page and size are numbers (convert from string if needed)
+        const pageNum = typeof page === 'string' ? parseInt(page, 10) : page;
+        const sizeNum = typeof size === 'string' ? parseInt(size, 10) : size;
 
         const where: any = {
             ...filters,
         };
+
+        for (const key in where) {
+            if (where[key] === 'true') where[key] = true;
+            else if (where[key] === 'false') where[key] = false;
+        }
 
         // Xử lý tìm kiếm
         if (text && searchBy.length > 0) {
@@ -355,33 +374,43 @@ export abstract class BaseRepository<T> {
 
         if (cache) {
             const cacheKey = this.getCacheKey(
-                `paginate:${page}:${size}:${JSON.stringify(where)}`
+                `paginate:${pageNum}:${sizeNum}:${JSON.stringify(where)}`
             );
             const cached = await this.redis.get<PaginationResult<T>>(cacheKey);
             if (cached) return cached;
         }
 
+        const findManyOptions: any = {
+            where,
+            orderBy: { [sortBy]: sortType },
+            skip: (pageNum - 1) * sizeNum,
+            take: sizeNum,
+        };
+
+        if (include) {
+            findManyOptions.include = include;
+        }
+
+        if (select) {
+            findManyOptions.select = select;
+        }
+
         const [data, total] = await Promise.all([
-            this.model.findMany({
-                where,
-                orderBy: { [sortBy]: sortType },
-                skip: (page - 1) * size,
-                take: size,
-            }),
+            this.model.findMany(findManyOptions),
             this.model.count({ where }),
         ]);
 
         const result = {
             data,
             total,
-            page,
-            size,
-            totalPages: Math.ceil(total / size),
+            page: pageNum,
+            size: sizeNum,
+            totalPages: Math.ceil(total / sizeNum),
         };
 
         if (cache) {
             const cacheKey = this.getCacheKey(
-                `paginate:${page}:${size}:${JSON.stringify(where)}`
+                `paginate:${pageNum}:${sizeNum}:${JSON.stringify(where)}`
             );
             await this.redis.set(cacheKey, result, cacheTTL);
         }

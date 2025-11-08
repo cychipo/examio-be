@@ -9,6 +9,7 @@ import {
     Put,
     Delete,
     Param,
+    Query,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -66,7 +67,7 @@ export class QuizsetController {
         return this.quizsetService.createQuizSet(req.user, createQuizsetDto);
     }
 
-    @Get('get-by-id/:id')
+    @Get(':id')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Get a quiz set by ID' })
@@ -77,7 +78,7 @@ export class QuizsetController {
     })
     async getQuizSetById(
         @Req() req: AuthenticatedRequest,
-        @Body('id') id: string
+        @Param('id') id: string
     ) {
         return this.quizsetService.getQuizSetById(id, req.user);
     }
@@ -93,7 +94,7 @@ export class QuizsetController {
     })
     async updateQuizSet(
         @Req() req: AuthenticatedRequest,
-        @Body('id') id: string,
+        @Param('id') id: string,
         @Body() updateQuizSetDto: UpdateQuizSetDto
     ) {
         return this.quizsetService.updateQuizSet(
@@ -103,7 +104,7 @@ export class QuizsetController {
         );
     }
 
-    @Get('list')
+    @Get()
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Get a list of quiz sets' })
@@ -114,7 +115,7 @@ export class QuizsetController {
     })
     async getQuizSets(
         @Req() req: AuthenticatedRequest,
-        @Param() getQuizsetsDto: GetQuizsetsDto
+        @Query() getQuizsetsDto: GetQuizsetsDto
     ) {
         return this.quizsetService.getQuizSets(req.user, getQuizsetsDto);
     }
@@ -130,19 +131,19 @@ export class QuizsetController {
     })
     async deleteQuizSet(
         @Req() req: AuthenticatedRequest,
-        @Body('id') id: string
+        @Param('id') id: string
     ) {
         return this.quizsetService.deleteQuizSet(id, req.user);
     }
 
-    @Get('get-public/:id')
+    @Get('public/:id')
     @ApiOperation({ summary: 'Get a public quiz set by ID' })
     @ApiResponse({
         status: 200,
         description: 'Public quiz set retrieved successfully',
         type: QuizSetDto,
     })
-    async getPublicQuizSetById(@Body('id') id: string) {
+    async getPublicQuizSetById(@Param('id') id: string) {
         return this.quizsetService.getQuizSetPublicById(id);
     }
 

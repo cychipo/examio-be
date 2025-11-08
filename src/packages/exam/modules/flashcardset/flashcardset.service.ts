@@ -145,6 +145,9 @@ export class FlashcardsetService {
             page: dto.page || 1,
             size: dto.limit || 10,
             ...where,
+            include: {
+                _count: { select: { detailsFlashCard: true } },
+            },
             sortBy: 'createdAt',
             sortType: 'desc',
             cache: true,
@@ -198,6 +201,7 @@ export class FlashcardsetService {
                 flashcardSet: updatedFlashcardSet,
             };
         } catch (error) {
+            console.log('Error updating flashcard set:', error);
             if (error instanceof NotFoundException) {
                 throw error;
             }
@@ -286,11 +290,8 @@ export class FlashcardsetService {
 
     /**
      * Lưu flashcards từ HistoryGeneratedFlashcard vào FlashCardSet
-     * - 1 historyId chứa nhiều flashcards (JSON array)
-     * - Lấy tất cả flashcards từ history.flashcards
-     * - Tạo FlashCard từ mỗi flashcard trong array
-     * - Tạo DetailsFlashCard với historyGeneratedFlashcardId để track và prevent duplicate
-     * - Constraint @@unique([flashCardSetId, historyGeneratedFlashcardId]) sẽ tự động ngăn lưu trùng
+     * - Optimized với batch operations và hash-based deduplication
+     * - Check duplicate theo nội dung flashcard (question + answer)
      */
     async saveHistoryToFlashcardSet(
         user: User,
@@ -356,26 +357,40 @@ export class FlashcardsetService {
                 }
 
                 const flashcardSetIds = flashcardSets.map((fs) => fs.id);
-                let createdCount = 0;
-                let skippedCount = 0;
 
-                // Kiểm tra history đã được lưu vào flashcardSet nào chưa
-                const existingDetails = await tx.detailsFlashCard.findMany({
+                const existingFlashcards = await tx.detailsFlashCard.findMany({
                     where: {
                         flashCardSetId: { in: flashcardSetIds },
-                        historyGeneratedFlashcardId: dto.historyId,
                     },
                     select: {
                         flashCardSetId: true,
+                        flashCard: {
+                            select: {
+                                question: true,
+                                answer: true,
+                            },
+                        },
                     },
                 });
 
-                // Tạo Set các flashcardSetId đã có history này
-                const existingFlashcardSetIds = new Set(
-                    existingDetails.map((d) => d.flashCardSetId)
-                );
+                const existingMap = new Map<string, Set<string>>();
+                for (const ef of existingFlashcards) {
+                    const hash = this.hashFlashcard(
+                        ef.flashCard.question,
+                        ef.flashCard.answer
+                    );
+                    if (!existingMap.has(ef.flashCardSetId)) {
+                        existingMap.set(ef.flashCardSetId, new Set());
+                    }
+                    existingMap.get(ef.flashCardSetId)!.add(hash);
+                }
 
-                // Tạo FlashCard cho mỗi flashcard trong history
+                const flashcardsToCreate: any[] = [];
+                const detailsToCreate: any[] = [];
+                const flashcardIdMap = new Map<string, string>(); // hash -> flashcardId
+
+                let skippedCount = 0;
+
                 for (const flashcard of flashcards) {
                     if (
                         !flashcard ||
@@ -390,47 +405,64 @@ export class FlashcardsetService {
                         answer?: string;
                     };
 
-                    const flashcardId = this.generateIdService.generateId();
+                    const question = flashcardData.question || '';
+                    const answer = flashcardData.answer || '';
+                    const hash = this.hashFlashcard(question, answer);
 
-                    // Tạo FlashCard từ flashcard data
-                    await tx.flashCard.create({
-                        data: {
+                    // Tạo flashcardId một lần cho mỗi unique flashcard
+                    if (!flashcardIdMap.has(hash)) {
+                        const flashcardId = this.generateIdService.generateId();
+                        flashcardIdMap.set(hash, flashcardId);
+
+                        flashcardsToCreate.push({
                             id: flashcardId,
-                            question: flashcardData.question || '',
-                            answer: flashcardData.answer || '',
-                        },
-                    });
+                            question,
+                            answer,
+                        });
+                    }
 
-                    // Tạo DetailsFlashCard cho mỗi flashcardSet chưa có history này
+                    const flashcardId = flashcardIdMap.get(hash)!;
+
                     for (const flashcardSetId of flashcardSetIds) {
-                        // Skip nếu flashcardSet này đã có history này rồi
-                        if (existingFlashcardSetIds.has(flashcardSetId)) {
-                            console.log(
-                                `⚠️ History ${history.id} đã được lưu vào FlashcardSet ${flashcardSetId} trước đó`
-                            );
+                        const existingSet = existingMap.get(flashcardSetId);
+
+                        if (existingSet && existingSet.has(hash)) {
                             skippedCount++;
                             continue;
                         }
 
-                        await tx.detailsFlashCard.create({
-                            data: {
-                                id: this.generateIdService.generateId(),
-                                flashCardSetId: flashcardSetId,
-                                flashCardId: flashcardId,
-                                historyGeneratedFlashcardId: history.id,
-                            },
+                        detailsToCreate.push({
+                            id: this.generateIdService.generateId(),
+                            flashCardSetId: flashcardSetId,
+                            flashCardId: flashcardId,
+                            historyGeneratedFlashcardId: history.id,
                         });
-                        createdCount++;
-                    }
 
-                    // Sau khi tạo xong flashcard này cho tất cả flashcardSets, mark tất cả là đã có
-                    flashcardSetIds.forEach((id) =>
-                        existingFlashcardSetIds.add(id)
-                    );
+                        // Update map để tránh duplicate trong cùng batch
+                        if (!existingSet) {
+                            existingMap.set(flashcardSetId, new Set([hash]));
+                        } else {
+                            existingSet.add(hash);
+                        }
+                    }
+                }
+
+                if (flashcardsToCreate.length > 0 && detailsToCreate.length > 0) {
+                    await tx.flashCard.createMany({
+                        data: flashcardsToCreate,
+                        skipDuplicates: true,
+                    });
+                }
+
+                if (detailsToCreate.length > 0) {
+                    await tx.detailsFlashCard.createMany({
+                        data: detailsToCreate,
+                        skipDuplicates: true,
+                    });
                 }
 
                 return {
-                    createdCount,
+                    createdCount: detailsToCreate.length,
                     skippedCount,
                     totalFlashcards: flashcards.length,
                     affectedFlashcardSetsCount: flashcardSetIds.length,
@@ -438,7 +470,7 @@ export class FlashcardsetService {
             });
 
             return {
-                message: `Đã lưu ${result.totalFlashcards} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ${result.skippedCount > 0 ? ` (${result.skippedCount} đã tồn tại)` : ''}`,
+                message: `Đã lưu ${result.createdCount} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ${result.skippedCount > 0 ? ` (${result.skippedCount} bỏ qua do trùng lặp)` : ''}`,
                 createdCount: result.createdCount,
                 skippedCount: result.skippedCount,
                 affectedFlashcardSets: result.affectedFlashcardSetsCount,
@@ -455,5 +487,10 @@ export class FlashcardsetService {
                 'Lưu thẻ ghi nhớ từ history thất bại'
             );
         }
+    }
+
+    private hashFlashcard(question: string, answer: string): string {
+        const normalized = `${question.trim().toLowerCase()}|||${answer.trim().toLowerCase()}`;
+        return normalized;
     }
 }

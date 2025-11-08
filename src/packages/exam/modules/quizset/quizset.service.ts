@@ -1,10 +1,10 @@
 import { PrismaService } from 'src/prisma/prisma.service';
 import {
-    Injectable,
-    ConflictException,
-    NotFoundException,
-    InternalServerErrorException,
     BadRequestException,
+    ConflictException,
+    Injectable,
+    InternalServerErrorException,
+    NotFoundException,
 } from '@nestjs/common';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { User } from '@prisma/client';
@@ -14,6 +14,7 @@ import { UpdateQuizSetDto } from './dto/update-quizset.dto';
 import { SetQuizzToQuizsetDto } from './dto/set-quizz-to-quizset.dto';
 import { SaveHistoryToQuizsetDto } from './dto/save-history-to-quizset.dto';
 import { QuizSetRepository } from './quizset.repository';
+import { EXPIRED_TIME } from '../../../../constants/redis';
 
 @Injectable()
 export class QuizsetService {
@@ -146,18 +147,32 @@ export class QuizsetService {
             where.isPinned = dto.isPinned;
         }
 
-        // Use repository pagination with cache
+        // Use repository pagination with cache and include a count of questions
         const result = await this.quizSetRepository.paginate({
             page: dto.page || 1,
             size: dto.limit || 10,
             ...where,
+            include: {
+                _count: {
+                    select: {
+                        detailsQuizQuestions: true,
+                    },
+                },
+            },
             sortBy: 'createdAt',
             sortType: 'desc',
             cache: true,
+            cacheTTL: EXPIRED_TIME.TEN_MINUTES,
         });
 
+        // Map the returned data to expose a flat `questionCount` property per quiz set
+        const quizSetsWithCount = (result.data as any[]).map((qs) => ({
+            ...qs,
+            questionCount: qs._count?.detailsQuizQuestions ?? 0,
+        }));
+
         return {
-            quizSets: result.data,
+            quizSets: quizSetsWithCount,
             total: result.total,
             page: result.page,
             limit: result.size,
@@ -366,26 +381,41 @@ export class QuizsetService {
                 }
 
                 const quizSetIds = quizSets.map((qs) => qs.id);
-                let createdCount = 0;
-                let skippedCount = 0;
-
-                // Kiểm tra history đã được lưu vào quizSet nào chưa
-                const existingDetails = await tx.detailsQuizQuestion.findMany({
-                    where: {
-                        quizSetId: { in: quizSetIds },
-                        historyGeneratedQuizzId: dto.historyId,
-                    },
-                    select: {
-                        quizSetId: true,
-                    },
-                });
-
-                // Tạo Set các quizSetId đã có history này
-                const existingQuizSetIds = new Set(
-                    existingDetails.map((d) => d.quizSetId)
+                const existingQuestions = await tx.detailsQuizQuestion.findMany(
+                    {
+                        where: {
+                            quizSetId: { in: quizSetIds },
+                        },
+                        select: {
+                            quizSetId: true,
+                            quizQuestion: {
+                                select: {
+                                    question: true,
+                                    answer: true,
+                                },
+                            },
+                        },
+                    }
                 );
 
-                // Tạo QuizQuestion cho mỗi quiz trong history
+                const existingMap = new Map<string, Set<string>>();
+                for (const eq of existingQuestions) {
+                    const hash = this.hashQuestion(
+                        eq.quizQuestion.question,
+                        eq.quizQuestion.answer
+                    );
+                    if (!existingMap.has(eq.quizSetId)) {
+                        existingMap.set(eq.quizSetId, new Set());
+                    }
+                    existingMap.get(eq.quizSetId)!.add(hash);
+                }
+
+                const questionsToCreate: any[] = [];
+                const detailsToCreate: any[] = [];
+                const questionIdMap = new Map<string, string>(); // hash -> questionId
+
+                let skippedCount = 0;
+
                 for (const quiz of quizzes) {
                     if (
                         !quiz ||
@@ -401,47 +431,66 @@ export class QuizsetService {
                         answer?: string;
                     };
 
-                    const questionId = this.generateIdService.generateId();
+                    const question = quizObj.question || '';
+                    const answer = quizObj.answer || '';
+                    const options = quizObj.options || [];
+                    const hash = this.hashQuestion(question, answer);
 
-                    // Tạo QuizQuestion từ quiz data
-                    await tx.quizQuestion.create({
-                        data: {
+                    if (!questionIdMap.has(hash)) {
+                        const questionId = this.generateIdService.generateId();
+                        questionIdMap.set(hash, questionId);
+
+                        questionsToCreate.push({
                             id: questionId,
-                            question: quizObj.question || '',
-                            options: quizObj.options || [],
-                            answer: quizObj.answer || '',
-                        },
-                    });
+                            question,
+                            options,
+                            answer,
+                        });
+                    }
 
-                    // Tạo DetailsQuizQuestion cho mỗi quizSet chưa có history này
+                    const questionId = questionIdMap.get(hash)!;
+
                     for (const quizSetId of quizSetIds) {
-                        // Skip nếu quizSet này đã có history này rồi
-                        if (existingQuizSetIds.has(quizSetId)) {
-                            console.log(
-                                `⚠️ History ${history.id} đã được lưu vào QuizSet ${quizSetId} trước đó`
-                            );
+                        const existingSet = existingMap.get(quizSetId);
+
+                        if (existingSet && existingSet.has(hash)) {
                             skippedCount++;
                             continue;
                         }
 
-                        await tx.detailsQuizQuestion.create({
-                            data: {
-                                id: this.generateIdService.generateId(),
-                                quizSetId: quizSetId,
-                                quizQuestionId: questionId,
-                                historyGeneratedQuizzId: history.id,
-                            },
+                        detailsToCreate.push({
+                            id: this.generateIdService.generateId(),
+                            quizSetId,
+                            quizQuestionId: questionId,
+                            historyGeneratedQuizzId: history.id,
                         });
-                        createdCount++;
-                    }
 
-                    // Sau khi tạo xong quiz này cho tất cả quizSets, mark tất cả là đã có
-                    // (để tránh tạo lại cho các quiz tiếp theo trong cùng history)
-                    quizSetIds.forEach((id) => existingQuizSetIds.add(id));
+                        if (!existingSet) {
+                            existingMap.set(quizSetId, new Set([hash]));
+                        } else {
+                            existingSet.add(hash);
+                        }
+                    }
+                }
+                if (
+                    questionsToCreate.length > 0 &&
+                    detailsToCreate.length > 0
+                ) {
+                    await tx.quizQuestion.createMany({
+                        data: questionsToCreate,
+                        skipDuplicates: true,
+                    });
+                }
+
+                if (detailsToCreate.length > 0) {
+                    await tx.detailsQuizQuestion.createMany({
+                        data: detailsToCreate,
+                        skipDuplicates: true,
+                    });
                 }
 
                 return {
-                    createdCount,
+                    createdCount: detailsToCreate.length,
                     skippedCount,
                     totalQuizzes: quizzes.length,
                     affectedQuizSetsCount: quizSetIds.length,
@@ -466,5 +515,10 @@ export class QuizsetService {
                 'Lưu câu hỏi từ history thất bại'
             );
         }
+    }
+
+    private hashQuestion(question: string, answer: string): string {
+        const normalized = `${question.trim().toLowerCase()}|||${answer.trim().toLowerCase()}`;
+        return normalized;
     }
 }
