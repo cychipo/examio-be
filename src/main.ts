@@ -3,6 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { swaggerConfig } from './config/swagger.config';
 import { SwaggerModule } from '@nestjs/swagger';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
 const whitelist = [
     process.env.FRONTEND_URL,
@@ -14,6 +15,10 @@ const whitelist = [
 
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+    // Enable global logging interceptor
+    app.useGlobalInterceptors(new LoggingInterceptor());
+
     app.enableCors({
         origin: function (origin, callback) {
             // Check if the incoming request's 'origin' is in our whitelist
