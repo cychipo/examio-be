@@ -16,6 +16,7 @@ import {
     ApiOperation,
     ApiExtraModels,
     ApiCookieAuth,
+    ApiParam,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
@@ -33,6 +34,13 @@ import {
     SetFlashcardsToFlashcardSetResponseDto,
     FlashCardSetDto,
 } from './dto/flashcardset-response.dto';
+import {
+    CreateFlashcardDto,
+    UpdateFlashcardDto,
+    CreateFlashcardResponseDto,
+    UpdateFlashcardResponseDto,
+    DeleteFlashcardResponseDto,
+} from './dto/flashcard.dto';
 
 @ApiTags('Flashcardsets')
 @ApiExtraModels(
@@ -67,6 +75,18 @@ export class FlashcardsetController {
             req.user,
             createFlashcardsetDto
         );
+    }
+
+    @Get('stats')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get flashcard set statistics' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcard set statistics retrieved successfully',
+    })
+    async getFlashcardSetStats(@Req() req: AuthenticatedRequest) {
+        return this.flashcardsetService.getFlashcardSetStats(req.user);
     }
 
     @Get(':id')
@@ -189,6 +209,78 @@ export class FlashcardsetController {
         return this.flashcardsetService.saveHistoryToFlashcardSet(
             req.user,
             dto
+        );
+    }
+
+    // ==================== FLASHCARD CRUD ENDPOINTS ====================
+
+    @Post(':flashcardSetId/flashcards')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Add a flashcard to a flashcard set' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 201,
+        description: 'Flashcard added successfully',
+        type: CreateFlashcardResponseDto,
+    })
+    async addFlashcard(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Body() dto: CreateFlashcardDto
+    ) {
+        return this.flashcardsetService.addFlashcardToFlashcardSet(
+            flashcardSetId,
+            req.user,
+            dto
+        );
+    }
+
+    @Put(':flashcardSetId/flashcards/:flashcardId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Update a flashcard in a flashcard set' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'flashcardId', description: 'Flashcard ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcard updated successfully',
+        type: UpdateFlashcardResponseDto,
+    })
+    async updateFlashcard(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Param('flashcardId') flashcardId: string,
+        @Body() dto: UpdateFlashcardDto
+    ) {
+        return this.flashcardsetService.updateFlashcardInFlashcardSet(
+            flashcardSetId,
+            flashcardId,
+            req.user,
+            dto
+        );
+    }
+
+    @Delete(':flashcardSetId/flashcards/:flashcardId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Delete a flashcard from a flashcard set' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'flashcardId', description: 'Flashcard ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcard deleted successfully',
+        type: DeleteFlashcardResponseDto,
+    })
+    async deleteFlashcard(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Param('flashcardId') flashcardId: string
+    ) {
+        return this.flashcardsetService.deleteFlashcardFromFlashcardSet(
+            flashcardSetId,
+            flashcardId,
+            req.user
         );
     }
 }

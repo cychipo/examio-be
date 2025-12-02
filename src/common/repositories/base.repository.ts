@@ -32,7 +32,7 @@ export abstract class BaseRepository<T> {
     /**
      * Invalidate cache by pattern
      */
-    protected async invalidateCache(pattern?: string): Promise<void> {
+    public async invalidateCache(pattern?: string): Promise<void> {
         const key = pattern
             ? this.getCacheKey(pattern)
             : `${this.cachePrefix}:*`;

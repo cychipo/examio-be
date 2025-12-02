@@ -49,6 +49,39 @@ export class FlashcardsetService {
         }
     }
 
+    async getFlashcardSetStats(user: User) {
+        try {
+            // Get total count
+            const totalCount = await this.prisma.flashCardSet.count({
+                where: { userId: user.id },
+            });
+
+            // Get total cards count
+            const cardCountResult =
+                await this.prisma.detailsFlashCard.aggregate({
+                    where: {
+                        flashCardSet: {
+                            userId: user.id,
+                        },
+                    },
+                    _count: true,
+                });
+
+            const totalCards = cardCountResult._count || 0;
+
+            return {
+                totalGroups: totalCount,
+                totalCards,
+                avgProgress: 0, // TODO: Implement progress tracking
+                studiedToday: 0, // TODO: Implement study tracking
+            };
+        } catch (error) {
+            throw new InternalServerErrorException(
+                'Lấy thống kê bộ thẻ ghi nhớ thất bại'
+            );
+        }
+    }
+
     async getFlashcardSetById(id: string, user: User) {
         const flashcardSet = await this.flashcardSetRepository.findOne({
             where: { id, userId: user.id },
@@ -61,6 +94,8 @@ export class FlashcardsetService {
             },
             cache: true,
         });
+
+        console.log('Fetched flashcardSet:', flashcardSet);
 
         if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
@@ -447,7 +482,10 @@ export class FlashcardsetService {
                     }
                 }
 
-                if (flashcardsToCreate.length > 0 && detailsToCreate.length > 0) {
+                if (
+                    flashcardsToCreate.length > 0 &&
+                    detailsToCreate.length > 0
+                ) {
                     await tx.flashCard.createMany({
                         data: flashcardsToCreate,
                         skipDuplicates: true,
@@ -492,5 +530,154 @@ export class FlashcardsetService {
     private hashFlashcard(question: string, answer: string): string {
         const normalized = `${question.trim().toLowerCase()}|||${answer.trim().toLowerCase()}`;
         return normalized;
+    }
+
+    // ==================== FLASHCARD CRUD METHODS ====================
+
+    /**
+     * Thêm flashcard vào flashcardset
+     */
+    async addFlashcardToFlashcardSet(
+        flashcardSetId: string,
+        user: User,
+        dto: { question: string; answer: string }
+    ) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const flashcardId = this.generateIdService.generateId();
+
+        const flashcard = await this.prisma.$transaction(async (tx) => {
+            // Create flashcard
+            const newFlashcard = await tx.flashCard.create({
+                data: {
+                    id: flashcardId,
+                    question: dto.question,
+                    answer: dto.answer,
+                },
+            });
+
+            // Create detail link
+            await tx.detailsFlashCard.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    flashCardSetId: flashcardSetId,
+                    flashCardId: flashcardId,
+                },
+            });
+
+            return newFlashcard;
+        });
+
+        // Invalidate all flashcardset caches including paginate caches
+        await this.flashcardSetRepository.invalidateCache();
+
+        return {
+            message: 'Thêm thẻ ghi nhớ thành công',
+            flashcard,
+        };
+    }
+
+    /**
+     * Cập nhật flashcard trong flashcardset
+     */
+    async updateFlashcardInFlashcardSet(
+        flashcardSetId: string,
+        flashcardId: string,
+        user: User,
+        dto: { question?: string; answer?: string }
+    ) {
+        // Check ownership of flashcardset
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        // Check if flashcard belongs to this flashcardset
+        const detailLink = await this.prisma.detailsFlashCard.findFirst({
+            where: {
+                flashCardSetId: flashcardSetId,
+                flashCardId: flashcardId,
+            },
+        });
+
+        if (!detailLink) {
+            throw new NotFoundException(
+                'Thẻ ghi nhớ không tồn tại trong bộ này'
+            );
+        }
+
+        // Update flashcard
+        const updatedFlashcard = await this.prisma.flashCard.update({
+            where: { id: flashcardId },
+            data: {
+                ...(dto.question && { question: dto.question }),
+                ...(dto.answer && { answer: dto.answer }),
+            },
+        });
+
+        // Invalidate all flashcardset caches including paginate caches
+        await this.flashcardSetRepository.invalidateCache();
+
+        return {
+            message: 'Cập nhật thẻ ghi nhớ thành công',
+            flashcard: updatedFlashcard,
+        };
+    }
+
+    /**
+     * Xóa flashcard khỏi flashcardset
+     */
+    async deleteFlashcardFromFlashcardSet(
+        flashcardSetId: string,
+        flashcardId: string,
+        user: User
+    ) {
+        // Check ownership of flashcardset
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        // Check if flashcard belongs to this flashcardset
+        const detailLink = await this.prisma.detailsFlashCard.findFirst({
+            where: {
+                flashCardSetId: flashcardSetId,
+                flashCardId: flashcardId,
+            },
+        });
+
+        if (!detailLink) {
+            throw new NotFoundException(
+                'Thẻ ghi nhớ không tồn tại trong bộ này'
+            );
+        }
+
+        // Delete the link (not the flashcard itself)
+        await this.prisma.detailsFlashCard.delete({
+            where: { id: detailLink.id },
+        });
+
+        // Invalidate all flashcardset caches including paginate caches
+        await this.flashcardSetRepository.invalidateCache();
+
+        return {
+            message: 'Xóa thẻ ghi nhớ thành công',
+        };
     }
 }

@@ -17,6 +17,7 @@ import {
     ApiOperation,
     ApiExtraModels,
     ApiCookieAuth,
+    ApiParam,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
@@ -34,6 +35,13 @@ import {
     SetQuizzesToQuizSetResponseDto,
     QuizSetDto,
 } from './dto/quizset-response.dto';
+import {
+    CreateQuestionDto,
+    UpdateQuestionDto,
+    CreateQuestionResponseDto,
+    UpdateQuestionResponseDto,
+    DeleteQuestionResponseDto,
+} from './dto/question.dto';
 
 @ApiTags('Quizsets')
 @ApiExtraModels(
@@ -65,6 +73,18 @@ export class QuizsetController {
         @Body() createQuizsetDto: CreateQuizsetDto
     ) {
         return this.quizsetService.createQuizSet(req.user, createQuizsetDto);
+    }
+
+    @Get('stats')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get quiz set statistics' })
+    @ApiResponse({
+        status: 200,
+        description: 'Quiz set statistics retrieved successfully',
+    })
+    async getQuizSetStats(@Req() req: AuthenticatedRequest) {
+        return this.quizsetService.getQuizSetStats(req.user);
     }
 
     @Get(':id')
@@ -177,5 +197,77 @@ export class QuizsetController {
         @Body() dto: SaveHistoryToQuizsetDto
     ) {
         return this.quizsetService.saveHistoryToQuizSet(req.user, dto);
+    }
+
+    // ==================== QUESTION CRUD ENDPOINTS ====================
+
+    @Post(':quizSetId/questions')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Add a question to a quiz set' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiResponse({
+        status: 201,
+        description: 'Question added successfully',
+        type: CreateQuestionResponseDto,
+    })
+    async addQuestion(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Body() dto: CreateQuestionDto
+    ) {
+        return this.quizsetService.addQuestionToQuizSet(
+            quizSetId,
+            req.user,
+            dto
+        );
+    }
+
+    @Put(':quizSetId/questions/:questionId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Update a question in a quiz set' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiParam({ name: 'questionId', description: 'Question ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Question updated successfully',
+        type: UpdateQuestionResponseDto,
+    })
+    async updateQuestion(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Param('questionId') questionId: string,
+        @Body() dto: UpdateQuestionDto
+    ) {
+        return this.quizsetService.updateQuestionInQuizSet(
+            quizSetId,
+            questionId,
+            req.user,
+            dto
+        );
+    }
+
+    @Delete(':quizSetId/questions/:questionId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Delete a question from a quiz set' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiParam({ name: 'questionId', description: 'Question ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Question deleted successfully',
+        type: DeleteQuestionResponseDto,
+    })
+    async deleteQuestion(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Param('questionId') questionId: string
+    ) {
+        return this.quizsetService.deleteQuestionFromQuizSet(
+            quizSetId,
+            questionId,
+            req.user
+        );
     }
 }
