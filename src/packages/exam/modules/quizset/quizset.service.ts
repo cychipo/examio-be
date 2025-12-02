@@ -50,6 +50,44 @@ export class QuizsetService {
         }
     }
 
+    async getQuizSetStats(user: User) {
+        try {
+            // Get total count
+            const totalCount = await this.prisma.quizSet.count({
+                where: { userId: user.id },
+            });
+
+            // Get active (public) count
+            const activeCount = await this.prisma.quizSet.count({
+                where: { userId: user.id, isPublic: true },
+            });
+
+            // Get total questions count
+            const questionCountResult =
+                await this.prisma.detailsQuizQuestion.aggregate({
+                    where: {
+                        quizSet: {
+                            userId: user.id,
+                        },
+                    },
+                    _count: true,
+                });
+
+            const totalQuestions = questionCountResult._count || 0;
+
+            return {
+                totalExams: totalCount,
+                activeExams: activeCount,
+                totalQuestions,
+                completionRate: 0, // TODO: Implement completion tracking
+            };
+        } catch (error) {
+            throw new InternalServerErrorException(
+                'Lấy thống kê bộ câu hỏi thất bại'
+            );
+        }
+    }
+
     async getQuizSetById(id: string, user: User) {
         // Use repository with cache
         const quizSet = await this.quizSetRepository.findOne({
@@ -520,5 +558,156 @@ export class QuizsetService {
     private hashQuestion(question: string, answer: string): string {
         const normalized = `${question.trim().toLowerCase()}|||${answer.trim().toLowerCase()}`;
         return normalized;
+    }
+
+    // ==================== QUESTION CRUD METHODS ====================
+
+    /**
+     * Thêm câu hỏi vào quizset
+     */
+    async addQuestionToQuizSet(
+        quizSetId: string,
+        user: User,
+        dto: { question: string; options: string[]; answer: string }
+    ) {
+        // Check ownership
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        const questionId = this.generateIdService.generateId();
+
+        const question = await this.prisma.$transaction(async (tx) => {
+            // Create question
+            const newQuestion = await tx.quizQuestion.create({
+                data: {
+                    id: questionId,
+                    question: dto.question,
+                    options: dto.options,
+                    answer: dto.answer,
+                },
+            });
+
+            // Create detail link
+            await tx.detailsQuizQuestion.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    quizSetId: quizSetId,
+                    quizQuestionId: questionId,
+                },
+            });
+
+            return newQuestion;
+        });
+
+        // Invalidate all quizset caches including paginate caches
+        await this.quizSetRepository.invalidateCache();
+
+        return {
+            message: 'Thêm câu hỏi thành công',
+            question,
+        };
+    }
+
+    /**
+     * Cập nhật câu hỏi trong quizset
+     */
+    async updateQuestionInQuizSet(
+        quizSetId: string,
+        questionId: string,
+        user: User,
+        dto: { question?: string; options?: string[]; answer?: string }
+    ) {
+        // Check ownership of quizset
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        // Check if question belongs to this quizset
+        const detailLink = await this.prisma.detailsQuizQuestion.findFirst({
+            where: {
+                quizSetId: quizSetId,
+                quizQuestionId: questionId,
+            },
+        });
+
+        if (!detailLink) {
+            throw new NotFoundException(
+                'Câu hỏi không tồn tại trong bộ đề này'
+            );
+        }
+
+        // Update question
+        const updatedQuestion = await this.prisma.quizQuestion.update({
+            where: { id: questionId },
+            data: {
+                ...(dto.question && { question: dto.question }),
+                ...(dto.options && { options: dto.options }),
+                ...(dto.answer && { answer: dto.answer }),
+            },
+        });
+
+        // Invalidate all quizset caches including paginate caches
+        await this.quizSetRepository.invalidateCache();
+
+        return {
+            message: 'Cập nhật câu hỏi thành công',
+            question: updatedQuestion,
+        };
+    }
+
+    /**
+     * Xóa câu hỏi khỏi quizset
+     */
+    async deleteQuestionFromQuizSet(
+        quizSetId: string,
+        questionId: string,
+        user: User
+    ) {
+        // Check ownership of quizset
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        // Check if question belongs to this quizset
+        const detailLink = await this.prisma.detailsQuizQuestion.findFirst({
+            where: {
+                quizSetId: quizSetId,
+                quizQuestionId: questionId,
+            },
+        });
+
+        if (!detailLink) {
+            throw new NotFoundException(
+                'Câu hỏi không tồn tại trong bộ đề này'
+            );
+        }
+
+        // Delete the link (not the question itself, as it might be used in other quizsets)
+        await this.prisma.detailsQuizQuestion.delete({
+            where: { id: detailLink.id },
+        });
+
+        // Invalidate all quizset caches including paginate caches
+        await this.quizSetRepository.invalidateCache();
+
+        return {
+            message: 'Xóa câu hỏi thành công',
+        };
     }
 }
