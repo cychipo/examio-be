@@ -528,6 +528,23 @@ export class AIService {
         }
     }
 
+    /**
+     * Normalize filename - remove Vietnamese diacritics and special characters
+     */
+    private normalizeFilename(filename: string): string {
+        // Normalize Vietnamese characters
+        const normalized = filename
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+            .replace(/đ/g, 'd')
+            .replace(/Đ/g, 'D')
+            .replace(/[^a-zA-Z0-9._-]/g, '_') // Replace special chars with underscore
+            .replace(/_+/g, '_') // Remove multiple underscores
+            .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
+
+        return normalized || 'file';
+    }
+
     private async uploadAndCreateUserStorage(file: any, user: User) {
         const r2Key = this.generateIdService.generateId();
         const r2File = await this.r2Service.uploadFile(
@@ -540,11 +557,15 @@ export class AIService {
                 'Không upload được file lên R2'
             );
         }
+
+        // Keep original filename for display, but normalize for storage key
+        const originalFilename = file.originalname;
+
         return await this.prisma.userStorage.create({
             data: {
                 id: this.generateIdService.generateId(),
                 userId: user.id,
-                filename: file.originalname,
+                filename: originalFilename, // Keep original for display
                 mimetype: file.mimetype,
                 size: file.size,
                 keyR2: r2Key,
@@ -1048,5 +1069,181 @@ export class AIService {
         );
 
         return finalFlashcards;
+    }
+
+    /**
+     * Lấy danh sách các file đã upload gần đây kèm theo lịch sử generate quiz/flashcard
+     */
+    async getRecentUploads(userId: string, limit: number = 10) {
+        const uploads = await this.prisma.userStorage.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+            include: {
+                historyGeneratedQuizz: {
+                    orderBy: { createdAt: 'desc' },
+                    take: 1,
+                },
+                historyGeneratedFlashcard: {
+                    orderBy: { createdAt: 'desc' },
+                    take: 1,
+                },
+            },
+        });
+
+        return uploads.map((upload) => ({
+            id: upload.id,
+            filename: upload.filename,
+            url: upload.url,
+            size: upload.size,
+            mimetype: upload.mimetype,
+            createdAt: upload.createdAt,
+            quizHistory: upload.historyGeneratedQuizz[0] || null,
+            flashcardHistory: upload.historyGeneratedFlashcard[0] || null,
+        }));
+    }
+
+    /**
+     * Lấy chi tiết một upload với generated content
+     */
+    async getUploadDetail(uploadId: string, userId: string) {
+        const upload = await this.prisma.userStorage.findFirst({
+            where: { id: uploadId, userId },
+            include: {
+                historyGeneratedQuizz: {
+                    orderBy: { createdAt: 'desc' },
+                },
+                historyGeneratedFlashcard: {
+                    orderBy: { createdAt: 'desc' },
+                },
+            },
+        });
+
+        if (!upload) {
+            throw new NotFoundException('Không tìm thấy file');
+        }
+
+        return {
+            id: upload.id,
+            filename: upload.filename,
+            url: upload.url,
+            size: upload.size,
+            mimetype: upload.mimetype,
+            createdAt: upload.createdAt,
+            quizHistories: upload.historyGeneratedQuizz,
+            flashcardHistories: upload.historyGeneratedFlashcard,
+        };
+    }
+
+    /**
+     * Xóa upload và tất cả data liên quan (R2, documents, history)
+     */
+    async deleteUpload(uploadId: string, userId: string) {
+        const upload = await this.prisma.userStorage.findFirst({
+            where: { id: uploadId, userId },
+        });
+
+        if (!upload) {
+            throw new NotFoundException('Không tìm thấy file');
+        }
+
+        // 1. Xóa file từ R2
+        try {
+            await this.r2Service.deleteFile(upload.keyR2);
+            console.log(`✅ Deleted file from R2: ${upload.keyR2}`);
+        } catch (error) {
+            console.error(`❌ Failed to delete from R2: ${error}`);
+            // Continue với xóa DB dù R2 fail
+        }
+
+        // 2. Xóa từ database (cascade sẽ xóa documents và history)
+        await this.prisma.userStorage.delete({
+            where: { id: uploadId },
+        });
+
+        console.log(`✅ Deleted upload: ${uploadId}`);
+
+        return { success: true, message: 'Đã xóa file thành công' };
+    }
+
+    /**
+     * Regenerate quiz/flashcard từ file đã upload (không cần upload lại)
+     */
+    async regenerateFromUpload(
+        uploadId: string,
+        user: User,
+        typeResult: number,
+        quantityFlashcard?: number,
+        quantityQuizz?: number,
+        isNarrowSearch?: boolean,
+        keyword?: string
+    ) {
+        const upload = await this.prisma.userStorage.findFirst({
+            where: { id: uploadId, userId: user.id },
+        });
+
+        if (!upload) {
+            throw new NotFoundException('Không tìm thấy file');
+        }
+
+        // Kiểm tra có documents không
+        const documentCount = await this.prisma.document.count({
+            where: { userStorageId: uploadId },
+        });
+
+        if (documentCount === 0) {
+            throw new BadRequestException(
+                'Không tìm thấy nội dung file. Vui lòng upload lại.'
+            );
+        }
+
+        // Generate dựa trên type - sử dụng methods có sẵn
+        if (typeResult === TYPE_RESULT.FLASHCARD) {
+            const numFlashcards = quantityFlashcard || 10;
+            const flashcards = await this.generateFlashcardsChunkBased(
+                uploadId,
+                numFlashcards,
+                isNarrowSearch || false,
+                keyword
+            );
+
+            // Lưu history
+            await this.saveFlashcardsToHistory(flashcards, user.id, uploadId);
+
+            // Trừ credit
+            await this.decrementUserCredit(user.id, numFlashcards);
+
+            return {
+                type: 'flashcard',
+                data: flashcards,
+                fileInfo: {
+                    id: upload.id,
+                    filename: upload.filename,
+                },
+            };
+        } else {
+            const numQuizzes = quantityQuizz || 10;
+            const quizzes = await this.generateQuizChunkBased(
+                uploadId,
+                numQuizzes,
+                isNarrowSearch || false,
+                keyword
+            );
+
+            // Lưu history
+            await this.saveQuizzesToHistory(quizzes, user.id, uploadId);
+
+            // Trừ credit
+            await this.decrementUserCredit(user.id, numQuizzes);
+
+            return {
+                type: 'quiz',
+                data: quizzes,
+                fileInfo: {
+                    id: upload.id,
+                    filename: upload.filename,
+                },
+            };
+        }
     }
 }
