@@ -14,6 +14,7 @@ import { User } from '@prisma/client';
 import { TYPE_RESULT } from './constant/type-result';
 import { PdfService } from 'src/common/services/pdf.service';
 import { WALLET_TYPE } from '../finance/types/wallet';
+import { Job, JobStatus, JobType } from './dto/job.dto';
 
 @Injectable()
 export class AIService {
@@ -28,6 +29,7 @@ export class AIService {
     private keyResetTime: number = Date.now() + 60000;
     private generateIdService: GenerateIdService = new GenerateIdService();
     private readonly pdfService: PdfService;
+    private jobQueue: Map<string, Job> = new Map();
 
     // --- VECTOR SEARCH CONFIG ---
     public static readonly VECTOR_SEARCH_CONFIG = {
@@ -500,6 +502,232 @@ export class AIService {
         return savedHistory;
     }
 
+    /**
+     * Create a new job and add to queue
+     */
+    createJob(
+        file: Express.Multer.File,
+        user: User,
+        typeResult: number,
+        quantityFlashcard?: number,
+        quantityQuizz?: number,
+        isNarrowSearch?: boolean,
+        keyword?: string
+    ): string {
+        const jobId = this.generateIdService.generateId();
+        const job: Job = {
+            id: jobId,
+            status: JobStatus.PENDING,
+            type:
+                typeResult === TYPE_RESULT.QUIZZ
+                    ? JobType.QUIZ
+                    : JobType.FLASHCARD,
+            userId: user.id,
+            file,
+            params: {
+                typeResult,
+                quantityFlashcard,
+                quantityQuizz,
+                isNarrowSearch,
+                keyword,
+            },
+            progress: 0,
+            createdAt: new Date(),
+        };
+        this.jobQueue.set(jobId, job);
+        console.log(`✅ Created job ${jobId} for user ${user.id}`);
+
+        // Start processing async
+        this.processJobAsync(jobId).catch((error) => {
+            console.error(`❌ Error processing job ${jobId}:`, error);
+        });
+
+        return jobId;
+    }
+
+    /**
+     * Process job asynchronously
+     */
+    private async processJobAsync(jobId: string): Promise<void> {
+        const job = this.jobQueue.get(jobId);
+        if (!job) {
+            console.error(`Job ${jobId} not found`);
+            return;
+        }
+
+        try {
+            // Update status to processing
+            job.status = JobStatus.PROCESSING;
+            job.startedAt = new Date();
+            job.progress = 10;
+            this.jobQueue.set(jobId, job);
+
+            console.log(`🚀 Processing job ${jobId}...`);
+
+            // Get user info
+            const user = await this.prisma.user.findUnique({
+                where: { id: job.userId },
+            });
+
+            if (!user) {
+                throw new NotFoundException('User not found');
+            }
+
+            // Validate and upload
+            this.validatePdfFile(job.file);
+            job.progress = 20;
+            this.jobQueue.set(jobId, job);
+
+            const userStorage = await this.uploadAndCreateUserStorage(
+                job.file,
+                user
+            );
+            job.progress = 40;
+            this.jobQueue.set(jobId, job);
+
+            await this.extractAndSavePdfChunks(job.file, userStorage.id);
+            job.progress = 60;
+            this.jobQueue.set(jobId, job);
+
+            // Generate based on type
+            if (Number(job.params.typeResult) === TYPE_RESULT.QUIZZ) {
+                const quiz = await this.generateQuizChunkBased(
+                    userStorage.id,
+                    job.params.quantityQuizz || 40,
+                    job.params.isNarrowSearch || false,
+                    job.params.keyword
+                );
+                job.progress = 80;
+                this.jobQueue.set(jobId, job);
+
+                const savedQuizzes = await this.saveQuizzesToHistory(
+                    quiz,
+                    user.id,
+                    userStorage.id
+                );
+                job.progress = 90;
+                this.jobQueue.set(jobId, job);
+
+                await this.decrementUserCredit(user.id, job.file.size);
+
+                // Set result
+                job.result = {
+                    type: JobType.QUIZ,
+                    quizzes: savedQuizzes.quizzes as any[],
+                    historyId: savedQuizzes.id,
+                    fileInfo: {
+                        id: userStorage.id,
+                        filename: userStorage.filename,
+                    },
+                };
+            } else if (
+                Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD
+            ) {
+                const flashcards = await this.generateFlashcardsChunkBased(
+                    userStorage.id,
+                    job.params.quantityFlashcard || 40,
+                    job.params.isNarrowSearch || false,
+                    job.params.keyword
+                );
+                job.progress = 80;
+                this.jobQueue.set(jobId, job);
+
+                const savedFlashcards = await this.saveFlashcardsToHistory(
+                    flashcards,
+                    user.id,
+                    userStorage.id
+                );
+                job.progress = 90;
+                this.jobQueue.set(jobId, job);
+
+                await this.decrementUserCredit(user.id, job.file.size);
+
+                // Set result
+                job.result = {
+                    type: JobType.FLASHCARD,
+                    flashcards: savedFlashcards.flashcards as any[],
+                    historyId: savedFlashcards.id,
+                    fileInfo: {
+                        id: userStorage.id,
+                        filename: userStorage.filename,
+                    },
+                };
+            }
+
+            // Mark as completed
+            job.status = JobStatus.COMPLETED;
+            job.progress = 100;
+            job.completedAt = new Date();
+            this.jobQueue.set(jobId, job);
+
+            console.log(`✅ Job ${jobId} completed successfully`);
+        } catch (error) {
+            console.error(`❌ Job ${jobId} failed:`, error);
+            job.status = JobStatus.FAILED;
+            job.error =
+                error instanceof Error ? error.message : 'Unknown error';
+            job.completedAt = new Date();
+            this.jobQueue.set(jobId, job);
+        }
+    }
+
+    /**
+     * Get job status
+     */
+    getJobStatus(jobId: string) {
+        const job = this.jobQueue.get(jobId);
+        if (!job) {
+            throw new NotFoundException(`Job ${jobId} not found`);
+        }
+
+        return {
+            jobId: job.id,
+            status: job.status,
+            progress: job.progress,
+            message:
+                job.status === JobStatus.COMPLETED
+                    ? 'Job completed successfully'
+                    : job.status === JobStatus.FAILED
+                      ? job.error
+                      : job.status === JobStatus.PROCESSING
+                        ? 'Processing...'
+                        : 'Waiting in queue',
+            error: job.error,
+            result: job.result,
+        };
+    }
+
+    /**
+     * Cancel a job
+     */
+    cancelJob(jobId: string, userId: string) {
+        const job = this.jobQueue.get(jobId);
+        if (!job) {
+            throw new NotFoundException(`Job ${jobId} not found`);
+        }
+
+        if (job.userId !== userId) {
+            throw new BadRequestException('Unauthorized to cancel this job');
+        }
+
+        if (
+            job.status === JobStatus.COMPLETED ||
+            job.status === JobStatus.FAILED
+        ) {
+            throw new BadRequestException(
+                'Cannot cancel completed or failed job'
+            );
+        }
+
+        job.status = JobStatus.FAILED;
+        job.error = 'Job canceled by user';
+        job.completedAt = new Date();
+        this.jobQueue.set(jobId, job);
+
+        console.log(`🚫 Job ${jobId} canceled by user ${userId}`);
+        return { success: true, message: 'Job canceled' };
+    }
+
     private validatePdfFile(file: any) {
         if (!file) {
             throw new BadRequestException('No file provided');
@@ -558,14 +786,18 @@ export class AIService {
             );
         }
 
-        // Keep original filename for display, but normalize for storage key
-        const originalFilename = file.originalname;
+        // Fix Vietnamese filename encoding issue
+        // Multer receives filenames in latin1 encoding, need to convert to utf8
+        const originalFilename = Buffer.from(
+            file.originalname,
+            'latin1'
+        ).toString('utf8');
 
         return await this.prisma.userStorage.create({
             data: {
                 id: this.generateIdService.generateId(),
                 userId: user.id,
-                filename: originalFilename, // Keep original for display
+                filename: originalFilename, // Now properly encoded
                 mimetype: file.mimetype,
                 size: file.size,
                 keyR2: r2Key,

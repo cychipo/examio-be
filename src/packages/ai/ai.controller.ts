@@ -133,10 +133,13 @@ export class AIController {
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
     @UseInterceptors(FileInterceptor('file'))
-    @ApiOperation({ summary: 'Extract and embed text from an uploaded file' })
+    @ApiOperation({
+        summary:
+            'Extract and embed text from an uploaded file (async job queue)',
+    })
     @ApiResponse({
         status: 200,
-        description: 'File processed successfully',
+        description: 'Job created successfully, returns job_id',
         type: String,
     })
     @ApiFile('file')
@@ -158,7 +161,7 @@ export class AIController {
             keyword?: string;
         }
     ) {
-        return this.aiService.handleActionsWithFile(
+        const jobId = this.aiService.createJob(
             file,
             req.user,
             typeResult,
@@ -167,5 +170,41 @@ export class AIController {
             isNarrowSearch,
             keyword
         );
+        return {
+            jobId,
+            status: 'pending',
+            message:
+                'Job created successfully. Use the job ID to poll for status.',
+        };
+    }
+
+    @Get('job/:jobId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get status and result of a job' })
+    @ApiResponse({
+        status: 200,
+        description: 'Job status retrieved successfully',
+    })
+    async getJobStatus(
+        @Req() req: AuthenticatedRequest,
+        @Param('jobId') jobId: string
+    ) {
+        return this.aiService.getJobStatus(jobId);
+    }
+
+    @Delete('job/:jobId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Cancel a running job' })
+    @ApiResponse({
+        status: 200,
+        description: 'Job canceled successfully',
+    })
+    async cancelJob(
+        @Req() req: AuthenticatedRequest,
+        @Param('jobId') jobId: string
+    ) {
+        return this.aiService.cancelJob(jobId, req.user.id);
     }
 }
