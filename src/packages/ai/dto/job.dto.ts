@@ -41,13 +41,14 @@ export interface Job {
     status: JobStatus;
     type: JobType;
     userId: string;
-    file: Express.Multer.File;
+    file: Express.Multer.File | null; // null for regenerate jobs
     params: {
         quantityFlashcard?: number;
         quantityQuizz?: number;
         typeResult: number;
         isNarrowSearch?: boolean;
         keyword?: string;
+        uploadId?: string; // For regenerate jobs
     };
     result?: JobResult;
     error?: string;

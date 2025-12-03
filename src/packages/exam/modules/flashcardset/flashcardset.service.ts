@@ -309,8 +309,18 @@ export class FlashcardsetService {
                 return {
                     createdFlashcardsCount: createdFlashcards.length,
                     affectedFlashcardSetsCount: flashcardSetIds.length,
+                    affectedFlashcardSetIds: flashcardSetIds,
                 };
             });
+
+            // Invalidate caches
+            await this.flashcardSetRepository.invalidateUserListCache(user.id);
+            for (const id of result.affectedFlashcardSetIds) {
+                await this.flashcardSetRepository.invalidateItemCache(
+                    user.id,
+                    id
+                );
+            }
 
             return {
                 message: `Thêm ${result.createdFlashcardsCount} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ thành công`,
@@ -371,9 +381,13 @@ export class FlashcardsetService {
                 }
 
                 // Validate history record thuộc về user
+                // Support both historyId (id field) and userStorageId for backward compatibility
                 const history = await tx.historyGeneratedFlashcard.findFirst({
                     where: {
-                        id: dto.historyId,
+                        OR: [
+                            { id: dto.historyId },
+                            { userStorageId: dto.historyId },
+                        ],
                         userId: user.id,
                     },
                 });
@@ -508,8 +522,18 @@ export class FlashcardsetService {
                     skippedCount,
                     totalFlashcards: flashcards.length,
                     affectedFlashcardSetsCount: flashcardSetIds.length,
+                    affectedFlashcardSetIds: flashcardSetIds,
                 };
             });
+
+            // Invalidate caches
+            await this.flashcardSetRepository.invalidateUserListCache(user.id);
+            for (const id of result.affectedFlashcardSetIds) {
+                await this.flashcardSetRepository.invalidateItemCache(
+                    user.id,
+                    id
+                );
+            }
 
             return {
                 message: `Đã lưu ${result.createdCount} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ${result.skippedCount > 0 ? ` (${result.skippedCount} bỏ qua do trùng lặp)` : ''}`,

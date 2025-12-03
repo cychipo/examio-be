@@ -334,8 +334,15 @@ export class QuizsetService {
                 return {
                     createdQuestionsCount: createdQuestions.length,
                     affectedQuizSetsCount: quizSetIds.length,
+                    affectedQuizSetIds: quizSetIds,
                 };
             });
+
+            // Invalidate caches
+            await this.quizSetRepository.invalidateUserListCache(user.id);
+            for (const id of result.affectedQuizSetIds) {
+                await this.quizSetRepository.invalidateItemCache(user.id, id);
+            }
 
             return {
                 message: `Thêm ${result.createdQuestionsCount} câu hỏi vào ${result.affectedQuizSetsCount} bộ câu hỏi thành công`,
@@ -400,9 +407,13 @@ export class QuizsetService {
                 }
 
                 // Validate history record thuộc về user
+                // Support both historyId (id field) and userStorageId for backward compatibility
                 const history = await tx.historyGeneratedQuizz.findFirst({
                     where: {
-                        id: dto.historyId,
+                        OR: [
+                            { id: dto.historyId },
+                            { userStorageId: dto.historyId },
+                        ],
                         userId: user.id,
                     },
                 });
@@ -538,8 +549,15 @@ export class QuizsetService {
                     skippedCount,
                     totalQuizzes: quizzes.length,
                     affectedQuizSetsCount: quizSetIds.length,
+                    affectedQuizSetIds: quizSetIds,
                 };
             });
+
+            // Invalidate caches
+            await this.quizSetRepository.invalidateUserListCache(user.id);
+            for (const id of result.affectedQuizSetIds) {
+                await this.quizSetRepository.invalidateItemCache(user.id, id);
+            }
 
             return {
                 message: `Đã lưu ${result.totalQuizzes} câu hỏi vào ${result.affectedQuizSetsCount} bộ câu hỏi${result.skippedCount > 0 ? ` (${result.skippedCount} đã tồn tại)` : ''}`,
