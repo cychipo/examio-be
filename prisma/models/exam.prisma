@@ -27,6 +27,9 @@ model FlashCardSet {
     tag         String[] @default([])
     isPublic    Boolean  @default(false)
     isPinned    Boolean  @default(false)
+    viewCount   Int      @default(0)
+    accessCode  String? // 6-digit code for private access
+    whitelist   String[] @default([]) // List of user IDs who can access
     createdAt   DateTime @default(now())
     updatedBy   String?
     createdBy   String?
@@ -34,6 +37,8 @@ model FlashCardSet {
 
     user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
     detailsFlashCard DetailsFlashCard[]
+
+    @@index([accessCode])
 }
 
 model QuizQuestion {

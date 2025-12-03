@@ -5,6 +5,7 @@ import {
     NotFoundException,
     InternalServerErrorException,
     BadRequestException,
+    ForbiddenException,
 } from '@nestjs/common';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { User } from '@prisma/client';
@@ -13,6 +14,7 @@ import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
 import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
 import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
+import { UpdateSharingSettingsDto } from './dto/sharing.dto';
 import { FlashCardSetRepository } from './flashcardset.repository';
 import { R2Service } from 'src/packages/r2/r2.service';
 
@@ -80,9 +82,11 @@ export class FlashcardsetService {
 
     async getFlashcardSetStats(user: User) {
         try {
-            // Get total count
-            const totalCount = await this.prisma.flashCardSet.count({
+            // Get total count and total view count in a single query
+            const stats = await this.prisma.flashCardSet.aggregate({
                 where: { userId: user.id },
+                _count: true,
+                _sum: { viewCount: true },
             });
 
             // Get total cards count
@@ -99,10 +103,9 @@ export class FlashcardsetService {
             const totalCards = cardCountResult._count || 0;
 
             return {
-                totalGroups: totalCount,
+                totalGroups: stats._count || 0,
                 totalCards,
-                avgProgress: 0, // TODO: Implement progress tracking
-                studiedToday: 0, // TODO: Implement study tracking
+                totalViews: stats._sum?.viewCount || 0,
             };
         } catch (error) {
             throw new InternalServerErrorException(
@@ -753,5 +756,348 @@ export class FlashcardsetService {
         return {
             message: 'Xóa thẻ ghi nhớ thành công',
         };
+    }
+
+    // ==================== SHARING & ACCESS METHODS ====================
+
+    /**
+     * Get access info for a flashcard set (public endpoint)
+     * O(1) query with indexed accessCode field
+     */
+    async checkAccess(id: string, userId?: string) {
+        const flashcardSet = await this.prisma.flashCardSet.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                isPublic: true,
+                userId: true,
+                accessCode: true,
+                whitelist: true,
+            },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        // Public access
+        if (flashcardSet.isPublic) {
+            return {
+                hasAccess: true,
+                accessType: 'public' as const,
+            };
+        }
+
+        // Owner access
+        if (userId && flashcardSet.userId === userId) {
+            return {
+                hasAccess: true,
+                accessType: 'owner' as const,
+            };
+        }
+
+        // Whitelist access
+        if (userId && flashcardSet.whitelist.includes(userId)) {
+            return {
+                hasAccess: true,
+                accessType: 'whitelist' as const,
+            };
+        }
+
+        // Code required
+        if (flashcardSet.accessCode) {
+            return {
+                hasAccess: false,
+                accessType: 'code_required' as const,
+                requiresCode: true,
+            };
+        }
+
+        return {
+            hasAccess: false,
+            accessType: 'denied' as const,
+        };
+    }
+
+    /**
+     * Verify access code for a private flashcard set
+     * O(1) indexed lookup
+     */
+    async verifyAccessCode(id: string, accessCode: string) {
+        const flashcardSet = await this.prisma.flashCardSet.findUnique({
+            where: { id },
+            select: { accessCode: true },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        if (flashcardSet.accessCode !== accessCode) {
+            throw new ForbiddenException('Mã truy cập không đúng');
+        }
+
+        return {
+            valid: true,
+            message: 'Mã xác thực hợp lệ',
+        };
+    }
+
+    /**
+     * Get flashcard set for study (with access check)
+     * Returns flashcards + creator info
+     */
+    async getFlashcardSetForStudy(id: string, userId?: string) {
+        // First check access
+        const accessInfo = await this.checkAccess(id, userId);
+
+        if (
+            !accessInfo.hasAccess &&
+            accessInfo.accessType !== 'code_required'
+        ) {
+            throw new ForbiddenException(
+                'Bạn không có quyền truy cập bộ thẻ này'
+            );
+        }
+
+        if (accessInfo.accessType === 'code_required') {
+            throw new ForbiddenException('Yêu cầu mã truy cập');
+        }
+
+        // Increment view count atomically
+        const flashcardSet = await this.prisma.flashCardSet.update({
+            where: { id },
+            data: { viewCount: { increment: 1 } },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        username: true,
+                        name: true,
+                        avatar: true,
+                    },
+                },
+                detailsFlashCard: {
+                    include: {
+                        flashCard: true,
+                    },
+                },
+                _count: {
+                    select: { detailsFlashCard: true },
+                },
+            },
+        });
+
+        const { detailsFlashCard, user, _count, ...flashcardSetData } =
+            flashcardSet;
+
+        return {
+            ...flashcardSetData,
+            flashCards: detailsFlashCard.map((detail) => detail.flashCard),
+            cardCount: _count.detailsFlashCard,
+            creator: user,
+        };
+    }
+
+    /**
+     * Get flashcard set after code verification
+     */
+    async getFlashcardSetWithCode(id: string, accessCode: string) {
+        // Verify code first
+        await this.verifyAccessCode(id, accessCode);
+
+        // Increment view count atomically
+        const flashcardSet = await this.prisma.flashCardSet.update({
+            where: { id },
+            data: { viewCount: { increment: 1 } },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        username: true,
+                        name: true,
+                        avatar: true,
+                    },
+                },
+                detailsFlashCard: {
+                    include: {
+                        flashCard: true,
+                    },
+                },
+                _count: {
+                    select: { detailsFlashCard: true },
+                },
+            },
+        });
+
+        const { detailsFlashCard, user, _count, ...flashcardSetData } =
+            flashcardSet;
+
+        return {
+            ...flashcardSetData,
+            flashCards: detailsFlashCard.map((detail) => detail.flashCard),
+            cardCount: _count.detailsFlashCard,
+            creator: user,
+        };
+    }
+
+    /**
+     * Get public info for a flashcard set (without flashcards)
+     */
+    async getFlashcardSetPublicInfo(id: string) {
+        const flashcardSet = await this.prisma.flashCardSet.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                title: true,
+                description: true,
+                thumbnail: true,
+                viewCount: true,
+                isPublic: true,
+                accessCode: true,
+                createdAt: true,
+                user: {
+                    select: {
+                        id: true,
+                        username: true,
+                        name: true,
+                        avatar: true,
+                    },
+                },
+                _count: {
+                    select: { detailsFlashCard: true },
+                },
+            },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        return {
+            id: flashcardSet.id,
+            title: flashcardSet.title,
+            description: flashcardSet.description,
+            thumbnail: flashcardSet.thumbnail,
+            viewCount: flashcardSet.viewCount,
+            cardCount: flashcardSet._count.detailsFlashCard,
+            creator: flashcardSet.user,
+            createdAt: flashcardSet.createdAt.toISOString(),
+            isPublic: flashcardSet.isPublic,
+            requiresCode: !flashcardSet.isPublic && !!flashcardSet.accessCode,
+        };
+    }
+
+    /**
+     * Update sharing settings for a flashcard set
+     */
+    async updateSharingSettings(
+        id: string,
+        user: User,
+        dto: UpdateSharingSettingsDto
+    ) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id, userId: user.id },
+            cache: false,
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        // Update sharing settings
+        const updatedFlashcardSet = await this.prisma.flashCardSet.update({
+            where: { id },
+            data: {
+                isPublic: dto.isPublic,
+                accessCode: dto.isPublic ? null : dto.accessCode,
+                whitelist: dto.isPublic ? [] : dto.whitelist || [],
+            },
+            select: {
+                id: true,
+                isPublic: true,
+                accessCode: true,
+                whitelist: true,
+            },
+        });
+
+        // Invalidate cache
+        await this.flashcardSetRepository.invalidateItemCache(user.id, id);
+
+        return {
+            message: 'Cập nhật cài đặt chia sẻ thành công',
+            isPublic: updatedFlashcardSet.isPublic,
+            accessCode: updatedFlashcardSet.accessCode,
+            whitelist: updatedFlashcardSet.whitelist,
+        };
+    }
+
+    /**
+     * Generate a random 6-digit access code
+     */
+    generateAccessCode(): string {
+        return Math.floor(100000 + Math.random() * 900000).toString();
+    }
+
+    /**
+     * Get sharing settings for owner
+     */
+    async getSharingSettings(id: string, user: User) {
+        const flashcardSet = await this.prisma.flashCardSet.findFirst({
+            where: { id, userId: user.id },
+            select: {
+                id: true,
+                isPublic: true,
+                accessCode: true,
+                whitelist: true,
+            },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        return flashcardSet;
+    }
+
+    /**
+     * Search users by username for whitelist
+     * Excludes the current user
+     */
+    async searchUsers(query: string, currentUserId: string) {
+        if (!query || query.length < 2) {
+            return [];
+        }
+
+        const users = await this.prisma.user.findMany({
+            where: {
+                AND: [
+                    { id: { not: currentUserId } },
+                    {
+                        OR: [
+                            {
+                                username: {
+                                    contains: query,
+                                    mode: 'insensitive',
+                                },
+                            },
+                            { name: { contains: query, mode: 'insensitive' } },
+                            { email: { contains: query, mode: 'insensitive' } },
+                        ],
+                    },
+                ],
+            },
+            select: {
+                id: true,
+                username: true,
+                name: true,
+                avatar: true,
+                email: true,
+            },
+            take: 10,
+        });
+
+        return users;
     }
 }
