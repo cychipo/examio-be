@@ -15,20 +15,21 @@ import { TYPE_RESULT } from './constant/type-result';
 import { PdfService } from 'src/common/services/pdf.service';
 import { WALLET_TYPE } from '../finance/types/wallet';
 import { Job, JobStatus, JobType } from './dto/job.dto';
+import {
+    getUserCacheKey,
+    CACHE_MODULES,
+} from 'src/common/constants/cache-keys';
+import { RedisService } from 'src/packages/redis/redis.service';
 
 @Injectable()
 export class AIService {
     private apiKeys: string[];
     private currentKeyIndex: number = 0;
-    private r2Service: R2Service;
     private readonly modalName =
         process.env.GEMINI_MODAL_NAME || 'gemini-2.0-flash';
     private ai: GoogleGenAI;
-    private prisma: PrismaService;
     private failedKeys: Set<string> = new Set();
     private keyResetTime: number = Date.now() + 60000;
-    private generateIdService: GenerateIdService = new GenerateIdService();
-    private readonly pdfService: PdfService;
     private jobQueue: Map<string, Job> = new Map();
 
     // --- VECTOR SEARCH CONFIG ---
@@ -143,14 +144,16 @@ export class AIService {
         }
     }
 
-    constructor() {
-        this.prisma = new PrismaService();
-        this.generateIdService = new GenerateIdService();
-        this.r2Service = new R2Service();
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly generateIdService: GenerateIdService,
+        private readonly r2Service: R2Service,
+        private readonly pdfService: PdfService,
+        private readonly redisService: RedisService
+    ) {
         this.apiKeys =
             process.env.GEMINI_API_KEYS?.split(',').map((key) => key.trim()) ||
             [];
-        this.pdfService = new PdfService();
     }
 
     private getNextApiKey(): string {
@@ -347,7 +350,10 @@ export class AIService {
         }
     }
 
-    private async decrementUserCredit(userId: string, fileSize: number) {
+    private async checkUserCredit(
+        userId: string,
+        fileSize: number
+    ): Promise<number> {
         const cost = Math.max(2, Math.ceil(fileSize / (1024 * 1024))); // 2 credit per MB
 
         // check if user has enough credit
@@ -358,8 +364,23 @@ export class AIService {
             throw new BadRequestException('Not enough credits');
         }
 
+        return cost;
+    }
+
+    private async decrementUserCredit(userId: string, fileSize: number) {
+        const cost = Math.max(2, Math.ceil(fileSize / (1024 * 1024))); // 2 credit per MB
+
         await this.prisma.$transaction(async (tx) => {
-            const wallet = await tx.wallet.update({
+            // Re-check balance inside transaction to prevent race conditions
+            const wallet = await tx.wallet.findUnique({
+                where: { userId },
+            });
+
+            if (!wallet || wallet.balance < cost) {
+                throw new BadRequestException('Not enough credits');
+            }
+
+            await tx.wallet.update({
                 where: { userId },
                 data: { balance: { decrement: cost } },
             });
@@ -375,7 +396,12 @@ export class AIService {
             });
         });
 
-        // xóa cache user and wallet
+        // Invalidate user and wallet cache using user-scoped keys
+        await this.redisService.del(getUserCacheKey('USER', userId));
+        await this.redisService.del(getUserCacheKey('WALLET', userId));
+        // Also invalidate legacy cache keys for backward compatibility
+        await this.redisService.delPattern(`user:*${userId}*`);
+        await this.redisService.delPattern(`wallet:*${userId}*`);
     }
 
     async handleActionsWithFile(
@@ -387,9 +413,9 @@ export class AIService {
         isNarrowSearch: boolean = false,
         keyword?: string
     ) {
-        await this.decrementUserCredit(user.id, file.size).catch((error) => {
-            throw new InternalServerErrorException(error.message);
-        });
+        // Check credit first (don't deduct yet)
+        await this.checkUserCredit(user.id, file.size);
+
         // Validate keyword for narrow search
         if (isNarrowSearch === true) {
             if (!keyword || keyword.trim().length === 0) {
@@ -425,6 +451,7 @@ export class AIService {
 
             await this.extractAndSavePdfChunks(file, userStorage.id);
 
+            let result;
             if (Number(typeResult) === TYPE_RESULT.QUIZZ) {
                 const quiz = await this.generateQuizChunkBased(
                     userStorage.id,
@@ -434,13 +461,11 @@ export class AIService {
                 );
 
                 // Lưu vào bảng HistoryGeneratedQuizz
-                const savedQuizzes = await this.saveQuizzesToHistory(
+                result = await this.saveQuizzesToHistory(
                     quiz,
                     user.id,
                     userStorage.id
                 );
-
-                return savedQuizzes;
             } else if (Number(typeResult) === TYPE_RESULT.FLASHCARD) {
                 const flashcards = await this.generateFlashcardsChunkBased(
                     userStorage.id,
@@ -450,18 +475,21 @@ export class AIService {
                 );
 
                 // Lưu vào bảng HistoryGeneratedFlashcard
-                const savedFlashcards = await this.saveFlashcardsToHistory(
+                result = await this.saveFlashcardsToHistory(
                     flashcards,
                     user.id,
                     userStorage.id
                 );
-
-                return savedFlashcards;
             } else {
                 throw new BadRequestException(
                     `Invalid typeResult: ${typeResult}`
                 );
             }
+
+            // Deduct credits only after all operations completed successfully
+            await this.decrementUserCredit(user.id, file.size);
+
+            return result;
         } catch (error) {
             console.error('❌ Error in handleActionsWithFile:', error);
             throw error;
@@ -577,13 +605,10 @@ export class AIService {
             return;
         }
 
-        await this.decrementUserCredit(job.userId, job.file.size).catch(
-            (error) => {
-                throw new InternalServerErrorException(error.message);
-            }
-        );
-
         try {
+            // Check credit first (don't deduct yet)
+            await this.checkUserCredit(job.userId, job.file.size);
+
             // Update status to processing
             job.status = JobStatus.PROCESSING;
             job.startedAt = new Date();
@@ -603,6 +628,16 @@ export class AIService {
 
             // Validate and upload
             this.validatePdfFile(job.file);
+
+            // Validate page count
+            const pdfDoc = await PDFDocument.load(job.file.buffer);
+            const pageCount = pdfDoc.getPageCount();
+            if (pageCount > 50) {
+                throw new BadRequestException(
+                    `File PDF có ${pageCount} trang. Giới hạn tối đa là 50 trang.`
+                );
+            }
+
             job.progress = 20;
             this.jobQueue.set(jobId, job);
 
@@ -684,6 +719,9 @@ export class AIService {
             job.completedAt = new Date();
             this.jobQueue.set(jobId, job);
 
+            // Deduct credits only after job completed successfully
+            await this.decrementUserCredit(job.userId, job.file.size);
+
             console.log(`✅ Job ${jobId} completed successfully`);
         } catch (error) {
             console.error(`❌ Job ${jobId} failed:`, error);
@@ -692,6 +730,7 @@ export class AIService {
                 error instanceof Error ? error.message : 'Unknown error';
             job.completedAt = new Date();
             this.jobQueue.set(jobId, job);
+            // Note: Credits are NOT deducted when job fails
         }
     }
 
@@ -754,7 +793,7 @@ export class AIService {
 
     private validatePdfFile(file: any) {
         if (!file) {
-            throw new BadRequestException('No file provided');
+            throw new BadRequestException('Chưa cung cấp file');
         }
 
         const supportedMimeTypes = ['application/pdf'];
@@ -763,7 +802,7 @@ export class AIService {
         }
 
         if (!file.buffer || file.buffer.length === 0) {
-            throw new BadRequestException('File buffer không hợp lệ');
+            throw new BadRequestException('Buffer file không hợp lệ');
         }
 
         if (file.size > 10 * 1024 * 1024) {

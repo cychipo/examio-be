@@ -70,13 +70,13 @@ export class PaymentRepository extends BaseRepository<Payment> {
     /**
      * Update payment status
      */
-    async updateStatus(id: string, status: number): Promise<Payment> {
-        const updated = await this.update(id, { status });
-
-        // Invalidate caches
-        await this.invalidateCache();
-
-        return updated;
+    async updateStatus(
+        id: string,
+        status: number,
+        userId?: string
+    ): Promise<Payment> {
+        // BaseRepository.update() handles cache invalidation automatically
+        return this.update(id, { status }, userId);
     }
 
     /**

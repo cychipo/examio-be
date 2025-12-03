@@ -192,8 +192,12 @@ export class AuthService {
                 throw new BadRequestException('Mã xác minh đã hết hạn');
             }
 
-            // Mark user as verified using repository
-            await this.userRepository.update(userId, { isVerified: true });
+            // Mark user as verified using repository - pass userId for proper cache invalidation
+            await this.userRepository.update(
+                userId,
+                { isVerified: true },
+                userId
+            );
 
             // Clean up verification code
             await this.prisma.verifyAccountCode.delete({
@@ -295,10 +299,15 @@ export class AuthService {
                 throw new BadRequestException('Mã đặt lại mật khẩu đã hết hạn');
             }
 
-            // Update user password using repository
-            await this.userRepository.update(user.id, {
-                password: await this.passwordService.hashPassword(newPassword),
-            });
+            // Update user password using repository - pass userId for proper cache invalidation
+            await this.userRepository.update(
+                user.id,
+                {
+                    password:
+                        await this.passwordService.hashPassword(newPassword),
+                },
+                user.id
+            );
 
             // Clean up reset code
             await this.prisma.resetPasswordCode.delete({

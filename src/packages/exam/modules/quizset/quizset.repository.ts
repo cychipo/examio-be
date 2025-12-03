@@ -23,11 +23,22 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
         cache = true,
         cacheTTL = this.defaultCacheTTL
     ): Promise<QuizSet[]> {
-        return this.findAll({
+        if (cache) {
+            const cacheKey = this.getUserScopedCacheKey(userId) + ':list';
+            const cached = await this.redis.get<QuizSet[]>(cacheKey);
+            if (cached) return cached;
+
+            const data = await this.model.findMany({
+                where: { userId },
+                orderBy: { createdAt: 'desc' },
+            });
+            await this.redis.set(cacheKey, data, cacheTTL);
+            return data;
+        }
+
+        return this.model.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
-            cache,
-            cacheTTL,
         });
     }
 
@@ -55,8 +66,11 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
         cache = true,
         cacheTTL = this.defaultCacheTTL
     ): Promise<any> {
+        const cacheKey = userId
+            ? this.getItemScopedCacheKey(userId, id, 'questions')
+            : this.getPublicScopedCacheKey(id, 'questions');
+
         if (cache) {
-            const cacheKey = this.getCacheKey(`id:${id}:questions`);
             const cached = await this.redis.get<any>(cacheKey);
             if (cached) return cached;
         }
@@ -78,7 +92,6 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
         });
 
         if (quizSet && cache) {
-            const cacheKey = this.getCacheKey(`id:${id}:questions`);
             await this.redis.set(cacheKey, quizSet, cacheTTL);
         }
 
@@ -160,27 +173,15 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
             throw new Error('Quiz set not found');
         }
 
-        const updated = await this.update(
-            id,
-            { isPinned: !quizSet.isPinned },
-            userId
-        );
-
-        // Invalidate cache
-        await this.redis.del(this.getCacheKey(`id:${id}:questions`));
-
-        return updated;
+        // BaseRepository.update() handles cache invalidation automatically
+        return this.update(id, { isPinned: !quizSet.isPinned }, userId);
     }
 
     /**
      * Delete quiz set by user
      */
     async deleteByUser(id: string, userId: string): Promise<{ count: number }> {
-        const result = await this.deleteMany({ id, userId });
-
-        // Invalidate cache
-        await this.invalidateCache();
-
-        return result;
+        // BaseRepository.deleteMany() handles cache invalidation automatically
+        return this.deleteMany({ id, userId }, userId);
     }
 }

@@ -75,14 +75,19 @@ export class ParticipantRepository extends BaseRepository<ExamSessionParticipant
     /**
      * Approve participant
      */
-    async approve(id: string): Promise<ExamSessionParticipant> {
+    async approve(
+        id: string,
+        sessionId?: string
+    ): Promise<ExamSessionParticipant> {
         const updated = await this.update(id, {
             status: 1, // 1: APPROVED
             joinedAt: new Date(),
         });
 
-        // Invalidate session cache
-        await this.invalidateCache();
+        // Invalidate session-specific cache if sessionId provided
+        if (sessionId) {
+            await this.redis.del(this.getCacheKey(`session:${sessionId}`));
+        }
 
         return updated;
     }
@@ -90,12 +95,18 @@ export class ParticipantRepository extends BaseRepository<ExamSessionParticipant
     /**
      * Reject participant
      */
-    async reject(id: string): Promise<ExamSessionParticipant> {
+    async reject(
+        id: string,
+        sessionId?: string
+    ): Promise<ExamSessionParticipant> {
         const updated = await this.update(id, {
             status: 2, // 2: REJECTED
         });
 
-        await this.invalidateCache();
+        // Invalidate session-specific cache if sessionId provided
+        if (sessionId) {
+            await this.redis.del(this.getCacheKey(`session:${sessionId}`));
+        }
 
         return updated;
     }
@@ -103,13 +114,20 @@ export class ParticipantRepository extends BaseRepository<ExamSessionParticipant
     /**
      * Leave session
      */
-    async leave(id: string): Promise<ExamSessionParticipant> {
+    async leave(
+        id: string,
+        sessionId?: string
+    ): Promise<ExamSessionParticipant> {
+        // BaseRepository.update() handles cache invalidation
         const updated = await this.update(id, {
             status: 3, // 3: LEFT
             leftAt: new Date(),
         });
 
-        await this.invalidateCache();
+        // Invalidate session-specific cache if sessionId provided
+        if (sessionId) {
+            await this.redis.del(this.getCacheKey(`session:${sessionId}`));
+        }
 
         return updated;
     }

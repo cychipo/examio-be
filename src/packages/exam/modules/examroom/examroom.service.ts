@@ -42,16 +42,19 @@ export class ExamRoomService {
         }
 
         try {
-            const newExamRoom = await this.examRoomRepository.create({
-                id: this.generateIdService.generateId(),
-                title: dto.title,
-                description: dto.description || '',
-                quizSetId: dto.quizSetId,
-                hostId: user.id,
-                assessType: dto.assessType ?? ASSESS_TYPE.PUBLIC,
-                allowRetake: dto.allowRetake || false,
-                maxAttempts: dto.maxAttempts || 1,
-            });
+            const newExamRoom = await this.examRoomRepository.create(
+                {
+                    id: this.generateIdService.generateId(),
+                    title: dto.title,
+                    description: dto.description || '',
+                    quizSetId: dto.quizSetId,
+                    hostId: user.id,
+                    assessType: dto.assessType ?? ASSESS_TYPE.PUBLIC,
+                    allowRetake: dto.allowRetake || false,
+                    maxAttempts: dto.maxAttempts || 1,
+                },
+                user.id
+            );
 
             // Load relations for response
             const examRoomWithRelations = await this.examRoomRepository.findOne(
@@ -115,8 +118,8 @@ export class ExamRoomService {
             throw new NotFoundException('Phòng thi không tồn tại');
         }
 
-        // Hard delete
-        await this.examRoomRepository.delete(id);
+        // Hard delete - pass userId for proper cache invalidation
+        await this.examRoomRepository.delete(id, user.id);
 
         return { message: 'Xóa phòng thi thành công' };
     }
@@ -171,28 +174,31 @@ export class ExamRoomService {
             where.quizSetId = dto.quizSetId;
         }
 
-        const result = await this.examRoomRepository.paginate({
-            page: dto.page || 1,
-            size: dto.limit || 10,
-            ...where,
-            include: {
-                quizSet: {
-                    select: {
-                        id: true,
-                        title: true,
-                        thumbnail: true,
+        const result = await this.examRoomRepository.paginate(
+            {
+                page: dto.page || 1,
+                size: dto.limit || 10,
+                ...where,
+                include: {
+                    quizSet: {
+                        select: {
+                            id: true,
+                            title: true,
+                            thumbnail: true,
+                        },
+                    },
+                    _count: {
+                        select: {
+                            examSessions: true,
+                        },
                     },
                 },
-                _count: {
-                    select: {
-                        examSessions: true,
-                    },
-                },
+                sortBy: 'createdAt',
+                sortType: 'desc',
+                cache: true,
             },
-            sortBy: 'createdAt',
-            sortType: 'desc',
-            cache: true,
-        });
+            user.id
+        );
 
         return {
             examRooms: result.data,

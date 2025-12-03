@@ -103,18 +103,19 @@ export class ExamAttemptRepository extends BaseRepository<ExamAttempt> {
     async finishAttempt(
         id: string,
         score: number,
-        violationCount: number
+        violationCount: number,
+        userId?: string
     ): Promise<ExamAttempt> {
-        const updated = await this.update(id, {
-            score,
-            violationCount,
-            finishedAt: new Date(),
-            status: 1, // 1: COMPLETED
-        });
-
-        // Invalidate related caches
-        await this.invalidateCache();
-
-        return updated;
+        // BaseRepository.update() handles cache invalidation automatically
+        return this.update(
+            id,
+            {
+                score,
+                violationCount,
+                finishedAt: new Date(),
+                status: 1, // 1: COMPLETED
+            },
+            userId
+        );
     }
 }
