@@ -161,7 +161,7 @@ export class AIController {
             keyword?: string;
         }
     ) {
-        const jobId = this.aiService.createJob(
+        const jobId = await this.aiService.createJob(
             file,
             req.user,
             typeResult,

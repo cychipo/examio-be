@@ -95,8 +95,6 @@ export class FlashcardsetService {
             cache: true,
         });
 
-        console.log('Fetched flashcardSet:', flashcardSet);
-
         if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }

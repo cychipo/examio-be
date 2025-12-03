@@ -348,7 +348,16 @@ export class AIService {
     }
 
     private async decrementUserCredit(userId: string, fileSize: number) {
-        const cost = Math.max(1, Math.ceil(fileSize / (1024 * 1024))); // 1 credit per MB
+        const cost = Math.max(2, Math.ceil(fileSize / (1024 * 1024))); // 2 credit per MB
+
+        // check if user has enough credit
+        const wallet = await this.prisma.wallet.findUnique({
+            where: { userId },
+        });
+        if (!wallet || wallet.balance < cost) {
+            throw new BadRequestException('Not enough credits');
+        }
+
         await this.prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.update({
                 where: { userId },
@@ -365,6 +374,8 @@ export class AIService {
                 },
             });
         });
+
+        // xóa cache user and wallet
     }
 
     async handleActionsWithFile(
@@ -376,6 +387,9 @@ export class AIService {
         isNarrowSearch: boolean = false,
         keyword?: string
     ) {
+        await this.decrementUserCredit(user.id, file.size).catch((error) => {
+            throw new InternalServerErrorException(error.message);
+        });
         // Validate keyword for narrow search
         if (isNarrowSearch === true) {
             if (!keyword || keyword.trim().length === 0) {
@@ -426,7 +440,6 @@ export class AIService {
                     userStorage.id
                 );
 
-                await this.decrementUserCredit(user.id, file.size);
                 return savedQuizzes;
             } else if (Number(typeResult) === TYPE_RESULT.FLASHCARD) {
                 const flashcards = await this.generateFlashcardsChunkBased(
@@ -443,7 +456,6 @@ export class AIService {
                     userStorage.id
                 );
 
-                await this.decrementUserCredit(user.id, file.size);
                 return savedFlashcards;
             } else {
                 throw new BadRequestException(
@@ -505,7 +517,7 @@ export class AIService {
     /**
      * Create a new job and add to queue
      */
-    createJob(
+    async createJob(
         file: Express.Multer.File,
         user: User,
         typeResult: number,
@@ -513,7 +525,17 @@ export class AIService {
         quantityQuizz?: number,
         isNarrowSearch?: boolean,
         keyword?: string
-    ): string {
+    ): Promise<string> {
+        // Check credits before creating job
+        const cost = Math.max(2, Math.ceil(file.size / (1024 * 1024))); // 2 credit per MB
+        const wallet = await this.prisma.wallet.findUnique({
+            where: { userId: user.id },
+        });
+
+        if (!wallet || wallet.balance < cost) {
+            throw new BadRequestException('Không đủ tín dụng');
+        }
+
         const jobId = this.generateIdService.generateId();
         const job: Job = {
             id: jobId,
@@ -554,6 +576,12 @@ export class AIService {
             console.error(`Job ${jobId} not found`);
             return;
         }
+
+        await this.decrementUserCredit(job.userId, job.file.size).catch(
+            (error) => {
+                throw new InternalServerErrorException(error.message);
+            }
+        );
 
         try {
             // Update status to processing
@@ -608,8 +636,6 @@ export class AIService {
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
-                await this.decrementUserCredit(user.id, job.file.size);
-
                 // Set result
                 job.result = {
                     type: JobType.QUIZ,
@@ -639,8 +665,6 @@ export class AIService {
                 );
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
-
-                await this.decrementUserCredit(user.id, job.file.size);
 
                 // Set result
                 job.result = {
@@ -1410,6 +1434,15 @@ export class AIService {
         isNarrowSearch?: boolean,
         keyword?: string
     ) {
+        const numFlashcards = quantityFlashcard || 10;
+        const numQuizzes = quantityQuizz || 10;
+        await this.decrementUserCredit(
+            user.id,
+            numFlashcards + numQuizzes
+        ).catch((error) => {
+            throw new InternalServerErrorException(error.message);
+        });
+
         const upload = await this.prisma.userStorage.findFirst({
             where: { id: uploadId, userId: user.id },
         });
@@ -1431,7 +1464,6 @@ export class AIService {
 
         // Generate dựa trên type - sử dụng methods có sẵn
         if (typeResult === TYPE_RESULT.FLASHCARD) {
-            const numFlashcards = quantityFlashcard || 10;
             const flashcards = await this.generateFlashcardsChunkBased(
                 uploadId,
                 numFlashcards,
@@ -1443,7 +1475,6 @@ export class AIService {
             await this.saveFlashcardsToHistory(flashcards, user.id, uploadId);
 
             // Trừ credit
-            await this.decrementUserCredit(user.id, numFlashcards);
 
             return {
                 type: 'flashcard',
@@ -1454,7 +1485,6 @@ export class AIService {
                 },
             };
         } else {
-            const numQuizzes = quantityQuizz || 10;
             const quizzes = await this.generateQuizChunkBased(
                 uploadId,
                 numQuizzes,
@@ -1464,9 +1494,6 @@ export class AIService {
 
             // Lưu history
             await this.saveQuizzesToHistory(quizzes, user.id, uploadId);
-
-            // Trừ credit
-            await this.decrementUserCredit(user.id, numQuizzes);
 
             return {
                 type: 'quiz',
