@@ -10,7 +10,10 @@ import {
     Delete,
     Param,
     Query,
+    UseInterceptors,
+    UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
     ApiTags,
     ApiResponse,
@@ -61,6 +64,7 @@ export class QuizsetController {
 
     @Post()
     @UseGuards(AuthGuard)
+    @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Create a new quiz set' })
     @ApiResponse({
@@ -70,9 +74,14 @@ export class QuizsetController {
     })
     async createQuizSet(
         @Req() req: AuthenticatedRequest,
-        @Body() createQuizsetDto: CreateQuizsetDto
+        @Body() createQuizsetDto: CreateQuizsetDto,
+        @UploadedFile() thumbnail?: Express.Multer.File
     ) {
-        return this.quizsetService.createQuizSet(req.user, createQuizsetDto);
+        return this.quizsetService.createQuizSet(
+            req.user,
+            createQuizsetDto,
+            thumbnail
+        );
     }
 
     @Get('stats')
@@ -105,6 +114,7 @@ export class QuizsetController {
 
     @Put(':id')
     @UseGuards(AuthGuard)
+    @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Update a quiz set by ID' })
     @ApiResponse({
@@ -115,12 +125,14 @@ export class QuizsetController {
     async updateQuizSet(
         @Req() req: AuthenticatedRequest,
         @Param('id') id: string,
-        @Body() updateQuizSetDto: UpdateQuizSetDto
+        @Body() updateQuizSetDto: UpdateQuizSetDto,
+        @UploadedFile() thumbnail?: Express.Multer.File
     ) {
         return this.quizsetService.updateQuizSet(
             id,
             req.user,
-            updateQuizSetDto
+            updateQuizSetDto,
+            thumbnail
         );
     }
 

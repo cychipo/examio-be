@@ -5,6 +5,7 @@ import { ExamRoomModule } from './modules/examroom/examroom.module';
 import { ExamSessionModule } from './modules/examsession/examsession.module';
 import { ExamAttemptModule } from './modules/examattempt/examattempt.module';
 import { ParticipantModule } from './modules/participant/participant.module';
+import { QuizPracticeAttemptModule } from './modules/quizpracticeattempt/quiz-practice-attempt.module';
 
 @Module({
     imports: [
@@ -14,6 +15,7 @@ import { ParticipantModule } from './modules/participant/participant.module';
         ExamSessionModule,
         ExamAttemptModule,
         ParticipantModule,
+        QuizPracticeAttemptModule,
     ],
     exports: [
         QuizsetModule,
@@ -22,6 +24,7 @@ import { ParticipantModule } from './modules/participant/participant.module';
         ExamSessionModule,
         ExamAttemptModule,
         ParticipantModule,
+        QuizPracticeAttemptModule,
     ],
 })
 export class ExamModule {}

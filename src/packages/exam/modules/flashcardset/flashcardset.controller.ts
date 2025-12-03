@@ -9,7 +9,11 @@ import {
     Delete,
     Param,
     Query,
+    UseInterceptors,
+    UploadedFile,
+    Headers,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
     ApiTags,
     ApiResponse,
@@ -17,6 +21,7 @@ import {
     ApiExtraModels,
     ApiCookieAuth,
     ApiParam,
+    ApiHeader,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
@@ -26,6 +31,14 @@ import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
 import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
+import {
+    UpdateSharingSettingsDto,
+    VerifyAccessCodeDto,
+    AccessCheckResponseDto,
+    VerifyCodeResponseDto,
+    SharingSettingsResponseDto,
+    FlashcardSetPublicInfoDto,
+} from './dto/sharing.dto';
 import {
     CreateFlashCardSetResponseDto,
     UpdateFlashCardSetResponseDto,
@@ -41,6 +54,7 @@ import {
     UpdateFlashcardResponseDto,
     DeleteFlashcardResponseDto,
 } from './dto/flashcard.dto';
+import { OptionalAuthGuard } from 'src/common/guard/optional-auth.guard';
 
 @ApiTags('Flashcardsets')
 @ApiExtraModels(
@@ -60,6 +74,7 @@ export class FlashcardsetController {
 
     @Post()
     @UseGuards(AuthGuard)
+    @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Create a new flashcard set' })
     @ApiResponse({
@@ -69,11 +84,13 @@ export class FlashcardsetController {
     })
     async createFlashcardSet(
         @Req() req: AuthenticatedRequest,
-        @Body() createFlashcardsetDto: CreateFlashcardsetDto
+        @Body() createFlashcardsetDto: CreateFlashcardsetDto,
+        @UploadedFile() thumbnail?: Express.Multer.File
     ) {
         return this.flashcardsetService.createFlashcardSet(
             req.user,
-            createFlashcardsetDto
+            createFlashcardsetDto,
+            thumbnail
         );
     }
 
@@ -107,6 +124,7 @@ export class FlashcardsetController {
 
     @Put(':id')
     @UseGuards(AuthGuard)
+    @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Update a flashcard set by ID' })
     @ApiResponse({
@@ -117,12 +135,14 @@ export class FlashcardsetController {
     async updateFlashcardSet(
         @Req() req: AuthenticatedRequest,
         @Param('id') id: string,
-        @Body() updateFlashcardSetDto: UpdateFlashcardSetDto
+        @Body() updateFlashcardSetDto: UpdateFlashcardSetDto,
+        @UploadedFile() thumbnail?: Express.Multer.File
     ) {
         return this.flashcardsetService.updateFlashcardSet(
             id,
             req.user,
-            updateFlashcardSetDto
+            updateFlashcardSetDto,
+            thumbnail
         );
     }
 
@@ -282,5 +302,162 @@ export class FlashcardsetController {
             flashcardId,
             req.user
         );
+    }
+
+    // ==================== SHARING & ACCESS ENDPOINTS ====================
+
+    @Get('study/:id/access')
+    @UseGuards(OptionalAuthGuard)
+    @ApiOperation({ summary: 'Check access for a flashcard set' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Access check result',
+        type: AccessCheckResponseDto,
+    })
+    async checkAccess(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.flashcardsetService.checkAccess(id, req.user?.id);
+    }
+
+    @Get('study/:id/info')
+    @ApiOperation({ summary: 'Get public info for a flashcard set' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcard set public info',
+        type: FlashcardSetPublicInfoDto,
+    })
+    async getPublicInfo(@Param('id') id: string) {
+        return this.flashcardsetService.getFlashcardSetPublicInfo(id);
+    }
+
+    @Get('study/:id')
+    @UseGuards(OptionalAuthGuard)
+    @ApiOperation({ summary: 'Get flashcard set for study with access check' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcard set for study',
+        type: FlashCardSetDto,
+    })
+    async getForStudy(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.flashcardsetService.getFlashcardSetForStudy(
+            id,
+            req.user?.id
+        );
+    }
+
+    @Post('study/:id/verify-code')
+    @ApiOperation({ summary: 'Verify access code for a private flashcard set' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Code verification result',
+        type: VerifyCodeResponseDto,
+    })
+    async verifyCode(
+        @Param('id') id: string,
+        @Body() dto: VerifyAccessCodeDto
+    ) {
+        return this.flashcardsetService.verifyAccessCode(id, dto.accessCode);
+    }
+
+    @Post('study/:id/with-code')
+    @ApiOperation({ summary: 'Get flashcard set using access code' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcard set for study',
+        type: FlashCardSetDto,
+    })
+    async getWithCode(
+        @Param('id') id: string,
+        @Body() dto: VerifyAccessCodeDto
+    ) {
+        return this.flashcardsetService.getFlashcardSetWithCode(
+            id,
+            dto.accessCode
+        );
+    }
+
+    @Get(':id/sharing')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get sharing settings for a flashcard set' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Sharing settings',
+    })
+    async getSharingSettings(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.flashcardsetService.getSharingSettings(id, req.user);
+    }
+
+    @Put(':id/sharing')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Update sharing settings for a flashcard set' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Sharing settings updated',
+        type: SharingSettingsResponseDto,
+    })
+    async updateSharingSettings(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: UpdateSharingSettingsDto
+    ) {
+        return this.flashcardsetService.updateSharingSettings(
+            id,
+            req.user,
+            dto
+        );
+    }
+
+    @Post(':id/generate-code')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Generate a new access code' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'New access code generated',
+    })
+    async generateCode(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        const accessCode = this.flashcardsetService.generateAccessCode();
+        await this.flashcardsetService.updateSharingSettings(id, req.user, {
+            isPublic: false,
+            accessCode,
+            whitelist: [],
+        });
+        return { accessCode };
+    }
+
+    @Get('users/search')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Search users by username for whitelist' })
+    @ApiResponse({
+        status: 200,
+        description: 'List of matching users',
+    })
+    async searchUsers(
+        @Query('q') query: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.flashcardsetService.searchUsers(query, req.user.id);
     }
 }

@@ -22,6 +22,11 @@ export enum PARTICIPANT_STATUS {
     LEFT = 3,
 }
 
+export enum QUIZ_PRACTICE_TYPE {
+    PRACTICE = 0, // Thi thử
+    REAL = 1, // Thi thật
+}
+
 export interface Quizz {
     question: string;
     options: string[];

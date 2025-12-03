@@ -15,31 +15,58 @@ import { SetQuizzToQuizsetDto } from './dto/set-quizz-to-quizset.dto';
 import { SaveHistoryToQuizsetDto } from './dto/save-history-to-quizset.dto';
 import { QuizSetRepository } from './quizset.repository';
 import { EXPIRED_TIME } from '../../../../constants/redis';
+import { R2Service } from 'src/packages/r2/r2.service';
+import { QuizPracticeAttemptRepository } from '../quizpracticeattempt/quiz-practice-attempt.repository';
 
 @Injectable()
 export class QuizsetService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly quizSetRepository: QuizSetRepository,
-        private readonly generateIdService: GenerateIdService
+        private readonly generateIdService: GenerateIdService,
+        private readonly r2Service: R2Service,
+        private readonly attemptRepository: QuizPracticeAttemptRepository
     ) {}
 
-    async createQuizSet(user: User, dto: CreateQuizsetDto) {
+    async createQuizSet(
+        user: User,
+        dto: CreateQuizsetDto,
+        thumbnailFile?: Express.Multer.File
+    ) {
         if (!dto.title || dto.title.trim() === '') {
             throw new ConflictException('Tiêu đề không được để trống');
         }
 
         try {
+            // Handle thumbnail upload if file is provided
+            let thumbnailUrl = dto.thumbnail || null;
+            if (thumbnailFile) {
+                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const r2Key = await this.r2Service.uploadFile(
+                    fileName,
+                    thumbnailFile.buffer,
+                    thumbnailFile.mimetype,
+                    'quizset-thumbnails'
+                );
+                thumbnailUrl = this.r2Service.getPublicUrl(r2Key);
+            }
+
             // Use repository to create quizset
             const newQuizSet = await this.quizSetRepository.create(
                 {
                     id: this.generateIdService.generateId(),
                     title: dto.title,
                     description: dto.description || '',
-                    isPublic: dto.isPublic || false,
-                    tags: dto.tags || [],
+                    isPublic:
+                        dto.isPublic === true ||
+                        dto.isPublic?.toString() === 'true',
+                    tags: Array.isArray(dto.tags)
+                        ? dto.tags
+                        : typeof dto.tags === 'string'
+                          ? JSON.parse(dto.tags)
+                          : [],
                     userId: user.id,
-                    thumbnail: dto.thumbnail || null,
+                    thumbnail: thumbnailUrl,
                 },
                 user.id
             );
@@ -49,6 +76,7 @@ export class QuizsetService {
                 quizSet: newQuizSet,
             };
         } catch (error) {
+            console.log(error);
             throw new InternalServerErrorException('Tạo bộ câu hỏi thất bại');
         }
     }
@@ -78,11 +106,15 @@ export class QuizsetService {
 
             const totalQuestions = questionCountResult._count || 0;
 
+            // Get completion rate from quiz practice attempts
+            const completionRate =
+                await this.attemptRepository.getAverageCompletionRate(user.id);
+
             return {
                 totalExams: totalCount,
                 activeExams: activeCount,
                 totalQuestions,
-                completionRate: 0, // TODO: Implement completion tracking
+                completionRate: Math.round(completionRate * 10) / 10, // Làm tròn 1 số thập phân
             };
         } catch (error) {
             throw new InternalServerErrorException(
@@ -132,6 +164,10 @@ export class QuizsetService {
 
         // Hard delete using repository - pass userId for proper cache invalidation
         await this.quizSetRepository.delete(id, user.id);
+        const key = quizSet.thumbnail?.replace(/^https?:\/\/[^/]+\//, '');
+        if (key) {
+            await this.r2Service.deleteFile(key);
+        }
 
         return { message: 'Xóa bộ câu hỏi thành công' };
     }
@@ -209,11 +245,35 @@ export class QuizsetService {
             user.id
         );
 
+        // Get latest attempts for all quizSets in one query - O(n)
+        const quizSetIds = (result.data as any[]).map((qs) => qs.id);
+        const latestAttempts =
+            await this.attemptRepository.findLatestAttemptsForQuizSets(
+                user.id,
+                quizSetIds
+            );
+
+        // Create a map for O(1) lookup
+        const attemptMap = new Map(latestAttempts.map((a) => [a.quizSetId, a]));
+
         // Map the returned data to expose a flat `questionCount` property per quiz set
-        const quizSetsWithCount = (result.data as any[]).map((qs) => ({
-            ...qs,
-            questionCount: qs._count?.detailsQuizQuestions ?? 0,
-        }));
+        const quizSetsWithCount = (result.data as any[]).map((qs) => {
+            const lastAttempt = attemptMap.get(qs.id);
+            return {
+                ...qs,
+                questionCount: qs._count?.detailsQuizQuestions ?? 0,
+                lastStudied: lastAttempt?.updatedAt || null,
+                lastAttempt: lastAttempt
+                    ? {
+                          id: lastAttempt.id,
+                          isSubmitted: lastAttempt.isSubmitted,
+                          score: lastAttempt.score,
+                          timeSpentSeconds: lastAttempt.timeSpentSeconds,
+                          updatedAt: lastAttempt.updatedAt,
+                      }
+                    : null,
+            };
+        });
 
         return {
             quizSets: quizSetsWithCount,
@@ -224,7 +284,12 @@ export class QuizsetService {
         };
     }
 
-    async updateQuizSet(id: string, user: User, dto: UpdateQuizSetDto) {
+    async updateQuizSet(
+        id: string,
+        user: User,
+        dto: UpdateQuizSetDto,
+        thumbnailFile?: Express.Multer.File
+    ) {
         try {
             // Check ownership first
             const quizSet = await this.quizSetRepository.findOne({
@@ -234,6 +299,19 @@ export class QuizsetService {
 
             if (!quizSet) {
                 throw new NotFoundException('Bộ câu hỏi không tồn tại');
+            }
+
+            // Handle thumbnail upload if file is provided
+            let thumbnailUrl = dto.thumbnail;
+            if (thumbnailFile) {
+                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const r2Key = await this.r2Service.uploadFile(
+                    fileName,
+                    thumbnailFile.buffer,
+                    thumbnailFile.mimetype,
+                    'quizset-thumbnails'
+                );
+                thumbnailUrl = this.r2Service.getPublicUrl(r2Key);
             }
 
             // Update using repository (auto invalidate cache)
@@ -246,7 +324,9 @@ export class QuizsetService {
                         isPublic: dto.isPublic,
                     }),
                     ...(dto.tags && { tags: dto.tags }),
-                    ...(dto.thumbnail && { thumbnail: dto.thumbnail }),
+                    ...(thumbnailUrl !== undefined && {
+                        thumbnail: thumbnailUrl,
+                    }),
                 },
                 user.id
             );
