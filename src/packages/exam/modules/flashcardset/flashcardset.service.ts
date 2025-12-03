@@ -14,30 +14,55 @@ import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
 import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
 import { FlashCardSetRepository } from './flashcardset.repository';
+import { R2Service } from 'src/packages/r2/r2.service';
 
 @Injectable()
 export class FlashcardsetService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly flashcardSetRepository: FlashCardSetRepository,
-        private readonly generateIdService: GenerateIdService
+        private readonly generateIdService: GenerateIdService,
+        private readonly r2Service: R2Service
     ) {}
 
-    async createFlashcardSet(user: User, dto: CreateFlashcardsetDto) {
+    async createFlashcardSet(
+        user: User,
+        dto: CreateFlashcardsetDto,
+        thumbnailFile?: Express.Multer.File
+    ) {
         if (!dto.title || dto.title.trim() === '') {
             throw new ConflictException('Tiêu đề không được để trống');
         }
 
         try {
+            // Handle thumbnail upload if file is provided
+            let thumbnailUrl = dto.thumbnail || null;
+            if (thumbnailFile) {
+                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const r2Key = await this.r2Service.uploadFile(
+                    fileName,
+                    thumbnailFile.buffer,
+                    thumbnailFile.mimetype,
+                    'flashcardset-thumbnails'
+                );
+                thumbnailUrl = this.r2Service.getPublicUrl(r2Key);
+            }
+
             const newFlashcardSet = await this.flashcardSetRepository.create(
                 {
                     id: this.generateIdService.generateId(),
                     title: dto.title,
                     description: dto.description || '',
-                    isPublic: dto.isPublic || false,
-                    tag: dto.tag || [],
+                    isPublic:
+                        dto.isPublic === true ||
+                        dto.isPublic?.toString() === 'true',
+                    tag: Array.isArray(dto.tags)
+                        ? dto.tags
+                        : typeof dto.tags === 'string'
+                          ? JSON.parse(dto.tags)
+                          : [],
                     userId: user.id,
-                    thumbnail: dto.thumbnail || null,
+                    thumbnail: thumbnailUrl,
                 },
                 user.id
             );
@@ -46,6 +71,7 @@ export class FlashcardsetService {
                 flashcardSet: newFlashcardSet,
             };
         } catch (error) {
+            console.log(error);
             throw new InternalServerErrorException(
                 'Tạo bộ thẻ ghi nhớ thất bại'
             );
@@ -123,6 +149,10 @@ export class FlashcardsetService {
 
         // Hard delete - pass userId for proper cache invalidation
         await this.flashcardSetRepository.delete(id, user.id);
+        const key = flashcardSet.thumbnail?.replace(/^https?:\/\/[^/]+\//, '');
+        if (key) {
+            await this.r2Service.deleteFile(key);
+        }
 
         return { message: 'Xóa bộ thẻ ghi nhớ thành công' };
     }
@@ -204,7 +234,8 @@ export class FlashcardsetService {
     async updateFlashcardSet(
         id: string,
         user: User,
-        dto: UpdateFlashcardSetDto
+        dto: UpdateFlashcardSetDto,
+        thumbnailFile?: Express.Multer.File
     ) {
         try {
             // Check ownership
@@ -215,6 +246,19 @@ export class FlashcardsetService {
 
             if (!flashcardSet) {
                 throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+            }
+
+            // Handle thumbnail upload if file is provided
+            let thumbnailUrl = dto.thumbnail;
+            if (thumbnailFile) {
+                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const r2Key = await this.r2Service.uploadFile(
+                    fileName,
+                    thumbnailFile.buffer,
+                    thumbnailFile.mimetype,
+                    'flashcardset-thumbnails'
+                );
+                thumbnailUrl = this.r2Service.getPublicUrl(r2Key);
             }
 
             // Update using repository
@@ -230,7 +274,9 @@ export class FlashcardsetService {
                             isPublic: dto.isPublic,
                         }),
                         ...(dto.tag && { tag: dto.tag }),
-                        ...(dto.thumbnail && { thumbnail: dto.thumbnail }),
+                        ...(thumbnailUrl !== undefined && {
+                            thumbnail: thumbnailUrl,
+                        }),
                     },
                     user.id
                 );

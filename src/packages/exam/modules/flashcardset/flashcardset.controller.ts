@@ -9,7 +9,10 @@ import {
     Delete,
     Param,
     Query,
+    UseInterceptors,
+    UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
     ApiTags,
     ApiResponse,
@@ -60,6 +63,7 @@ export class FlashcardsetController {
 
     @Post()
     @UseGuards(AuthGuard)
+    @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Create a new flashcard set' })
     @ApiResponse({
@@ -69,11 +73,13 @@ export class FlashcardsetController {
     })
     async createFlashcardSet(
         @Req() req: AuthenticatedRequest,
-        @Body() createFlashcardsetDto: CreateFlashcardsetDto
+        @Body() createFlashcardsetDto: CreateFlashcardsetDto,
+        @UploadedFile() thumbnail?: Express.Multer.File
     ) {
         return this.flashcardsetService.createFlashcardSet(
             req.user,
-            createFlashcardsetDto
+            createFlashcardsetDto,
+            thumbnail
         );
     }
 
@@ -107,6 +113,7 @@ export class FlashcardsetController {
 
     @Put(':id')
     @UseGuards(AuthGuard)
+    @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Update a flashcard set by ID' })
     @ApiResponse({
@@ -117,12 +124,14 @@ export class FlashcardsetController {
     async updateFlashcardSet(
         @Req() req: AuthenticatedRequest,
         @Param('id') id: string,
-        @Body() updateFlashcardSetDto: UpdateFlashcardSetDto
+        @Body() updateFlashcardSetDto: UpdateFlashcardSetDto,
+        @UploadedFile() thumbnail?: Express.Multer.File
     ) {
         return this.flashcardsetService.updateFlashcardSet(
             id,
             req.user,
-            updateFlashcardSetDto
+            updateFlashcardSetDto,
+            thumbnail
         );
     }
 

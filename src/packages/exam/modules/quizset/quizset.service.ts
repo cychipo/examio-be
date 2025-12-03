@@ -15,31 +15,56 @@ import { SetQuizzToQuizsetDto } from './dto/set-quizz-to-quizset.dto';
 import { SaveHistoryToQuizsetDto } from './dto/save-history-to-quizset.dto';
 import { QuizSetRepository } from './quizset.repository';
 import { EXPIRED_TIME } from '../../../../constants/redis';
+import { R2Service } from 'src/packages/r2/r2.service';
 
 @Injectable()
 export class QuizsetService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly quizSetRepository: QuizSetRepository,
-        private readonly generateIdService: GenerateIdService
+        private readonly generateIdService: GenerateIdService,
+        private readonly r2Service: R2Service
     ) {}
 
-    async createQuizSet(user: User, dto: CreateQuizsetDto) {
+    async createQuizSet(
+        user: User,
+        dto: CreateQuizsetDto,
+        thumbnailFile?: Express.Multer.File
+    ) {
         if (!dto.title || dto.title.trim() === '') {
             throw new ConflictException('Tiêu đề không được để trống');
         }
 
         try {
+            // Handle thumbnail upload if file is provided
+            let thumbnailUrl = dto.thumbnail || null;
+            if (thumbnailFile) {
+                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const r2Key = await this.r2Service.uploadFile(
+                    fileName,
+                    thumbnailFile.buffer,
+                    thumbnailFile.mimetype,
+                    'quizset-thumbnails'
+                );
+                thumbnailUrl = this.r2Service.getPublicUrl(r2Key);
+            }
+
             // Use repository to create quizset
             const newQuizSet = await this.quizSetRepository.create(
                 {
                     id: this.generateIdService.generateId(),
                     title: dto.title,
                     description: dto.description || '',
-                    isPublic: dto.isPublic || false,
-                    tags: dto.tags || [],
+                    isPublic:
+                        dto.isPublic === true ||
+                        dto.isPublic?.toString() === 'true',
+                    tags: Array.isArray(dto.tags)
+                        ? dto.tags
+                        : typeof dto.tags === 'string'
+                          ? JSON.parse(dto.tags)
+                          : [],
                     userId: user.id,
-                    thumbnail: dto.thumbnail || null,
+                    thumbnail: thumbnailUrl,
                 },
                 user.id
             );
@@ -49,6 +74,7 @@ export class QuizsetService {
                 quizSet: newQuizSet,
             };
         } catch (error) {
+            console.log(error);
             throw new InternalServerErrorException('Tạo bộ câu hỏi thất bại');
         }
     }
@@ -132,6 +158,10 @@ export class QuizsetService {
 
         // Hard delete using repository - pass userId for proper cache invalidation
         await this.quizSetRepository.delete(id, user.id);
+        const key = quizSet.thumbnail?.replace(/^https?:\/\/[^/]+\//, '');
+        if (key) {
+            await this.r2Service.deleteFile(key);
+        }
 
         return { message: 'Xóa bộ câu hỏi thành công' };
     }
@@ -224,7 +254,12 @@ export class QuizsetService {
         };
     }
 
-    async updateQuizSet(id: string, user: User, dto: UpdateQuizSetDto) {
+    async updateQuizSet(
+        id: string,
+        user: User,
+        dto: UpdateQuizSetDto,
+        thumbnailFile?: Express.Multer.File
+    ) {
         try {
             // Check ownership first
             const quizSet = await this.quizSetRepository.findOne({
@@ -234,6 +269,19 @@ export class QuizsetService {
 
             if (!quizSet) {
                 throw new NotFoundException('Bộ câu hỏi không tồn tại');
+            }
+
+            // Handle thumbnail upload if file is provided
+            let thumbnailUrl = dto.thumbnail;
+            if (thumbnailFile) {
+                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const r2Key = await this.r2Service.uploadFile(
+                    fileName,
+                    thumbnailFile.buffer,
+                    thumbnailFile.mimetype,
+                    'quizset-thumbnails'
+                );
+                thumbnailUrl = this.r2Service.getPublicUrl(r2Key);
             }
 
             // Update using repository (auto invalidate cache)
@@ -246,7 +294,9 @@ export class QuizsetService {
                         isPublic: dto.isPublic,
                     }),
                     ...(dto.tags && { tags: dto.tags }),
-                    ...(dto.thumbnail && { thumbnail: dto.thumbnail }),
+                    ...(thumbnailUrl !== undefined && {
+                        thumbnail: thumbnailUrl,
+                    }),
                 },
                 user.id
             );
