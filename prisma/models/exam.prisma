@@ -1,186 +1,224 @@
 model QuizSet {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  userId      String
-  thumbnail   String?
-  isPublic    Boolean  @default(false)
-  isPinned    Boolean  @default(false)
-  tags        String[] @default([])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @default(now()) @updatedAt
-  createdBy   String?
-  updatedBy   String?
+    id          String   @id @default(cuid())
+    title       String
+    description String?
+    userId      String
+    thumbnail   String?
+    isPublic    Boolean  @default(false)
+    isPinned    Boolean  @default(false)
+    tags        String[] @default([])
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+    createdBy   String?
+    updatedBy   String?
 
-  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  detailsQuizQuestions DetailsQuizQuestion[]
-  examRooms            ExamRoom[]
+    user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+    detailsQuizQuestions DetailsQuizQuestion[]
+    examRooms            ExamRoom[]
+    practiceAttempts     QuizPracticeAttempt[]
 }
 
 model FlashCardSet {
-  id          String   @id @default(cuid())
-  title       String
-  userId      String
-  thumbnail   String?
-  description String?
-  tag         String[] @default([])
-  isPublic    Boolean  @default(false)
-  isPinned    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedBy   String?
-  createdBy   String?
-  updatedAt   DateTime @default(now()) @updatedAt
+    id          String   @id @default(cuid())
+    title       String
+    userId      String
+    thumbnail   String?
+    description String?
+    tag         String[] @default([])
+    isPublic    Boolean  @default(false)
+    isPinned    Boolean  @default(false)
+    createdAt   DateTime @default(now())
+    updatedBy   String?
+    createdBy   String?
+    updatedAt   DateTime @default(now()) @updatedAt
 
-  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  detailsFlashCard DetailsFlashCard[]
+    user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    detailsFlashCard DetailsFlashCard[]
 }
 
 model QuizQuestion {
-  id        String   @id @default(cuid())
-  question  String
-  options   String[]
-  answer    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+    id        String   @id @default(cuid())
+    question  String
+    options   String[]
+    answer    String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
 
-  detailsQuizQuestions DetailsQuizQuestion[]
+    detailsQuizQuestions DetailsQuizQuestion[]
 }
 
 model DetailsQuizQuestion {
-  id                      String  @id @default(cuid())
-  quizSetId               String
-  quizQuestionId          String
-  historyGeneratedQuizzId String?
+    id                      String  @id @default(cuid())
+    quizSetId               String
+    quizQuestionId          String
+    historyGeneratedQuizzId String?
 
-  quizSet               QuizSet                @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
-  quizQuestion          QuizQuestion           @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  historyGeneratedQuizz HistoryGeneratedQuizz? @relation(fields: [historyGeneratedQuizzId], references: [id], onDelete: SetNull)
+    quizSet               QuizSet                @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+    quizQuestion          QuizQuestion           @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+    historyGeneratedQuizz HistoryGeneratedQuizz? @relation(fields: [historyGeneratedQuizzId], references: [id], onDelete: SetNull)
 
-  @@unique([quizSetId, quizQuestionId])
-  @@index([quizSetId])
-  @@index([quizQuestionId])
-  @@index([historyGeneratedQuizzId])
+    @@unique([quizSetId, quizQuestionId])
+    @@index([quizSetId])
+    @@index([quizQuestionId])
+    @@index([historyGeneratedQuizzId])
 }
 
 model FlashCard {
-  id        String   @id @default(cuid())
-  question  String
-  answer    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+    id        String   @id @default(cuid())
+    question  String
+    answer    String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
 
-  detailsFlashCards DetailsFlashCard[]
+    detailsFlashCards DetailsFlashCard[]
 }
 
 model DetailsFlashCard {
-  id                          String  @id @default(cuid())
-  flashCardSetId              String
-  flashCardId                 String
-  historyGeneratedFlashcardId String?
+    id                          String  @id @default(cuid())
+    flashCardSetId              String
+    flashCardId                 String
+    historyGeneratedFlashcardId String?
 
-  flashCardSet              FlashCardSet               @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
-  flashCard                 FlashCard                  @relation(fields: [flashCardId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  historyGeneratedFlashcard HistoryGeneratedFlashcard? @relation(fields: [historyGeneratedFlashcardId], references: [id], onDelete: SetNull)
+    flashCardSet              FlashCardSet               @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
+    flashCard                 FlashCard                  @relation(fields: [flashCardId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+    historyGeneratedFlashcard HistoryGeneratedFlashcard? @relation(fields: [historyGeneratedFlashcardId], references: [id], onDelete: SetNull)
 
-  @@unique([flashCardSetId, flashCardId])
-  @@index([flashCardSetId])
-  @@index([flashCardId])
-  @@index([historyGeneratedFlashcardId])
+    @@unique([flashCardSetId, flashCardId])
+    @@index([flashCardSetId])
+    @@index([flashCardId])
+    @@index([historyGeneratedFlashcardId])
 }
 
 model ExamRoom {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  quizSetId   String
-  hostId      String
-  assessType  Int // 0: PUBLIC, 1: PRIVATE
-  allowRetake Boolean  @default(false)
-  maxAttempts Int      @default(1)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @default(now()) @updatedAt
-  createdBy   String?
-  updatedBy   String?
+    id          String   @id @default(cuid())
+    title       String
+    description String?
+    quizSetId   String
+    hostId      String
+    assessType  Int // 0: PUBLIC, 1: PRIVATE
+    allowRetake Boolean  @default(false)
+    maxAttempts Int      @default(1)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+    createdBy   String?
+    updatedBy   String?
 
-  host    User    @relation(fields: [hostId], references: [id], onDelete: Cascade)
-  quizSet QuizSet @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+    host    User    @relation(fields: [hostId], references: [id], onDelete: Cascade)
+    quizSet QuizSet @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
 
-  examSessions ExamSession[]
+    examSessions ExamSession[]
 }
 
 model ExamSession {
-  id             String    @id @default(cuid())
-  examRoomId     String
-  status         Int       @default(0) // 0: UPCOMING, 1: ONGOING, 2: ENDED
-  startTime      DateTime
-  endTime        DateTime?
-  autoJoinByLink Boolean   @default(false)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @default(now()) @updatedAt
-  createdBy      String?
-  updatedBy      String?
+    id             String    @id @default(cuid())
+    examRoomId     String
+    status         Int       @default(0) // 0: UPCOMING, 1: ONGOING, 2: ENDED
+    startTime      DateTime
+    endTime        DateTime?
+    autoJoinByLink Boolean   @default(false)
+    createdAt      DateTime  @default(now())
+    updatedAt      DateTime  @default(now()) @updatedAt
+    createdBy      String?
+    updatedBy      String?
 
-  examRoom     ExamRoom                 @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
-  participants ExamSessionParticipant[]
-  examAttempts ExamAttempt[]
+    examRoom     ExamRoom                 @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
+    participants ExamSessionParticipant[]
+    examAttempts ExamAttempt[]
 }
 
 model ExamAttempt {
-  id             String    @id @default(cuid())
-  examSessionId  String
-  userId         String
-  score          Float
-  violationCount Int       @default(0)
-  startedAt      DateTime
-  finishedAt     DateTime?
-  status         Int       @default(0) // 0: IN_PROGRESS, 1: COMPLETED, 2: CANCELLED
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @default(now()) @updatedAt
-  createdBy      String?
-  updatedBy      String?
+    id             String    @id @default(cuid())
+    examSessionId  String
+    userId         String
+    score          Float
+    violationCount Int       @default(0)
+    startedAt      DateTime
+    finishedAt     DateTime?
+    status         Int       @default(0) // 0: IN_PROGRESS, 1: COMPLETED, 2: CANCELLED
+    createdAt      DateTime  @default(now())
+    updatedAt      DateTime  @default(now()) @updatedAt
+    createdBy      String?
+    updatedBy      String?
 
-  examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
+    user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model ExamSessionParticipant {
-  id            String    @id @default(cuid())
-  examSessionId String
-  userId        String
-  status        Int       @default(0) // 0: PENDING, 1: APPROVED, 2: REJECTED, 3: LEFT
-  joinedAt      DateTime?
-  leftAt        DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @default(now()) @updatedAt
-  createdBy     String?
-  updatedBy     String?
+    id            String    @id @default(cuid())
+    examSessionId String
+    userId        String
+    status        Int       @default(0) // 0: PENDING, 1: APPROVED, 2: REJECTED, 3: LEFT
+    joinedAt      DateTime?
+    leftAt        DateTime?
+    createdAt     DateTime  @default(now())
+    updatedAt     DateTime  @default(now()) @updatedAt
+    createdBy     String?
+    updatedBy     String?
 
-  examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
+    user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model HistoryGeneratedQuizz {
-  id            String   @id @default(cuid())
-  userId        String
-  userStorageId String
-  quizzes       Json
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @default(now()) @updatedAt
+    id            String   @id @default(cuid())
+    userId        String
+    userStorageId String
+    quizzes       Json
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @default(now()) @updatedAt
 
-  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userStorage          UserStorage           @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
-  detailsQuizQuestions DetailsQuizQuestion[]
+    user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userStorage          UserStorage           @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+    detailsQuizQuestions DetailsQuizQuestion[]
 }
 
 model HistoryGeneratedFlashcard {
-  id            String   @id @default(cuid())
-  userId        String
-  userStorageId String
-  flashcards    Json
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @default(now()) @updatedAt
+    id            String   @id @default(cuid())
+    userId        String
+    userStorageId String
+    flashcards    Json
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @default(now()) @updatedAt
 
-  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userStorage       UserStorage        @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
-  detailsFlashCards DetailsFlashCard[]
+    user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userStorage       UserStorage        @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+    detailsFlashCards DetailsFlashCard[]
+}
+
+model QuizPracticeAttempt {
+    id              String   @id @default(cuid())
+    quizSetId       String
+    userId          String
+    type            Int      @default(0) // 0: PRACTICE (thi thử), 1: REAL (thi thật)
+    answers         Json     @default("{}") // { questionId: selectedAnswer }
+    currentIndex    Int      @default(0) // Câu hỏi hiện tại
+    markedQuestions String[] @default([]) // Danh sách câu hỏi đánh dấu
+
+    // Thời gian làm bài
+    timeSpentSeconds Int  @default(0) // Thời gian đã làm (giây)
+    timeLimitMinutes Int? // Giới hạn thời gian (phút), null = không giới hạn
+
+    // Trạng thái
+    isSubmitted    Boolean @default(false)
+    score          Float? // Điểm sau khi nộp bài
+    totalQuestions Int     @default(0)
+    correctAnswers Int     @default(0)
+
+    // Timestamps
+    startedAt   DateTime  @default(now())
+    submittedAt DateTime?
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @default(now()) @updatedAt
+    createdBy   String?
+    updatedBy   String?
+
+    quizSet QuizSet @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+    user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    // Unique constraint: mỗi user chỉ có 1 bản ghi cho mỗi quizSet với mỗi type
+    @@unique([quizSetId, userId, type])
+    @@index([userId])
+    @@index([quizSetId])
+    @@index([userId, updatedAt(sort: Desc)])
 }

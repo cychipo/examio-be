@@ -16,6 +16,7 @@ import { SaveHistoryToQuizsetDto } from './dto/save-history-to-quizset.dto';
 import { QuizSetRepository } from './quizset.repository';
 import { EXPIRED_TIME } from '../../../../constants/redis';
 import { R2Service } from 'src/packages/r2/r2.service';
+import { QuizPracticeAttemptRepository } from '../quizpracticeattempt/quiz-practice-attempt.repository';
 
 @Injectable()
 export class QuizsetService {
@@ -23,7 +24,8 @@ export class QuizsetService {
         private readonly prisma: PrismaService,
         private readonly quizSetRepository: QuizSetRepository,
         private readonly generateIdService: GenerateIdService,
-        private readonly r2Service: R2Service
+        private readonly r2Service: R2Service,
+        private readonly attemptRepository: QuizPracticeAttemptRepository
     ) {}
 
     async createQuizSet(
@@ -104,11 +106,15 @@ export class QuizsetService {
 
             const totalQuestions = questionCountResult._count || 0;
 
+            // Get completion rate from quiz practice attempts
+            const completionRate =
+                await this.attemptRepository.getAverageCompletionRate(user.id);
+
             return {
                 totalExams: totalCount,
                 activeExams: activeCount,
                 totalQuestions,
-                completionRate: 0, // TODO: Implement completion tracking
+                completionRate: Math.round(completionRate * 10) / 10, // Làm tròn 1 số thập phân
             };
         } catch (error) {
             throw new InternalServerErrorException(
@@ -239,11 +245,35 @@ export class QuizsetService {
             user.id
         );
 
+        // Get latest attempts for all quizSets in one query - O(n)
+        const quizSetIds = (result.data as any[]).map((qs) => qs.id);
+        const latestAttempts =
+            await this.attemptRepository.findLatestAttemptsForQuizSets(
+                user.id,
+                quizSetIds
+            );
+
+        // Create a map for O(1) lookup
+        const attemptMap = new Map(latestAttempts.map((a) => [a.quizSetId, a]));
+
         // Map the returned data to expose a flat `questionCount` property per quiz set
-        const quizSetsWithCount = (result.data as any[]).map((qs) => ({
-            ...qs,
-            questionCount: qs._count?.detailsQuizQuestions ?? 0,
-        }));
+        const quizSetsWithCount = (result.data as any[]).map((qs) => {
+            const lastAttempt = attemptMap.get(qs.id);
+            return {
+                ...qs,
+                questionCount: qs._count?.detailsQuizQuestions ?? 0,
+                lastStudied: lastAttempt?.updatedAt || null,
+                lastAttempt: lastAttempt
+                    ? {
+                          id: lastAttempt.id,
+                          isSubmitted: lastAttempt.isSubmitted,
+                          score: lastAttempt.score,
+                          timeSpentSeconds: lastAttempt.timeSpentSeconds,
+                          updatedAt: lastAttempt.updatedAt,
+                      }
+                    : null,
+            };
+        });
 
         return {
             quizSets: quizSetsWithCount,
