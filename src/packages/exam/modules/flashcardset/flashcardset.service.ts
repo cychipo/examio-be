@@ -29,15 +29,18 @@ export class FlashcardsetService {
         }
 
         try {
-            const newFlashcardSet = await this.flashcardSetRepository.create({
-                id: this.generateIdService.generateId(),
-                title: dto.title,
-                description: dto.description || '',
-                isPublic: dto.isPublic || false,
-                tag: dto.tag || [],
-                userId: user.id,
-                thumbnail: dto.thumbnail || null,
-            });
+            const newFlashcardSet = await this.flashcardSetRepository.create(
+                {
+                    id: this.generateIdService.generateId(),
+                    title: dto.title,
+                    description: dto.description || '',
+                    isPublic: dto.isPublic || false,
+                    tag: dto.tag || [],
+                    userId: user.id,
+                    thumbnail: dto.thumbnail || null,
+                },
+                user.id
+            );
             return {
                 message: 'Tạo bộ thẻ ghi nhớ thành công',
                 flashcardSet: newFlashcardSet,
@@ -95,8 +98,6 @@ export class FlashcardsetService {
             cache: true,
         });
 
-        console.log('Fetched flashcardSet:', flashcardSet);
-
         if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
@@ -120,8 +121,8 @@ export class FlashcardsetService {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
-        // Hard delete
-        await this.flashcardSetRepository.delete(id);
+        // Hard delete - pass userId for proper cache invalidation
+        await this.flashcardSetRepository.delete(id, user.id);
 
         return { message: 'Xóa bộ thẻ ghi nhớ thành công' };
     }
@@ -176,17 +177,20 @@ export class FlashcardsetService {
         }
 
         // Use repository pagination with cache
-        const result = await this.flashcardSetRepository.paginate({
-            page: dto.page || 1,
-            size: dto.limit || 10,
-            ...where,
-            include: {
-                _count: { select: { detailsFlashCard: true } },
+        const result = await this.flashcardSetRepository.paginate(
+            {
+                page: dto.page || 1,
+                size: dto.limit || 10,
+                ...where,
+                include: {
+                    _count: { select: { detailsFlashCard: true } },
+                },
+                sortBy: 'createdAt',
+                sortType: 'desc',
+                cache: true,
             },
-            sortBy: 'createdAt',
-            sortType: 'desc',
-            cache: true,
-        });
+            user.id
+        );
 
         return {
             flashcardSets: result.data,
@@ -305,8 +309,18 @@ export class FlashcardsetService {
                 return {
                     createdFlashcardsCount: createdFlashcards.length,
                     affectedFlashcardSetsCount: flashcardSetIds.length,
+                    affectedFlashcardSetIds: flashcardSetIds,
                 };
             });
+
+            // Invalidate caches
+            await this.flashcardSetRepository.invalidateUserListCache(user.id);
+            for (const id of result.affectedFlashcardSetIds) {
+                await this.flashcardSetRepository.invalidateItemCache(
+                    user.id,
+                    id
+                );
+            }
 
             return {
                 message: `Thêm ${result.createdFlashcardsCount} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ thành công`,
@@ -367,9 +381,13 @@ export class FlashcardsetService {
                 }
 
                 // Validate history record thuộc về user
-                const history = await tx.historyGeneratedFlashcard.findUnique({
+                // Support both historyId (id field) and userStorageId for backward compatibility
+                const history = await tx.historyGeneratedFlashcard.findFirst({
                     where: {
-                        id: dto.historyId,
+                        OR: [
+                            { id: dto.historyId },
+                            { userStorageId: dto.historyId },
+                        ],
                         userId: user.id,
                     },
                 });
@@ -504,8 +522,18 @@ export class FlashcardsetService {
                     skippedCount,
                     totalFlashcards: flashcards.length,
                     affectedFlashcardSetsCount: flashcardSetIds.length,
+                    affectedFlashcardSetIds: flashcardSetIds,
                 };
             });
+
+            // Invalidate caches
+            await this.flashcardSetRepository.invalidateUserListCache(user.id);
+            for (const id of result.affectedFlashcardSetIds) {
+                await this.flashcardSetRepository.invalidateItemCache(
+                    user.id,
+                    id
+                );
+            }
 
             return {
                 message: `Đã lưu ${result.createdCount} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ${result.skippedCount > 0 ? ` (${result.skippedCount} bỏ qua do trùng lặp)` : ''}`,

@@ -51,14 +51,17 @@ export class ExamSessionService {
         }
 
         try {
-            const newExamSession = await this.examSessionRepository.create({
-                id: this.generateIdService.generateId(),
-                examRoomId: dto.examRoomId,
-                startTime,
-                endTime,
-                autoJoinByLink: dto.autoJoinByLink || false,
-                status: EXAM_SESSION_STATUS.UPCOMING,
-            });
+            const newExamSession = await this.examSessionRepository.create(
+                {
+                    id: this.generateIdService.generateId(),
+                    examRoomId: dto.examRoomId,
+                    startTime,
+                    endTime,
+                    autoJoinByLink: dto.autoJoinByLink || false,
+                    status: EXAM_SESSION_STATUS.UPCOMING,
+                },
+                user.id
+            );
 
             // Load relations for response
             const examSessionWithRelations =
@@ -156,8 +159,8 @@ export class ExamSessionService {
             );
         }
 
-        // Hard delete
-        await this.examSessionRepository.delete(id);
+        // Hard delete - pass userId for proper cache invalidation
+        await this.examSessionRepository.delete(id, user.id);
         return { message: 'Xóa phiên thi thành công' };
     }
 
@@ -216,35 +219,38 @@ export class ExamSessionService {
             where.status = dto.status;
         }
 
-        const result = await this.examSessionRepository.paginate({
-            page: dto.page || 1,
-            size: dto.limit || 10,
-            ...where,
-            include: {
-                examRoom: {
-                    select: {
-                        id: true,
-                        title: true,
-                        quizSet: {
-                            select: {
-                                id: true,
-                                title: true,
-                                thumbnail: true,
+        const result = await this.examSessionRepository.paginate(
+            {
+                page: dto.page || 1,
+                size: dto.limit || 10,
+                ...where,
+                include: {
+                    examRoom: {
+                        select: {
+                            id: true,
+                            title: true,
+                            quizSet: {
+                                select: {
+                                    id: true,
+                                    title: true,
+                                    thumbnail: true,
+                                },
                             },
                         },
                     },
-                },
-                _count: {
-                    select: {
-                        participants: true,
-                        examAttempts: true,
+                    _count: {
+                        select: {
+                            participants: true,
+                            examAttempts: true,
+                        },
                     },
                 },
+                sortBy: 'startTime',
+                sortType: 'desc',
+                cache: true,
             },
-            sortBy: 'startTime',
-            sortType: 'desc',
-            cache: true,
-        });
+            user.id
+        );
 
         return {
             examSessions: result.data,

@@ -42,19 +42,19 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
         type: number;
         description?: string;
         transactionId?: string;
+        userId?: string;
     }): Promise<WalletTransaction> {
-        const transaction = await this.create({
-            id: data.transactionId,
-            walletId: data.walletId,
-            amount: data.amount,
-            type: data.type,
-            description: data.description,
-        });
-
-        // Invalidate wallet cache
-        await this.invalidateCache();
-
-        return transaction;
+        // BaseRepository.create() handles cache invalidation automatically
+        return this.create(
+            {
+                id: data.transactionId,
+                walletId: data.walletId,
+                amount: data.amount,
+                type: data.type,
+                description: data.description,
+            },
+            data.userId
+        );
     }
 
     /**

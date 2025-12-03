@@ -23,23 +23,31 @@ export class UserRepository extends BaseRepository<User> {
         cache = true,
         cacheTTL = this.defaultCacheTTL
     ): Promise<User | null> {
+        const normalizedEmail = email.toLowerCase();
+        const cacheKey = `${this.cachePrefix}:email:${normalizedEmail}`;
+
         if (cache) {
-            const cacheKey = this.getCacheKey(`email:${email.toLowerCase()}`);
             const cached = await this.redis.get<User>(cacheKey);
             if (cached) return cached;
 
             const user = await this.model.findUnique({
-                where: { email: email.toLowerCase() },
+                where: { email: normalizedEmail },
             });
 
             if (user) {
                 await this.redis.set(cacheKey, user, cacheTTL);
+                // Also cache by user ID for future lookups
+                await this.redis.set(
+                    this.getUserScopedCacheKey(user.id),
+                    user,
+                    cacheTTL
+                );
             }
             return user;
         }
 
         return this.model.findUnique({
-            where: { email: email.toLowerCase() },
+            where: { email: normalizedEmail },
         });
     }
 
@@ -51,25 +59,31 @@ export class UserRepository extends BaseRepository<User> {
         cache = true,
         cacheTTL = this.defaultCacheTTL
     ): Promise<User | null> {
+        const normalizedUsername = username.toLowerCase();
+        const cacheKey = `${this.cachePrefix}:username:${normalizedUsername}`;
+
         if (cache) {
-            const cacheKey = this.getCacheKey(
-                `username:${username.toLowerCase()}`
-            );
             const cached = await this.redis.get<User>(cacheKey);
             if (cached) return cached;
 
             const user = await this.model.findUnique({
-                where: { username: username.toLowerCase() },
+                where: { username: normalizedUsername },
             });
 
             if (user) {
                 await this.redis.set(cacheKey, user, cacheTTL);
+                // Also cache by user ID for future lookups
+                await this.redis.set(
+                    this.getUserScopedCacheKey(user.id),
+                    user,
+                    cacheTTL
+                );
             }
             return user;
         }
 
         return this.model.findUnique({
-            where: { username: username.toLowerCase() },
+            where: { username: normalizedUsername },
         });
     }
 
@@ -108,10 +122,13 @@ export class UserRepository extends BaseRepository<User> {
             }
         });
 
+        const relationKey =
+            relations.length > 0
+                ? `:relations:${relations.sort().join(',')}`
+                : '';
+        const cacheKey = this.getUserScopedCacheKey(id) + relationKey;
+
         if (cache) {
-            const cacheKey = this.getCacheKey(
-                `id:${id}:relations:${relations.join(',')}`
-            );
             const cached = await this.redis.get<User>(cacheKey);
             if (cached) return cached;
 
@@ -136,15 +153,15 @@ export class UserRepository extends BaseRepository<User> {
      * Update user và invalidate các cache liên quan
      */
     async updateUser(id: string, data: any, userId?: string): Promise<User> {
-        const result = await this.update(id, data, userId);
+        // BaseRepository.update() handles user-scoped cache invalidation
+        const result = await this.update(id, data, userId || id);
 
-        // Invalidate specific caches
-        await this.redis.del(this.getCacheKey(`id:${id}`));
+        // Also invalidate email and username lookup caches (special case for User)
         await this.redis.del(
-            this.getCacheKey(`email:${result.email.toLowerCase()}`)
+            `${this.cachePrefix}:email:${result.email.toLowerCase()}`
         );
         await this.redis.del(
-            this.getCacheKey(`username:${result.username.toLowerCase()}`)
+            `${this.cachePrefix}:username:${result.username.toLowerCase()}`
         );
 
         return result;

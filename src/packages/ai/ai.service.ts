@@ -15,20 +15,21 @@ import { TYPE_RESULT } from './constant/type-result';
 import { PdfService } from 'src/common/services/pdf.service';
 import { WALLET_TYPE } from '../finance/types/wallet';
 import { Job, JobStatus, JobType } from './dto/job.dto';
+import {
+    getUserCacheKey,
+    CACHE_MODULES,
+} from 'src/common/constants/cache-keys';
+import { RedisService } from 'src/packages/redis/redis.service';
 
 @Injectable()
 export class AIService {
     private apiKeys: string[];
     private currentKeyIndex: number = 0;
-    private r2Service: R2Service;
     private readonly modalName =
         process.env.GEMINI_MODAL_NAME || 'gemini-2.0-flash';
     private ai: GoogleGenAI;
-    private prisma: PrismaService;
     private failedKeys: Set<string> = new Set();
     private keyResetTime: number = Date.now() + 60000;
-    private generateIdService: GenerateIdService = new GenerateIdService();
-    private readonly pdfService: PdfService;
     private jobQueue: Map<string, Job> = new Map();
 
     // --- VECTOR SEARCH CONFIG ---
@@ -143,14 +144,16 @@ export class AIService {
         }
     }
 
-    constructor() {
-        this.prisma = new PrismaService();
-        this.generateIdService = new GenerateIdService();
-        this.r2Service = new R2Service();
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly generateIdService: GenerateIdService,
+        private readonly r2Service: R2Service,
+        private readonly pdfService: PdfService,
+        private readonly redisService: RedisService
+    ) {
         this.apiKeys =
             process.env.GEMINI_API_KEYS?.split(',').map((key) => key.trim()) ||
             [];
-        this.pdfService = new PdfService();
     }
 
     private getNextApiKey(): string {
@@ -347,10 +350,37 @@ export class AIService {
         }
     }
 
+    private async checkUserCredit(
+        userId: string,
+        fileSize: number
+    ): Promise<number> {
+        const cost = Math.max(2, Math.ceil(fileSize / (1024 * 1024))); // 2 credit per MB
+
+        // check if user has enough credit
+        const wallet = await this.prisma.wallet.findUnique({
+            where: { userId },
+        });
+        if (!wallet || wallet.balance < cost) {
+            throw new BadRequestException('Not enough credits');
+        }
+
+        return cost;
+    }
+
     private async decrementUserCredit(userId: string, fileSize: number) {
-        const cost = Math.max(1, Math.ceil(fileSize / (1024 * 1024))); // 1 credit per MB
+        const cost = Math.max(2, Math.ceil(fileSize / (1024 * 1024))); // 2 credit per MB
+
         await this.prisma.$transaction(async (tx) => {
-            const wallet = await tx.wallet.update({
+            // Re-check balance inside transaction to prevent race conditions
+            const wallet = await tx.wallet.findUnique({
+                where: { userId },
+            });
+
+            if (!wallet || wallet.balance < cost) {
+                throw new BadRequestException('Not enough credits');
+            }
+
+            await tx.wallet.update({
                 where: { userId },
                 data: { balance: { decrement: cost } },
             });
@@ -365,6 +395,13 @@ export class AIService {
                 },
             });
         });
+
+        // Invalidate user and wallet cache using user-scoped keys
+        await this.redisService.del(getUserCacheKey('USER', userId));
+        await this.redisService.del(getUserCacheKey('WALLET', userId));
+        // Also invalidate legacy cache keys for backward compatibility
+        await this.redisService.delPattern(`user:*${userId}*`);
+        await this.redisService.delPattern(`wallet:*${userId}*`);
     }
 
     async handleActionsWithFile(
@@ -376,6 +413,9 @@ export class AIService {
         isNarrowSearch: boolean = false,
         keyword?: string
     ) {
+        // Check credit first (don't deduct yet)
+        await this.checkUserCredit(user.id, file.size);
+
         // Validate keyword for narrow search
         if (isNarrowSearch === true) {
             if (!keyword || keyword.trim().length === 0) {
@@ -411,6 +451,7 @@ export class AIService {
 
             await this.extractAndSavePdfChunks(file, userStorage.id);
 
+            let result;
             if (Number(typeResult) === TYPE_RESULT.QUIZZ) {
                 const quiz = await this.generateQuizChunkBased(
                     userStorage.id,
@@ -420,14 +461,11 @@ export class AIService {
                 );
 
                 // Lưu vào bảng HistoryGeneratedQuizz
-                const savedQuizzes = await this.saveQuizzesToHistory(
+                result = await this.saveQuizzesToHistory(
                     quiz,
                     user.id,
                     userStorage.id
                 );
-
-                await this.decrementUserCredit(user.id, file.size);
-                return savedQuizzes;
             } else if (Number(typeResult) === TYPE_RESULT.FLASHCARD) {
                 const flashcards = await this.generateFlashcardsChunkBased(
                     userStorage.id,
@@ -437,19 +475,21 @@ export class AIService {
                 );
 
                 // Lưu vào bảng HistoryGeneratedFlashcard
-                const savedFlashcards = await this.saveFlashcardsToHistory(
+                result = await this.saveFlashcardsToHistory(
                     flashcards,
                     user.id,
                     userStorage.id
                 );
-
-                await this.decrementUserCredit(user.id, file.size);
-                return savedFlashcards;
             } else {
                 throw new BadRequestException(
                     `Invalid typeResult: ${typeResult}`
                 );
             }
+
+            // Deduct credits only after all operations completed successfully
+            await this.decrementUserCredit(user.id, file.size);
+
+            return result;
         } catch (error) {
             console.error('❌ Error in handleActionsWithFile:', error);
             throw error;
@@ -457,55 +497,105 @@ export class AIService {
     }
 
     /**
-     * Lưu danh sách quiz vào bảng HistoryGeneratedQuizz (1 record cho cả batch)
+     * Lưu danh sách quiz vào bảng HistoryGeneratedQuizz (upsert - thay thế nếu đã tồn tại)
      */
     private async saveQuizzesToHistory(
         quizzes: any[],
         userId: string,
         userStorageId: string
     ) {
-        const savedHistory = await this.prisma.historyGeneratedQuizz.create({
-            data: {
-                id: this.generateIdService.generateId(),
-                userId: userId,
-                userStorageId: userStorageId,
-                quizzes: quizzes, // Lưu toàn bộ mảng vào JSON field
-            },
-        });
+        // Check if history already exists for this user + storage
+        const existingHistory =
+            await this.prisma.historyGeneratedQuizz.findFirst({
+                where: {
+                    userId: userId,
+                    userStorageId: userStorageId,
+                },
+            });
 
-        console.log(`✅ Đã lưu ${quizzes.length} câu hỏi vào 1 history record`);
+        let savedHistory;
+        if (existingHistory) {
+            // Update existing history
+            savedHistory = await this.prisma.historyGeneratedQuizz.update({
+                where: { id: existingHistory.id },
+                data: {
+                    quizzes: quizzes,
+                    updatedAt: new Date(),
+                },
+            });
+            console.log(
+                `✅ Đã cập nhật ${quizzes.length} câu hỏi vào history record ${existingHistory.id}`
+            );
+        } else {
+            // Create new history
+            savedHistory = await this.prisma.historyGeneratedQuizz.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    userId: userId,
+                    userStorageId: userStorageId,
+                    quizzes: quizzes,
+                },
+            });
+            console.log(
+                `✅ Đã tạo mới ${quizzes.length} câu hỏi vào history record`
+            );
+        }
+
         return savedHistory;
     }
 
     /**
-     * Lưu danh sách flashcards vào bảng HistoryGeneratedFlashcard (1 record cho cả batch)
+     * Lưu danh sách flashcards vào bảng HistoryGeneratedFlashcard (upsert - thay thế nếu đã tồn tại)
      */
     private async saveFlashcardsToHistory(
         flashcards: any[],
         userId: string,
         userStorageId: string
     ) {
-        const savedHistory = await this.prisma.historyGeneratedFlashcard.create(
-            {
+        // Check if history already exists for this user + storage
+        const existingHistory =
+            await this.prisma.historyGeneratedFlashcard.findFirst({
+                where: {
+                    userId: userId,
+                    userStorageId: userStorageId,
+                },
+            });
+
+        let savedHistory;
+        if (existingHistory) {
+            // Update existing history
+            savedHistory = await this.prisma.historyGeneratedFlashcard.update({
+                where: { id: existingHistory.id },
+                data: {
+                    flashcards: flashcards,
+                    updatedAt: new Date(),
+                },
+            });
+            console.log(
+                `✅ Đã cập nhật ${flashcards.length} flashcards vào history record ${existingHistory.id}`
+            );
+        } else {
+            // Create new history
+            savedHistory = await this.prisma.historyGeneratedFlashcard.create({
                 data: {
                     id: this.generateIdService.generateId(),
                     userId: userId,
                     userStorageId: userStorageId,
-                    flashcards: flashcards, // Lưu toàn bộ mảng vào JSON field
+                    flashcards: flashcards,
                 },
-            }
-        );
+            });
+            console.log(
+                `✅ Đã tạo mới ${flashcards.length} flashcards vào history record`
+            );
+        }
 
-        console.log(
-            `✅ Đã lưu ${flashcards.length} flashcards vào 1 history record`
-        );
         return savedHistory;
     }
 
     /**
      * Create a new job and add to queue
      */
-    createJob(
+    async createJob(
         file: Express.Multer.File,
         user: User,
         typeResult: number,
@@ -513,7 +603,17 @@ export class AIService {
         quantityQuizz?: number,
         isNarrowSearch?: boolean,
         keyword?: string
-    ): string {
+    ): Promise<string> {
+        // Check credits before creating job
+        const cost = Math.max(2, Math.ceil(file.size / (1024 * 1024))); // 2 credit per MB
+        const wallet = await this.prisma.wallet.findUnique({
+            where: { userId: user.id },
+        });
+
+        if (!wallet || wallet.balance < cost) {
+            throw new BadRequestException('Không đủ tín dụng');
+        }
+
         const jobId = this.generateIdService.generateId();
         const job: Job = {
             id: jobId,
@@ -555,7 +655,18 @@ export class AIService {
             return;
         }
 
+        if (!job.file) {
+            console.error(`Job ${jobId} has no file`);
+            job.status = JobStatus.FAILED;
+            job.error = 'No file provided';
+            this.jobQueue.set(jobId, job);
+            return;
+        }
+
         try {
+            // Check credit first (don't deduct yet)
+            await this.checkUserCredit(job.userId, job.file.size);
+
             // Update status to processing
             job.status = JobStatus.PROCESSING;
             job.startedAt = new Date();
@@ -575,6 +686,16 @@ export class AIService {
 
             // Validate and upload
             this.validatePdfFile(job.file);
+
+            // Validate page count
+            const pdfDoc = await PDFDocument.load(job.file.buffer);
+            const pageCount = pdfDoc.getPageCount();
+            if (pageCount > 50) {
+                throw new BadRequestException(
+                    `File PDF có ${pageCount} trang. Giới hạn tối đa là 50 trang.`
+                );
+            }
+
             job.progress = 20;
             this.jobQueue.set(jobId, job);
 
@@ -608,8 +729,6 @@ export class AIService {
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
-                await this.decrementUserCredit(user.id, job.file.size);
-
                 // Set result
                 job.result = {
                     type: JobType.QUIZ,
@@ -640,8 +759,6 @@ export class AIService {
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
-                await this.decrementUserCredit(user.id, job.file.size);
-
                 // Set result
                 job.result = {
                     type: JobType.FLASHCARD,
@@ -660,6 +777,9 @@ export class AIService {
             job.completedAt = new Date();
             this.jobQueue.set(jobId, job);
 
+            // Deduct credits only after job completed successfully
+            await this.decrementUserCredit(job.userId, job.file!.size);
+
             console.log(`✅ Job ${jobId} completed successfully`);
         } catch (error) {
             console.error(`❌ Job ${jobId} failed:`, error);
@@ -668,6 +788,7 @@ export class AIService {
                 error instanceof Error ? error.message : 'Unknown error';
             job.completedAt = new Date();
             this.jobQueue.set(jobId, job);
+            // Note: Credits are NOT deducted when job fails
         }
     }
 
@@ -698,9 +819,9 @@ export class AIService {
     }
 
     /**
-     * Cancel a job
+     * Cancel a job with rollback
      */
-    cancelJob(jobId: string, userId: string) {
+    async cancelJob(jobId: string, userId: string) {
         const job = this.jobQueue.get(jobId);
         if (!job) {
             throw new NotFoundException(`Job ${jobId} not found`);
@@ -719,18 +840,59 @@ export class AIService {
             );
         }
 
+        // Rollback any data created during job processing
+        try {
+            await this.prisma.$transaction(async (tx) => {
+                // If job has result with historyId, delete the history record
+                if (job.result?.historyId) {
+                    if (job.type === JobType.QUIZ) {
+                        await tx.historyGeneratedQuizz.deleteMany({
+                            where: { id: job.result.historyId },
+                        });
+                    } else {
+                        await tx.historyGeneratedFlashcard.deleteMany({
+                            where: { id: job.result.historyId },
+                        });
+                    }
+                    console.log(
+                        `🗑️ Rolled back history ${job.result.historyId}`
+                    );
+                }
+
+                // If job created a new file (not regenerate), delete userStorage and documents
+                if (job.result?.fileInfo?.id && !job.params.uploadId) {
+                    // Delete documents first
+                    await tx.document.deleteMany({
+                        where: { userStorageId: job.result.fileInfo.id },
+                    });
+                    // Delete userStorage
+                    await tx.userStorage.deleteMany({
+                        where: { id: job.result.fileInfo.id },
+                    });
+                    console.log(
+                        `🗑️ Rolled back storage ${job.result.fileInfo.id}`
+                    );
+                }
+            });
+        } catch (error) {
+            console.error(`Error rolling back job ${jobId}:`, error);
+            // Continue to cancel job even if rollback fails
+        }
+
         job.status = JobStatus.FAILED;
         job.error = 'Job canceled by user';
         job.completedAt = new Date();
         this.jobQueue.set(jobId, job);
 
-        console.log(`🚫 Job ${jobId} canceled by user ${userId}`);
-        return { success: true, message: 'Job canceled' };
+        console.log(
+            `🚫 Job ${jobId} canceled and rolled back by user ${userId}`
+        );
+        return { success: true, message: 'Job canceled and data rolled back' };
     }
 
     private validatePdfFile(file: any) {
         if (!file) {
-            throw new BadRequestException('No file provided');
+            throw new BadRequestException('Chưa cung cấp file');
         }
 
         const supportedMimeTypes = ['application/pdf'];
@@ -739,7 +901,7 @@ export class AIService {
         }
 
         if (!file.buffer || file.buffer.length === 0) {
-            throw new BadRequestException('File buffer không hợp lệ');
+            throw new BadRequestException('Buffer file không hợp lệ');
         }
 
         if (file.size > 10 * 1024 * 1024) {
@@ -1399,7 +1561,7 @@ export class AIService {
     }
 
     /**
-     * Regenerate quiz/flashcard từ file đã upload (không cần upload lại)
+     * Create job for regenerate from existing upload (uses job queue)
      */
     async regenerateFromUpload(
         uploadId: string,
@@ -1410,6 +1572,14 @@ export class AIService {
         isNarrowSearch?: boolean,
         keyword?: string
     ) {
+        const numFlashcards = quantityFlashcard || 10;
+        const numQuizzes = quantityQuizz || 10;
+
+        // Check credit first (don't deduct yet)
+        const cost =
+            typeResult === TYPE_RESULT.FLASHCARD ? numFlashcards : numQuizzes;
+        await this.checkUserCredit(user.id, cost);
+
         const upload = await this.prisma.userStorage.findFirst({
             where: { id: uploadId, userId: user.id },
         });
@@ -1429,53 +1599,155 @@ export class AIService {
             );
         }
 
-        // Generate dựa trên type - sử dụng methods có sẵn
-        if (typeResult === TYPE_RESULT.FLASHCARD) {
-            const numFlashcards = quantityFlashcard || 10;
-            const flashcards = await this.generateFlashcardsChunkBased(
-                uploadId,
-                numFlashcards,
-                isNarrowSearch || false,
-                keyword
+        // Create job for regenerate
+        const jobId = this.generateIdService.generateId();
+        const job: Job = {
+            id: jobId,
+            status: JobStatus.PENDING,
+            type:
+                typeResult === TYPE_RESULT.QUIZZ
+                    ? JobType.QUIZ
+                    : JobType.FLASHCARD,
+            userId: user.id,
+            file: null as any, // No file needed for regenerate
+            params: {
+                typeResult,
+                quantityFlashcard,
+                quantityQuizz,
+                isNarrowSearch,
+                keyword,
+                uploadId, // Pass uploadId for regenerate
+            },
+            progress: 0,
+            createdAt: new Date(),
+        };
+        this.jobQueue.set(jobId, job);
+        console.log(`✅ Created regenerate job ${jobId} for user ${user.id}`);
+
+        // Start processing async
+        this.processRegenerateJobAsync(jobId, uploadId).catch((error) => {
+            console.error(
+                `❌ Error processing regenerate job ${jobId}:`,
+                error
             );
+        });
 
-            // Lưu history
-            await this.saveFlashcardsToHistory(flashcards, user.id, uploadId);
+        return { jobId };
+    }
 
-            // Trừ credit
-            await this.decrementUserCredit(user.id, numFlashcards);
+    /**
+     * Process regenerate job asynchronously
+     */
+    private async processRegenerateJobAsync(
+        jobId: string,
+        uploadId: string
+    ): Promise<void> {
+        const job = this.jobQueue.get(jobId);
+        if (!job) {
+            console.error(`Job ${jobId} not found`);
+            return;
+        }
 
-            return {
-                type: 'flashcard',
-                data: flashcards,
-                fileInfo: {
-                    id: upload.id,
-                    filename: upload.filename,
-                },
-            };
-        } else {
-            const numQuizzes = quantityQuizz || 10;
-            const quizzes = await this.generateQuizChunkBased(
-                uploadId,
-                numQuizzes,
-                isNarrowSearch || false,
-                keyword
-            );
+        try {
+            // Update status to processing
+            job.status = JobStatus.PROCESSING;
+            job.startedAt = new Date();
+            job.progress = 20;
+            this.jobQueue.set(jobId, job);
 
-            // Lưu history
-            await this.saveQuizzesToHistory(quizzes, user.id, uploadId);
+            console.log(`🚀 Processing regenerate job ${jobId}...`);
 
-            // Trừ credit
-            await this.decrementUserCredit(user.id, numQuizzes);
+            const upload = await this.prisma.userStorage.findFirst({
+                where: { id: uploadId, userId: job.userId },
+            });
 
-            return {
-                type: 'quiz',
-                data: quizzes,
-                fileInfo: {
-                    id: upload.id,
-                    filename: upload.filename,
-                },
-            };
+            if (!upload) {
+                throw new NotFoundException('Không tìm thấy file');
+            }
+
+            job.progress = 40;
+            this.jobQueue.set(jobId, job);
+
+            // Generate based on type
+            if (Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD) {
+                const flashcards = await this.generateFlashcardsChunkBased(
+                    uploadId,
+                    job.params.quantityFlashcard || 10,
+                    job.params.isNarrowSearch || false,
+                    job.params.keyword
+                );
+                job.progress = 80;
+                this.jobQueue.set(jobId, job);
+
+                const savedFlashcards = await this.saveFlashcardsToHistory(
+                    flashcards,
+                    job.userId,
+                    uploadId
+                );
+                job.progress = 90;
+                this.jobQueue.set(jobId, job);
+
+                // Set result
+                job.result = {
+                    type: JobType.FLASHCARD,
+                    flashcards: savedFlashcards.flashcards as any[],
+                    historyId: savedFlashcards.id,
+                    fileInfo: {
+                        id: upload.id,
+                        filename: upload.filename,
+                    },
+                };
+            } else {
+                const quizzes = await this.generateQuizChunkBased(
+                    uploadId,
+                    job.params.quantityQuizz || 10,
+                    job.params.isNarrowSearch || false,
+                    job.params.keyword
+                );
+                job.progress = 80;
+                this.jobQueue.set(jobId, job);
+
+                const savedQuizzes = await this.saveQuizzesToHistory(
+                    quizzes,
+                    job.userId,
+                    uploadId
+                );
+                job.progress = 90;
+                this.jobQueue.set(jobId, job);
+
+                // Set result
+                job.result = {
+                    type: JobType.QUIZ,
+                    quizzes: savedQuizzes.quizzes as any[],
+                    historyId: savedQuizzes.id,
+                    fileInfo: {
+                        id: upload.id,
+                        filename: upload.filename,
+                    },
+                };
+            }
+
+            // Mark as completed
+            job.status = JobStatus.COMPLETED;
+            job.progress = 100;
+            job.completedAt = new Date();
+            this.jobQueue.set(jobId, job);
+
+            // Deduct credits only after job completed successfully
+            const cost =
+                Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD
+                    ? job.params.quantityFlashcard || 10
+                    : job.params.quantityQuizz || 10;
+            await this.decrementUserCredit(job.userId, cost);
+
+            console.log(`✅ Regenerate job ${jobId} completed successfully`);
+        } catch (error) {
+            console.error(`❌ Regenerate job ${jobId} failed:`, error);
+            job.status = JobStatus.FAILED;
+            job.error =
+                error instanceof Error ? error.message : 'Unknown error';
+            job.completedAt = new Date();
+            this.jobQueue.set(jobId, job);
         }
     }
 }

@@ -117,9 +117,13 @@ export class ExamSessionRepository extends BaseRepository<ExamSession> {
     async updateStatus(id: string, status: number): Promise<ExamSession> {
         const updated = await this.update(id, { status });
 
-        // Invalidate caches
+        // Invalidate specific caches
         await this.redis.del(this.getCacheKey(`id:${id}:details`));
-        await this.invalidateCache('ongoing:*');
+        // Only invalidate ongoing cache pattern, not all cache
+        if (status === 1) {
+            // If status is ONGOING, others might need updated list
+            await this.redis.delPattern(`${this.cachePrefix}:ongoing:*`);
+        }
 
         return updated;
     }

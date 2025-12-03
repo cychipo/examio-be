@@ -23,11 +23,22 @@ export class FlashCardSetRepository extends BaseRepository<FlashCardSet> {
         cache = true,
         cacheTTL = this.defaultCacheTTL
     ): Promise<FlashCardSet[]> {
-        return this.findAll({
+        if (cache) {
+            const cacheKey = this.getUserScopedCacheKey(userId) + ':list';
+            const cached = await this.redis.get<FlashCardSet[]>(cacheKey);
+            if (cached) return cached;
+
+            const data = await this.model.findMany({
+                where: { userId },
+                orderBy: { createdAt: 'desc' },
+            });
+            await this.redis.set(cacheKey, data, cacheTTL);
+            return data;
+        }
+
+        return this.model.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
-            cache,
-            cacheTTL,
         });
     }
 
@@ -55,8 +66,11 @@ export class FlashCardSetRepository extends BaseRepository<FlashCardSet> {
         cache = true,
         cacheTTL = this.defaultCacheTTL
     ): Promise<any> {
+        const cacheKey = userId
+            ? this.getItemScopedCacheKey(userId, id, 'cards')
+            : this.getPublicScopedCacheKey(id, 'cards');
+
         if (cache) {
-            const cacheKey = this.getCacheKey(`id:${id}:cards`);
             const cached = await this.redis.get<any>(cacheKey);
             if (cached) return cached;
         }
@@ -78,7 +92,6 @@ export class FlashCardSetRepository extends BaseRepository<FlashCardSet> {
         });
 
         if (flashCardSet && cache) {
-            const cacheKey = this.getCacheKey(`id:${id}:cards`);
             await this.redis.set(cacheKey, flashCardSet, cacheTTL);
         }
 
@@ -127,24 +140,13 @@ export class FlashCardSetRepository extends BaseRepository<FlashCardSet> {
             throw new Error('FlashCard set not found');
         }
 
-        const updated = await this.update(
-            id,
-            { isPinned: !flashCardSet.isPinned },
-            userId
-        );
-
-        // Invalidate cache
-        await this.redis.del(this.getCacheKey(`id:${id}:cards`));
-
-        return updated;
+        return this.update(id, { isPinned: !flashCardSet.isPinned }, userId);
     }
 
     /**
      * Delete flashcard set by user
      */
     async deleteByUser(id: string, userId: string): Promise<{ count: number }> {
-        const result = await this.deleteMany({ id, userId });
-        await this.invalidateCache();
-        return result;
+        return this.deleteMany({ id, userId }, userId);
     }
 }

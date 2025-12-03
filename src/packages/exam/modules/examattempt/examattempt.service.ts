@@ -69,15 +69,18 @@ export class ExamAttemptService {
         }
 
         try {
-            const newExamAttempt = await this.examAttemptRepository.create({
-                id: this.generateIdService.generateId(),
-                examSessionId: dto.examSessionId,
-                userId: user.id,
-                score: 0,
-                violationCount: 0,
-                startedAt: new Date(),
-                status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
-            });
+            const newExamAttempt = await this.examAttemptRepository.create(
+                {
+                    id: this.generateIdService.generateId(),
+                    examSessionId: dto.examSessionId,
+                    userId: user.id,
+                    score: 0,
+                    violationCount: 0,
+                    startedAt: new Date(),
+                    status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+                },
+                user.id
+            );
 
             // Load relations for response
             const examAttemptWithRelations =
@@ -182,8 +185,8 @@ export class ExamAttemptService {
             throw new ForbiddenException('Bạn không có quyền xóa bài làm này');
         }
 
-        // Hard delete
-        await this.examAttemptRepository.delete(id);
+        // Hard delete - pass userId (host) for proper cache invalidation
+        await this.examAttemptRepository.delete(id, user.id);
         return { message: 'Xóa bài làm thành công' };
     }
 
@@ -234,43 +237,46 @@ export class ExamAttemptService {
             where.status = dto.status;
         }
 
-        const result = await this.examAttemptRepository.paginate({
-            page: dto.page || 1,
-            size: dto.limit || 10,
-            ...where,
-            include: {
-                examSession: {
-                    select: {
-                        id: true,
-                        startTime: true,
-                        endTime: true,
-                        examRoom: {
-                            select: {
-                                id: true,
-                                title: true,
-                                quizSet: {
-                                    select: {
-                                        id: true,
-                                        title: true,
-                                        thumbnail: true,
+        const result = await this.examAttemptRepository.paginate(
+            {
+                page: dto.page || 1,
+                size: dto.limit || 10,
+                ...where,
+                include: {
+                    examSession: {
+                        select: {
+                            id: true,
+                            startTime: true,
+                            endTime: true,
+                            examRoom: {
+                                select: {
+                                    id: true,
+                                    title: true,
+                                    quizSet: {
+                                        select: {
+                                            id: true,
+                                            title: true,
+                                            thumbnail: true,
+                                        },
                                     },
                                 },
                             },
                         },
                     },
-                },
-                user: {
-                    select: {
-                        id: true,
-                        email: true,
-                        name: true,
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            name: true,
+                        },
                     },
                 },
+                sortBy: 'startedAt',
+                sortType: 'desc',
+                cache: true,
             },
-            sortBy: 'startedAt',
-            sortType: 'desc',
-            cache: true,
-        });
+            user.id
+        );
 
         return {
             examAttempts: result.data,

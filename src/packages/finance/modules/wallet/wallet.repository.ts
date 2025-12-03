@@ -24,7 +24,7 @@ export class WalletRepository extends BaseRepository<Wallet> {
         cacheTTL = this.defaultCacheTTL
     ): Promise<Wallet | null> {
         if (cache) {
-            const cacheKey = this.getCacheKey(`user:${userId}`);
+            const cacheKey = this.getUserScopedCacheKey(userId);
             const cached = await this.redis.get<Wallet>(cacheKey);
             if (cached) return cached;
 
@@ -51,8 +51,9 @@ export class WalletRepository extends BaseRepository<Wallet> {
         cache = true,
         cacheTTL = this.defaultCacheTTL
     ): Promise<any> {
+        const cacheKey = this.getUserScopedCacheKey(userId) + ':transactions';
+
         if (cache) {
-            const cacheKey = this.getCacheKey(`user:${userId}:transactions`);
             const cached = await this.redis.get<any>(cacheKey);
             if (cached) return cached;
         }
@@ -68,7 +69,6 @@ export class WalletRepository extends BaseRepository<Wallet> {
         });
 
         if (wallet && cache) {
-            const cacheKey = this.getCacheKey(`user:${userId}:transactions`);
             await this.redis.set(cacheKey, wallet, cacheTTL);
         }
 
@@ -97,14 +97,8 @@ export class WalletRepository extends BaseRepository<Wallet> {
             throw new Error('Insufficient balance');
         }
 
-        const updated = await this.update(wallet.id, { balance: newBalance });
-
-        // Invalidate caches
-        await this.redis.del(this.getCacheKey(`user:${userId}`));
-        await this.redis.del(this.getCacheKey(`user:${userId}:transactions`));
-        await this.redis.del(this.getCacheKey(`id:${wallet.id}`));
-
-        return updated;
+        // BaseRepository.update() handles cache invalidation automatically
+        return this.update(wallet.id, { balance: newBalance }, userId);
     }
 
     /**
@@ -115,14 +109,17 @@ export class WalletRepository extends BaseRepository<Wallet> {
         initialBalance = 20,
         walletId?: string
     ): Promise<Wallet> {
-        const wallet = await this.create({
-            id: walletId,
-            userId,
-            balance: initialBalance,
-        });
+        const wallet = await this.create(
+            {
+                id: walletId,
+                userId,
+                balance: initialBalance,
+            },
+            userId
+        );
 
-        // Set cache
-        const cacheKey = this.getCacheKey(`user:${userId}`);
+        // Set user-scoped cache
+        const cacheKey = this.getUserScopedCacheKey(userId);
         await this.redis.set(cacheKey, wallet, this.defaultCacheTTL);
 
         return wallet;

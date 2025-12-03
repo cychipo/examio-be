@@ -60,16 +60,19 @@ export class ParticipantService {
                 : PARTICIPANT_STATUS.PENDING;
 
         try {
-            const newParticipant = await this.participantRepository.create({
-                id: this.generateIdService.generateId(),
-                examSessionId: dto.examSessionId,
-                userId: user.id,
-                status: initialStatus,
-                joinedAt:
-                    initialStatus === PARTICIPANT_STATUS.APPROVED
-                        ? new Date()
-                        : null,
-            });
+            const newParticipant = await this.participantRepository.create(
+                {
+                    id: this.generateIdService.generateId(),
+                    examSessionId: dto.examSessionId,
+                    userId: user.id,
+                    status: initialStatus,
+                    joinedAt:
+                        initialStatus === PARTICIPANT_STATUS.APPROVED
+                            ? new Date()
+                            : null,
+                },
+                user.id
+            );
 
             // Load relations for response
             const participantWithRelations =
@@ -227,8 +230,8 @@ export class ParticipantService {
             );
         }
 
-        // Hard delete
-        await this.participantRepository.delete(id);
+        // Hard delete - pass userId (host) for proper cache invalidation
+        await this.participantRepository.delete(id, user.id);
         return { message: 'Xóa người tham gia thành công' };
     }
 
@@ -273,44 +276,47 @@ export class ParticipantService {
             where.status = dto.status;
         }
 
-        const result = await this.participantRepository.paginate({
-            page: dto.page || 1,
-            size: dto.limit || 10,
-            ...where,
-            include: {
-                examSession: {
-                    select: {
-                        id: true,
-                        startTime: true,
-                        endTime: true,
-                        status: true,
-                        examRoom: {
-                            select: {
-                                id: true,
-                                title: true,
-                                quizSet: {
-                                    select: {
-                                        id: true,
-                                        title: true,
-                                        thumbnail: true,
+        const result = await this.participantRepository.paginate(
+            {
+                page: dto.page || 1,
+                size: dto.limit || 10,
+                ...where,
+                include: {
+                    examSession: {
+                        select: {
+                            id: true,
+                            startTime: true,
+                            endTime: true,
+                            status: true,
+                            examRoom: {
+                                select: {
+                                    id: true,
+                                    title: true,
+                                    quizSet: {
+                                        select: {
+                                            id: true,
+                                            title: true,
+                                            thumbnail: true,
+                                        },
                                     },
                                 },
                             },
                         },
                     },
-                },
-                user: {
-                    select: {
-                        id: true,
-                        email: true,
-                        name: true,
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            name: true,
+                        },
                     },
                 },
+                sortBy: 'createdAt',
+                sortType: 'desc',
+                cache: true,
             },
-            sortBy: 'createdAt',
-            sortType: 'desc',
-            cache: true,
-        });
+            user.id
+        );
 
         return {
             participants: result.data,

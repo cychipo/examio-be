@@ -31,15 +31,18 @@ export class QuizsetService {
 
         try {
             // Use repository to create quizset
-            const newQuizSet = await this.quizSetRepository.create({
-                id: this.generateIdService.generateId(),
-                title: dto.title,
-                description: dto.description || '',
-                isPublic: dto.isPublic || false,
-                tags: dto.tags || [],
-                userId: user.id,
-                thumbnail: dto.thumbnail || null,
-            });
+            const newQuizSet = await this.quizSetRepository.create(
+                {
+                    id: this.generateIdService.generateId(),
+                    title: dto.title,
+                    description: dto.description || '',
+                    isPublic: dto.isPublic || false,
+                    tags: dto.tags || [],
+                    userId: user.id,
+                    thumbnail: dto.thumbnail || null,
+                },
+                user.id
+            );
 
             return {
                 message: 'Tạo bộ câu hỏi thành công',
@@ -127,8 +130,8 @@ export class QuizsetService {
             throw new NotFoundException('Bộ câu hỏi không tồn tại');
         }
 
-        // Hard delete using repository
-        await this.quizSetRepository.delete(id);
+        // Hard delete using repository - pass userId for proper cache invalidation
+        await this.quizSetRepository.delete(id, user.id);
 
         return { message: 'Xóa bộ câu hỏi thành công' };
     }
@@ -186,22 +189,25 @@ export class QuizsetService {
         }
 
         // Use repository pagination with cache and include a count of questions
-        const result = await this.quizSetRepository.paginate({
-            page: dto.page || 1,
-            size: dto.limit || 10,
-            ...where,
-            include: {
-                _count: {
-                    select: {
-                        detailsQuizQuestions: true,
+        const result = await this.quizSetRepository.paginate(
+            {
+                page: dto.page || 1,
+                size: dto.limit || 10,
+                ...where,
+                include: {
+                    _count: {
+                        select: {
+                            detailsQuizQuestions: true,
+                        },
                     },
                 },
+                sortBy: 'createdAt',
+                sortType: 'desc',
+                cache: true,
+                cacheTTL: EXPIRED_TIME.TEN_MINUTES,
             },
-            sortBy: 'createdAt',
-            sortType: 'desc',
-            cache: true,
-            cacheTTL: EXPIRED_TIME.TEN_MINUTES,
-        });
+            user.id
+        );
 
         // Map the returned data to expose a flat `questionCount` property per quiz set
         const quizSetsWithCount = (result.data as any[]).map((qs) => ({
@@ -328,8 +334,15 @@ export class QuizsetService {
                 return {
                     createdQuestionsCount: createdQuestions.length,
                     affectedQuizSetsCount: quizSetIds.length,
+                    affectedQuizSetIds: quizSetIds,
                 };
             });
+
+            // Invalidate caches
+            await this.quizSetRepository.invalidateUserListCache(user.id);
+            for (const id of result.affectedQuizSetIds) {
+                await this.quizSetRepository.invalidateItemCache(user.id, id);
+            }
 
             return {
                 message: `Thêm ${result.createdQuestionsCount} câu hỏi vào ${result.affectedQuizSetsCount} bộ câu hỏi thành công`,
@@ -394,9 +407,13 @@ export class QuizsetService {
                 }
 
                 // Validate history record thuộc về user
-                const history = await tx.historyGeneratedQuizz.findUnique({
+                // Support both historyId (id field) and userStorageId for backward compatibility
+                const history = await tx.historyGeneratedQuizz.findFirst({
                     where: {
-                        id: dto.historyId,
+                        OR: [
+                            { id: dto.historyId },
+                            { userStorageId: dto.historyId },
+                        ],
                         userId: user.id,
                     },
                 });
@@ -532,8 +549,15 @@ export class QuizsetService {
                     skippedCount,
                     totalQuizzes: quizzes.length,
                     affectedQuizSetsCount: quizSetIds.length,
+                    affectedQuizSetIds: quizSetIds,
                 };
             });
+
+            // Invalidate caches
+            await this.quizSetRepository.invalidateUserListCache(user.id);
+            for (const id of result.affectedQuizSetIds) {
+                await this.quizSetRepository.invalidateItemCache(user.id, id);
+            }
 
             return {
                 message: `Đã lưu ${result.totalQuizzes} câu hỏi vào ${result.affectedQuizSetsCount} bộ câu hỏi${result.skippedCount > 0 ? ` (${result.skippedCount} đã tồn tại)` : ''}`,
