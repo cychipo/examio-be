@@ -833,7 +833,7 @@ export class FlashcardsetService {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
-        if (flashcardSet.accessCode !== accessCode) {
+        if (flashcardSet.accessCode?.toString() !== accessCode) {
             throw new ForbiddenException('Mã truy cập không đúng');
         }
 
@@ -1058,7 +1058,25 @@ export class FlashcardsetService {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
-        return flashcardSet;
+        const users = await this.prisma.user.findMany({
+            where: {
+                id: {
+                    in: flashcardSet.whitelist,
+                },
+            },
+            select: {
+                id: true,
+                username: true,
+                name: true,
+                avatar: true,
+                email: true,
+            },
+        });
+
+        return {
+            ...flashcardSet,
+            whitelist: users,
+        };
     }
 
     /**
