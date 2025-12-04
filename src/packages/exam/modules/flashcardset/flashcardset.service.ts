@@ -265,24 +265,32 @@ export class FlashcardsetService {
             }
 
             // Update using repository
+            await this.flashcardSetRepository.update(
+                id,
+                {
+                    ...(dto.title && { title: dto.title }),
+                    ...(dto.description && {
+                        description: dto.description,
+                    }),
+                    ...(dto.isPublic !== undefined && {
+                        isPublic: dto.isPublic,
+                    }),
+                    ...(dto.tag && { tag: dto.tag }),
+                    ...(thumbnailUrl !== undefined && {
+                        thumbnail: thumbnailUrl,
+                    }),
+                },
+                user.id
+            );
+
+            // Fetch updated flashcardset with _count for consistent response with list endpoint
             const updatedFlashcardSet =
-                await this.flashcardSetRepository.update(
-                    id,
-                    {
-                        ...(dto.title && { title: dto.title }),
-                        ...(dto.description && {
-                            description: dto.description,
-                        }),
-                        ...(dto.isPublic !== undefined && {
-                            isPublic: dto.isPublic,
-                        }),
-                        ...(dto.tag && { tag: dto.tag }),
-                        ...(thumbnailUrl !== undefined && {
-                            thumbnail: thumbnailUrl,
-                        }),
+                await this.prisma.flashCardSet.findUnique({
+                    where: { id },
+                    include: {
+                        _count: { select: { detailsFlashCard: true } },
                     },
-                    user.id
-                );
+                });
 
             return {
                 message: 'Cập nhật bộ thẻ ghi nhớ thành công',
@@ -833,7 +841,7 @@ export class FlashcardsetService {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
-        if (flashcardSet.accessCode !== accessCode) {
+        if (flashcardSet.accessCode?.toString() !== accessCode) {
             throw new ForbiddenException('Mã truy cập không đúng');
         }
 
@@ -1058,7 +1066,25 @@ export class FlashcardsetService {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
-        return flashcardSet;
+        const users = await this.prisma.user.findMany({
+            where: {
+                id: {
+                    in: flashcardSet.whitelist,
+                },
+            },
+            select: {
+                id: true,
+                username: true,
+                name: true,
+                avatar: true,
+                email: true,
+            },
+        });
+
+        return {
+            ...flashcardSet,
+            whitelist: users,
+        };
     }
 
     /**

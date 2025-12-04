@@ -315,7 +315,7 @@ export class QuizsetService {
             }
 
             // Update using repository (auto invalidate cache)
-            const updatedQuizSet = await this.quizSetRepository.update(
+            await this.quizSetRepository.update(
                 id,
                 {
                     ...(dto.title && { title: dto.title }),
@@ -331,9 +331,24 @@ export class QuizsetService {
                 user.id
             );
 
+            // Fetch updated quizset with _count for consistent response with list endpoint
+            const updatedQuizSet = await this.prisma.quizSet.findUnique({
+                where: { id },
+                include: {
+                    _count: { select: { detailsQuizQuestions: true } },
+                },
+            });
+
+            // Add questionCount for frontend compatibility
+            const quizSetWithCount = {
+                ...updatedQuizSet,
+                questionCount:
+                    (updatedQuizSet as any)?._count?.detailsQuizQuestions ?? 0,
+            };
+
             return {
                 message: 'Cập nhật bộ câu hỏi thành công',
-                quizSet: updatedQuizSet,
+                quizSet: quizSetWithCount,
             };
         } catch (error) {
             if (error instanceof NotFoundException) {
