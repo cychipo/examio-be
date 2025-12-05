@@ -100,9 +100,6 @@ model ExamRoom {
     description String?
     quizSetId   String
     hostId      String
-    assessType  Int // 0: PUBLIC, 1: PRIVATE
-    allowRetake Boolean  @default(false)
-    maxAttempts Int      @default(1)
     createdAt   DateTime @default(now())
     updatedAt   DateTime @default(now()) @updatedAt
     createdBy   String?
@@ -121,6 +118,12 @@ model ExamSession {
     startTime      DateTime
     endTime        DateTime?
     autoJoinByLink Boolean   @default(false)
+    // Security and access control fields (moved from ExamRoom)
+    assessType     Int       @default(0) // 0: PUBLIC, 1: PRIVATE
+    allowRetake    Boolean   @default(false)
+    maxAttempts    Int       @default(1)
+    accessCode     String? // 6-digit code for private access
+    whitelist      String[]  @default([]) // List of user IDs who can access
     createdAt      DateTime  @default(now())
     updatedAt      DateTime  @default(now()) @updatedAt
     createdBy      String?
@@ -129,6 +132,8 @@ model ExamSession {
     examRoom     ExamRoom                 @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
     participants ExamSessionParticipant[]
     examAttempts ExamAttempt[]
+
+    @@index([accessCode])
 }
 
 model ExamAttempt {

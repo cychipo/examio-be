@@ -211,7 +211,7 @@ export abstract class BaseRepository<T> {
 
         if (cache) {
             const cacheKey = this.getCacheKey(
-                `one:${JSON.stringify(queryParams.where)}`
+                `one:${JSON.stringify(queryParams)}`
             );
             console.log(`[${this.modelName}] 🔍 GET cache key: ${cacheKey}`);
             const cached = await this.redis.get<T>(cacheKey);
