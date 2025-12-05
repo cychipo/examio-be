@@ -152,6 +152,20 @@ export class QuizsetController {
         return this.quizsetService.getQuizSets(req.user, getQuizsetsDto);
     }
 
+    @Get('list/all')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get all quiz sets without pagination' })
+    @ApiResponse({
+        status: 200,
+        description: 'All quiz sets retrieved successfully',
+        type: [Object],
+    })
+    async getAllQuizSets(@Req() req: AuthenticatedRequest) {
+        console.log('🚀 ~ getAllQuizSets ~ req.user:', req.user);
+        return this.quizsetService.getAllQuizSets(req.user);
+    }
+
     @Delete(':id')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')

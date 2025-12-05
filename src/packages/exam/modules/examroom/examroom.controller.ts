@@ -102,6 +102,19 @@ export class ExamRoomController {
         return this.examRoomService.getExamRooms(req.user, getExamRoomsDto);
     }
 
+    @Get('list-all')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get all exam rooms without pagination' })
+    @ApiResponse({
+        status: 200,
+        description: 'All exam rooms retrieved successfully',
+        type: [Object],
+    })
+    async getAllExamRooms(@Req() req: AuthenticatedRequest) {
+        return this.examRoomService.getAllExamRooms(req.user);
+    }
+
     @Delete(':id')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')

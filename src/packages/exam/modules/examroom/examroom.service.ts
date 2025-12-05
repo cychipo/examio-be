@@ -209,6 +209,39 @@ export class ExamRoomService {
         };
     }
 
+    /**
+     * Get all exam rooms for a user without pagination
+     * Used for dropdowns and selection lists
+     */
+    async getAllExamRooms(user: User) {
+        const examRooms = await this.prisma.examRoom.findMany({
+            where: {
+                hostId: user.id,
+            },
+            include: {
+                quizSet: {
+                    select: {
+                        id: true,
+                        title: true,
+                        thumbnail: true,
+                    },
+                },
+                _count: {
+                    select: {
+                        examSessions: true,
+                    },
+                },
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+
+        return {
+            examRooms,
+        };
+    }
+
     async updateExamRoom(id: string, user: User, dto: UpdateExamRoomDto) {
         // Check if exam room exists and belongs to user
         const existingRoom = await this.examRoomRepository.findOne({

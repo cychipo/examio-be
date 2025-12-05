@@ -284,6 +284,38 @@ export class QuizsetService {
         };
     }
 
+    /**
+     * Get all quiz sets for a user without pagination
+     * Used for dropdowns and selection lists
+     */
+    async getAllQuizSets(user: User) {
+        const quizSets = await this.prisma.quizSet.findMany({
+            where: {
+                userId: user.id,
+            },
+            include: {
+                _count: {
+                    select: {
+                        detailsQuizQuestions: true,
+                    },
+                },
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+
+        // Map to add questionCount for frontend compatibility
+        const quizSetsWithCount = quizSets.map((qs) => ({
+            ...qs,
+            questionCount: qs._count?.detailsQuizQuestions ?? 0,
+        }));
+
+        return {
+            quizSets: quizSetsWithCount,
+        };
+    }
+
     async updateQuizSet(
         id: string,
         user: User,
