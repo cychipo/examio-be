@@ -24,6 +24,568 @@ export class ExamAttemptService {
         private readonly generateIdService: GenerateIdService
     ) {}
 
+    /**
+     * Start a new exam attempt or resume existing one
+     * Checks retry limits based on ExamSession settings
+     */
+    async startExamAttempt(user: User, dto: CreateExamAttemptDto) {
+        // Verify exam session exists with all needed data
+        const examSession = await this.prisma.examSession.findUnique({
+            where: { id: dto.examSessionId },
+            include: {
+                examRoom: {
+                    include: {
+                        quizSet: {
+                            include: {
+                                detailsQuizQuestions: {
+                                    include: {
+                                        quizQuestion: true,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!examSession) {
+            throw new NotFoundException('Phiên thi không tồn tại');
+        }
+
+        // Check if exam has started
+        if (new Date(examSession.startTime) > new Date()) {
+            throw new BadRequestException('Phiên thi chưa bắt đầu');
+        }
+
+        if (examSession.endTime && new Date(examSession.endTime) < new Date()) {
+            throw new BadRequestException('Phiên thi đã kết thúc');
+        }
+
+        // Check time constraints
+        const now = new Date();
+        if (now < examSession.startTime) {
+            throw new BadRequestException('Phiên thi chưa bắt đầu');
+        }
+        if (examSession.endTime && now > examSession.endTime) {
+            throw new BadRequestException('Phiên thi đã kết thúc');
+        }
+
+        // Check for existing IN_PROGRESS attempt
+        const existingInProgress = await this.prisma.examAttempt.findFirst({
+            where: {
+                examSessionId: dto.examSessionId,
+                userId: user.id,
+                status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+            },
+        });
+
+        if (existingInProgress) {
+            // Resume existing attempt
+            return {
+                message: 'Tiếp tục làm bài',
+                examAttempt: existingInProgress,
+                isResume: true,
+            };
+        }
+
+        // Count completed attempts
+        const completedAttempts = await this.prisma.examAttempt.count({
+            where: {
+                examSessionId: dto.examSessionId,
+                userId: user.id,
+                status: EXAM_ATTEMPT_STATUS.COMPLETED,
+            },
+        });
+
+        // Check retry limits (based on ExamSession, not ExamRoom)
+        // maxAttempts means the number of RETRIES allowed (not including first attempt)
+        // So total allowed attempts = 1 (first) + maxAttempts (retries)
+        const totalAllowedAttempts = 1 + examSession.maxAttempts;
+
+        if (!examSession.allowRetake && completedAttempts > 0) {
+            throw new BadRequestException(
+                'Bạn đã làm bài này rồi và không được phép làm lại'
+            );
+        }
+
+        if (completedAttempts >= totalAllowedAttempts) {
+            throw new BadRequestException(
+                `Bạn đã đạt số lần thi tối đa (${totalAllowedAttempts} lần)`
+            );
+        }
+
+        // Calculate total questions
+        const totalQuestions =
+            examSession.examRoom.quizSet.detailsQuizQuestions?.length || 0;
+
+        try {
+            const newExamAttempt = await this.prisma.examAttempt.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    examSessionId: dto.examSessionId,
+                    userId: user.id,
+                    score: 0,
+                    violationCount: 0,
+                    startedAt: new Date(),
+                    status: EXAM_ATTEMPT_STATUS.IN_PROGRESS,
+                    answers: {},
+                    currentIndex: 0,
+                    markedQuestions: [],
+                    totalQuestions,
+                    correctAnswers: 0,
+                },
+            });
+
+            return {
+                message: 'Bắt đầu làm bài thành công',
+                examAttempt: newExamAttempt,
+                isResume: false,
+            };
+        } catch (error) {
+            throw new InternalServerErrorException('Bắt đầu làm bài thất bại');
+        }
+    }
+
+    /**
+     * Update exam attempt progress (auto-save)
+     */
+    async updateExamAttemptProgress(
+        attemptId: string,
+        user: User,
+        dto: {
+            answers?: Record<string, string>;
+            currentIndex?: number;
+            markedQuestions?: string[];
+        }
+    ) {
+        // Verify ownership and status
+        const attempt = await this.prisma.examAttempt.findFirst({
+            where: { id: attemptId, userId: user.id },
+        });
+
+        if (!attempt) {
+            throw new NotFoundException('Bài làm không tồn tại');
+        }
+
+        if (attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
+            throw new BadRequestException('Bài làm đã nộp, không thể cập nhật');
+        }
+
+        try {
+            const updateData: any = {};
+
+            if (dto.answers !== undefined) {
+                updateData.answers = dto.answers;
+            }
+            if (dto.currentIndex !== undefined) {
+                updateData.currentIndex = dto.currentIndex;
+            }
+            if (dto.markedQuestions !== undefined) {
+                updateData.markedQuestions = dto.markedQuestions;
+            }
+
+            const updatedAttempt = await this.prisma.examAttempt.update({
+                where: { id: attemptId },
+                data: updateData,
+            });
+
+            return {
+                message: 'Cập nhật bài làm thành công',
+                examAttempt: updatedAttempt,
+            };
+        } catch (error) {
+            throw new InternalServerErrorException('Cập nhật bài làm thất bại');
+        }
+    }
+
+    /**
+     * Submit exam attempt - calculate score
+     * Returns detailed answers based on showAnswersAfterSubmit setting
+     */
+    async submitExamAttempt(attemptId: string, user: User) {
+        // Get attempt with session and questions
+        const attempt = await this.prisma.examAttempt.findFirst({
+            where: { id: attemptId, userId: user.id },
+            include: {
+                examSession: {
+                    include: {
+                        examRoom: {
+                            include: {
+                                quizSet: {
+                                    include: {
+                                        detailsQuizQuestions: {
+                                            include: {
+                                                quizQuestion: true,
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!attempt) {
+            throw new NotFoundException('Bài làm không tồn tại');
+        }
+
+        if (attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
+            throw new BadRequestException('Bài làm đã được nộp trước đó');
+        }
+
+        // Calculate score
+        const questions =
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions
+                ?.map((d) => d.quizQuestion)
+                .filter((q) => q != null) || [];
+
+        const answers = attempt.answers as Record<string, string>;
+        let correctCount = 0;
+
+        questions.forEach((q) => {
+            if (q && q.id && answers[q.id] === q.answer) {
+                correctCount++;
+            }
+        });
+
+        const totalQuestions = questions.length;
+        const score =
+            totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
+
+        try {
+            const updatedAttempt = await this.prisma.examAttempt.update({
+                where: { id: attemptId },
+                data: {
+                    status: EXAM_ATTEMPT_STATUS.COMPLETED,
+                    finishedAt: new Date(),
+                    score,
+                    correctAnswers: correctCount,
+                    totalQuestions,
+                },
+            });
+
+            const showAnswers = attempt.examSession.showAnswersAfterSubmit;
+            console.log(
+                '🚀 ~ ExamAttemptService ~ submitExamAttempt ~ attempt.examSession.showAnswersAfterSubmit:',
+                attempt.examSession.showAnswersAfterSubmit
+            );
+            const passingScore = attempt.examSession.passingScore || 0;
+            const passed = score >= passingScore;
+
+            // Prepare response based on showAnswersAfterSubmit
+            if (showAnswers) {
+                // Return questions with correct answers
+                return {
+                    message: 'Nộp bài thành công',
+                    examAttempt: updatedAttempt,
+                    score,
+                    totalQuestions,
+                    correctAnswers: correctCount,
+                    percentage: Math.round(score * 10) / 10,
+                    showAnswers: true,
+                    passed,
+                    passingScore,
+                    questions: questions.map((q) => ({
+                        id: q.id,
+                        question: q.question,
+                        options: q.options,
+                        answer: q.answer, // Include correct answer
+                    })),
+                };
+            } else {
+                // Only return score summary
+                return {
+                    message: 'Nộp bài thành công',
+                    examAttempt: updatedAttempt,
+                    score,
+                    totalQuestions,
+                    correctAnswers: correctCount,
+                    percentage: Math.round(score * 10) / 10,
+                    showAnswers: false,
+                    passed,
+                    passingScore,
+                };
+            }
+        } catch (error) {
+            throw new InternalServerErrorException('Nộp bài thất bại');
+        }
+    }
+
+    /**
+     * Get exam attempt with questions for quiz
+     * Answers are stripped for students (only included for owners or after submit if allowed)
+     */
+    async getExamAttemptForQuiz(attemptId: string, user: User) {
+        const attempt = await this.prisma.examAttempt.findFirst({
+            where: { id: attemptId, userId: user.id },
+            include: {
+                examSession: {
+                    include: {
+                        examRoom: {
+                            include: {
+                                quizSet: {
+                                    include: {
+                                        detailsQuizQuestions: {
+                                            include: {
+                                                quizQuestion: true,
+                                            },
+                                        },
+                                    },
+                                },
+                                host: {
+                                    select: {
+                                        id: true,
+                                        username: true,
+                                        name: true,
+                                        avatar: true,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!attempt) {
+            throw new NotFoundException('Bài làm không tồn tại');
+        }
+
+        const isOwner = attempt.examSession.examRoom.host.id === user.id;
+        const showAnswers =
+            attempt.status === EXAM_ATTEMPT_STATUS.COMPLETED &&
+            attempt.examSession.showAnswersAfterSubmit;
+
+        const questions =
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                (d) => {
+                    const q = d.quizQuestion;
+                    if (isOwner || showAnswers) {
+                        return {
+                            id: q.id,
+                            question: q.question,
+                            options: q.options,
+                            answer: q.answer,
+                        };
+                    }
+                    return {
+                        id: q.id,
+                        question: q.question,
+                        options: q.options,
+                    };
+                }
+            );
+
+        // Calculate time limit from session
+        let timeLimitMinutes: number | null = null;
+        if (attempt.examSession.endTime) {
+            const diffMs =
+                attempt.examSession.endTime.getTime() -
+                attempt.examSession.startTime.getTime();
+            timeLimitMinutes = Math.floor(diffMs / 60000);
+        }
+
+        return {
+            ...attempt,
+            questions,
+            timeLimitMinutes,
+            creator: attempt.examSession.examRoom.host,
+            isOwner,
+        };
+    }
+
+    /**
+     * Get all exam attempts for an exam room with user and session details
+     * For displaying in the participants/attempts tab
+     * Optimized with single query and proper joins
+     */
+    async getExamAttemptsByRoom(
+        examRoomId: string,
+        user: User,
+        page: number = 1,
+        limit: number = 10
+    ) {
+        // First verify user owns this exam room
+        const examRoom = await this.prisma.examRoom.findUnique({
+            where: { id: examRoomId },
+            select: { hostId: true },
+        });
+
+        if (!examRoom) {
+            throw new NotFoundException('Phòng thi không tồn tại');
+        }
+
+        if (examRoom.hostId !== user.id) {
+            throw new ForbiddenException('Bạn không có quyền xem dữ liệu này');
+        }
+
+        const skip = (page - 1) * limit;
+
+        // Get attempts with user and session info in single query
+        const [attempts, total] = await Promise.all([
+            this.prisma.examAttempt.findMany({
+                where: {
+                    examSession: {
+                        examRoomId: examRoomId,
+                    },
+                },
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            username: true,
+                            name: true,
+                            email: true,
+                            avatar: true,
+                        },
+                    },
+                    examSession: {
+                        select: {
+                            id: true,
+                            startTime: true,
+                            endTime: true,
+                        },
+                    },
+                },
+                orderBy: { startedAt: 'desc' },
+                skip,
+                take: limit,
+            }),
+            this.prisma.examAttempt.count({
+                where: {
+                    examSession: {
+                        examRoomId: examRoomId,
+                    },
+                },
+            }),
+        ]);
+
+        // Transform data for frontend - O(n) single pass
+        const transformedAttempts = attempts.map((attempt) => {
+            // Calculate time spent (in seconds)
+            let timeSpentSeconds = 0;
+            if (attempt.finishedAt && attempt.startedAt) {
+                timeSpentSeconds = Math.floor(
+                    (new Date(attempt.finishedAt).getTime() -
+                        new Date(attempt.startedAt).getTime()) /
+                        1000
+                );
+            } else if (attempt.startedAt) {
+                // Still in progress - calc from now
+                timeSpentSeconds = Math.floor(
+                    (Date.now() - new Date(attempt.startedAt).getTime()) / 1000
+                );
+            }
+
+            return {
+                id: attempt.id,
+                status: attempt.status,
+                score: attempt.score,
+                totalQuestions: attempt.totalQuestions,
+                correctAnswers: attempt.correctAnswers,
+                startedAt: attempt.startedAt,
+                finishedAt: attempt.finishedAt,
+                timeSpentSeconds,
+                answers: attempt.answers,
+                user: attempt.user,
+                session: {
+                    id: attempt.examSession.id,
+                    startTime: attempt.examSession.startTime,
+                    endTime: attempt.examSession.endTime,
+                },
+            };
+        });
+
+        return {
+            attempts: transformedAttempts,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        };
+    }
+
+    /**
+     * Get single exam attempt details by ID
+     * For displaying in detail slider
+     */
+    async getExamAttemptDetailForSlider(attemptId: string, user: User) {
+        const attempt = await this.prisma.examAttempt.findUnique({
+            where: { id: attemptId },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        username: true,
+                        name: true,
+                        email: true,
+                        avatar: true,
+                    },
+                },
+                examSession: {
+                    include: {
+                        examRoom: {
+                            select: {
+                                id: true,
+                                hostId: true,
+                                title: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!attempt) {
+            throw new NotFoundException('Bài làm không tồn tại');
+        }
+
+        // Only owner can see attempt details
+        if (attempt.examSession.examRoom.hostId !== user.id) {
+            throw new ForbiddenException('Bạn không có quyền xem dữ liệu này');
+        }
+
+        // Calculate time spent
+        let timeSpentSeconds = 0;
+        if (attempt.finishedAt && attempt.startedAt) {
+            timeSpentSeconds = Math.floor(
+                (new Date(attempt.finishedAt).getTime() -
+                    new Date(attempt.startedAt).getTime()) /
+                    1000
+            );
+        }
+
+        return {
+            id: attempt.id,
+            status: attempt.status,
+            score: attempt.score,
+            totalQuestions: attempt.totalQuestions,
+            correctAnswers: attempt.correctAnswers,
+            startedAt: attempt.startedAt,
+            finishedAt: attempt.finishedAt,
+            timeSpentSeconds,
+            answers: attempt.answers,
+            currentIndex: attempt.currentIndex,
+            markedQuestions: attempt.markedQuestions,
+            violationCount: attempt.violationCount,
+            user: attempt.user,
+            session: {
+                id: attempt.examSession.id,
+                startTime: attempt.examSession.startTime,
+                endTime: attempt.examSession.endTime,
+            },
+            examRoom: {
+                id: attempt.examSession.examRoom.id,
+                title: attempt.examSession.examRoom.title,
+            },
+        };
+    }
+
+    // ==================== EXISTING METHODS ====================
+
     async createExamAttempt(user: User, dto: CreateExamAttemptDto) {
         // Verify exam session exists
         const examSession = await this.examSessionRepository.findOne({
@@ -58,13 +620,14 @@ export class ExamAttemptService {
 
         const attemptCount = existingAttempts.length;
 
-        if (!(examSession as any).examRoom.allowRetake && attemptCount > 0) {
+        // Use ExamSession settings for retry check
+        if (!(examSession as any).allowRetake && attemptCount > 0) {
             throw new BadRequestException('Bạn đã hết lượt thi');
         }
 
-        if (attemptCount >= (examSession as any).examRoom.maxAttempts) {
+        if (attemptCount >= (examSession as any).maxAttempts) {
             throw new BadRequestException(
-                `Bạn đã đạt số lần thi tối đa (${(examSession as any).examRoom.maxAttempts})`
+                `Bạn đã đạt số lần thi tối đa (${(examSession as any).maxAttempts})`
             );
         }
 

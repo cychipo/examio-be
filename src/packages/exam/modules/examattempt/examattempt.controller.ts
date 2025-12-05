@@ -8,6 +8,7 @@ import {
     Put,
     Delete,
     Param,
+    Query,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -29,6 +30,137 @@ import { GetExamAttemptsDto } from './dto/get-examattempt.dto';
 @Controller('examattempts')
 export class ExamAttemptController {
     constructor(private readonly examAttemptService: ExamAttemptService) {}
+
+    // ==================== NEW QUIZ ENDPOINTS ====================
+
+    @Post('start')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Start or resume an exam attempt (with retry limit check)',
+    })
+    @ApiResponse({
+        status: 201,
+        description: 'Exam attempt started or resumed successfully',
+        type: Object,
+    })
+    async startExamAttempt(
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: CreateExamAttemptDto
+    ) {
+        return this.examAttemptService.startExamAttempt(req.user, dto);
+    }
+
+    @Put(':id/progress')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Update exam attempt progress (auto-save)' })
+    @ApiParam({ name: 'id', description: 'Exam attempt ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Progress updated successfully',
+        type: Object,
+    })
+    async updateExamAttemptProgress(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string,
+        @Body()
+        dto: {
+            answers?: Record<string, string>;
+            currentIndex?: number;
+            markedQuestions?: string[];
+        }
+    ) {
+        return this.examAttemptService.updateExamAttemptProgress(
+            id,
+            req.user,
+            dto
+        );
+    }
+
+    @Post(':id/submit')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Submit exam attempt and calculate score' })
+    @ApiParam({ name: 'id', description: 'Exam attempt ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam attempt submitted successfully',
+        type: Object,
+    })
+    async submitExamAttempt(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string
+    ) {
+        return this.examAttemptService.submitExamAttempt(id, req.user);
+    }
+
+    @Get(':id/quiz')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get exam attempt with questions for quiz view' })
+    @ApiParam({ name: 'id', description: 'Exam attempt ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam attempt with questions retrieved successfully',
+        type: Object,
+    })
+    async getExamAttemptForQuiz(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string
+    ) {
+        return this.examAttemptService.getExamAttemptForQuiz(id, req.user);
+    }
+
+    @Get('list-by-room/:examRoomId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Get all exam attempts for an exam room (owner only)',
+    })
+    @ApiParam({ name: 'examRoomId', description: 'Exam room ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'List of exam attempts with user details',
+        type: Object,
+    })
+    async getExamAttemptsByRoom(
+        @Req() req: AuthenticatedRequest,
+        @Param('examRoomId') examRoomId: string,
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '10'
+    ) {
+        return this.examAttemptService.getExamAttemptsByRoom(
+            examRoomId,
+            req.user,
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 10
+        );
+    }
+
+    @Get(':id/detail')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Get exam attempt details for slider view (owner only)',
+    })
+    @ApiParam({ name: 'id', description: 'Exam attempt ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam attempt details',
+        type: Object,
+    })
+    async getExamAttemptDetail(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string
+    ) {
+        return this.examAttemptService.getExamAttemptDetailForSlider(
+            id,
+            req.user
+        );
+    }
+
+    // ==================== EXISTING ENDPOINTS ====================
 
     @Post()
     @UseGuards(AuthGuard)
@@ -99,7 +231,7 @@ export class ExamAttemptController {
     })
     async getExamAttempts(
         @Req() req: AuthenticatedRequest,
-        @Body() getExamAttemptsDto: GetExamAttemptsDto
+        @Query() getExamAttemptsDto: GetExamAttemptsDto
     ) {
         return this.examAttemptService.getExamAttempts(
             req.user,

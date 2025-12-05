@@ -10,6 +10,7 @@ datasource db {
     url      = env("DATABASE_URL")
 }
 
+
 model QuizSet {
     id          String   @id @default(cuid())
     title       String
@@ -124,22 +125,24 @@ model ExamRoom {
 }
 
 model ExamSession {
-    id             String    @id @default(cuid())
-    examRoomId     String
-    status         Int       @default(0) // 0: UPCOMING, 1: ONGOING, 2: ENDED
-    startTime      DateTime
-    endTime        DateTime?
-    autoJoinByLink Boolean   @default(false)
+    id                     String    @id @default(cuid())
+    examRoomId             String
+    status                 Int       @default(0) // 0: UPCOMING, 1: ONGOING, 2: ENDED
+    startTime              DateTime
+    endTime                DateTime?
+    autoJoinByLink         Boolean   @default(false)
     // Security and access control fields (moved from ExamRoom)
-    assessType     Int       @default(0) // 0: PUBLIC, 1: PRIVATE
-    allowRetake    Boolean   @default(false)
-    maxAttempts    Int       @default(1)
-    accessCode     String? // 6-digit code for private access
-    whitelist      String[]  @default([]) // List of user IDs who can access
-    createdAt      DateTime  @default(now())
-    updatedAt      DateTime  @default(now()) @updatedAt
-    createdBy      String?
-    updatedBy      String?
+    assessType             Int       @default(0) // 0: PUBLIC, 1: PRIVATE
+    allowRetake            Boolean   @default(false)
+    maxAttempts            Int       @default(1)
+    accessCode             String? // 6-digit code for private access
+    whitelist              String[]  @default([]) // List of user IDs who can access
+    showAnswersAfterSubmit Boolean   @default(true) // Show detailed answers after submission
+    passingScore           Float     @default(0) // Minimum score percentage to pass (0 = no minimum)
+    createdAt              DateTime  @default(now())
+    updatedAt              DateTime  @default(now()) @updatedAt
+    createdBy              String?
+    updatedBy              String?
 
     examRoom     ExamRoom                 @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
     participants ExamSessionParticipant[]
@@ -157,10 +160,18 @@ model ExamAttempt {
     startedAt      DateTime
     finishedAt     DateTime?
     status         Int       @default(0) // 0: IN_PROGRESS, 1: COMPLETED, 2: CANCELLED
-    createdAt      DateTime  @default(now())
-    updatedAt      DateTime  @default(now()) @updatedAt
-    createdBy      String?
-    updatedBy      String?
+
+    // Answer tracking fields (similar to QuizPracticeAttempt)
+    answers         Json     @default("{}") // { questionId: selectedAnswer }
+    currentIndex    Int      @default(0) // Current question index
+    markedQuestions String[] @default([]) // Marked question IDs
+    totalQuestions  Int      @default(0)
+    correctAnswers  Int      @default(0)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+    createdBy String?
+    updatedBy String?
 
     examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
     user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -245,46 +256,48 @@ model QuizPracticeAttempt {
     @@index([userId, updatedAt(sort: Desc)])
 }
 
-model Payment {
-    id        String   @unique
-    userId    String
-    amount    Float
-    currency  String
-    status    Int // 0 = unpaid, 1 = paid, 2 = overdue, 3 = cancelled
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-    createdBy String?
-    updatedBy String?
 
-    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+model Payment {
+  id        String   @unique
+  userId    String
+  amount    Float
+  currency  String
+  status    Int // 0 = unpaid, 1 = paid, 2 = overdue, 3 = cancelled
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+  updatedBy String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Wallet {
-    id        String   @unique
-    userId    String   @unique
-    balance   Float    @default(0)
-    createdBy String?
-    updatedBy String?
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+  id        String   @unique
+  userId    String   @unique
+  balance   Float    @default(0)
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-    user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-    transactions WalletTransaction[]
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
 }
 
 model WalletTransaction {
-    id          String   @unique
-    walletId    String
-    updatedAt   DateTime @default(now()) @updatedAt
-    createdBy   String?
-    updatedBy   String?
-    amount      Float
-    type        Int // 0 = buy credits, 1 = buy subscription, 2 = refund, 3 = admin adjustment, 4 = use services
-    description String?
-    createdAt   DateTime @default(now())
+  id          String   @unique
+  walletId    String
+  updatedAt   DateTime @default(now()) @updatedAt
+  createdBy   String?
+  updatedBy   String?
+  amount      Float
+  type        Int // 0 = buy credits, 1 = buy subscription, 2 = refund, 3 = admin adjustment, 4 = use services
+  description String?
+  createdAt   DateTime @default(now())
 
-    wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
 }
+
 
 model UserStorage {
     id        String   @unique
@@ -315,6 +328,7 @@ model Document {
     updatedAt   DateTime    @default(now()) @updatedAt
     userStorage UserStorage @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
 }
+
 
 model User {
     id         String   @unique

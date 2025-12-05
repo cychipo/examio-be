@@ -22,6 +22,7 @@ export const CreateExamSessionSchema = z.object({
     maxAttempts: z.number().int().min(1).optional().default(1),
     accessCode: z.string().length(6).optional().nullable(),
     whitelist: z.array(z.string()).optional().default([]),
+    showAnswersAfterSubmit: z.boolean().optional().default(true),
 });
 
 export class CreateExamSessionDto extends createZodDto(
@@ -88,4 +89,11 @@ export class CreateExamSessionDto extends createZodDto(
         required: false,
     })
     whitelist?: string[];
+
+    @ApiProperty({
+        description: 'Whether to show detailed answers after submission',
+        example: true,
+        required: false,
+    })
+    showAnswersAfterSubmit?: boolean;
 }

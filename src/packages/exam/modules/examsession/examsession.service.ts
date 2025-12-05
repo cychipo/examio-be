@@ -66,6 +66,7 @@ export class ExamSessionService {
                     maxAttempts: dto.maxAttempts || 1,
                     accessCode: dto.accessCode || null,
                     whitelist: dto.whitelist || [],
+                    showAnswersAfterSubmit: dto.showAnswersAfterSubmit ?? true,
                 },
                 user.id
             );
@@ -333,6 +334,10 @@ export class ExamSessionService {
             updateData.whitelist = dto.whitelist;
         }
 
+        if (dto.showAnswersAfterSubmit !== undefined) {
+            updateData.showAnswersAfterSubmit = dto.showAnswersAfterSubmit;
+        }
+
         try {
             await this.examSessionRepository.update(id, updateData, user.id);
 
@@ -510,12 +515,27 @@ export class ExamSessionService {
             throw new NotFoundException('Phiên thi không tồn tại');
         }
 
+        const isOwner = userId && examSession.examRoom.hostId === userId;
+
         return {
             ...examSession,
             questions: examSession.examRoom.quizSet.detailsQuizQuestions.map(
-                (d) => d.quizQuestion
+                (d) => {
+                    const q = d.quizQuestion;
+                    // Only include answer if user is the owner
+                    if (isOwner) {
+                        return q;
+                    }
+                    // Strip answer for non-owners
+                    return {
+                        id: q.id,
+                        question: q.question,
+                        options: q.options,
+                    };
+                }
             ),
             creator: examSession.examRoom.host,
+            isOwner,
         };
     }
 
@@ -560,9 +580,18 @@ export class ExamSessionService {
         return {
             ...examSession,
             questions: examSession.examRoom.quizSet.detailsQuizQuestions.map(
-                (d) => d.quizQuestion
+                (d) => {
+                    const q = d.quizQuestion;
+                    // Code access = not owner, strip answers
+                    return {
+                        id: q.id,
+                        question: q.question,
+                        options: q.options,
+                    };
+                }
             ),
             creator: examSession.examRoom.host,
+            isOwner: false,
         };
     }
 
