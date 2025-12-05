@@ -17,6 +17,7 @@ import {
     ApiExtraModels,
     ApiCookieAuth,
     ApiParam,
+    ApiQuery,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
@@ -47,7 +48,7 @@ export class ExamRoomController {
         return this.examRoomService.createExamRoom(req.user, createExamRoomDto);
     }
 
-    @Get('get-by-id/:id')
+    @Get('detail/:id')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Get an exam room by ID' })
@@ -102,6 +103,19 @@ export class ExamRoomController {
         return this.examRoomService.getExamRooms(req.user, getExamRoomsDto);
     }
 
+    @Get('list-all')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get all exam rooms without pagination' })
+    @ApiResponse({
+        status: 200,
+        description: 'All exam rooms retrieved successfully',
+        type: [Object],
+    })
+    async getAllExamRooms(@Req() req: AuthenticatedRequest) {
+        return this.examRoomService.getAllExamRooms(req.user);
+    }
+
     @Delete(':id')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
@@ -129,5 +143,57 @@ export class ExamRoomController {
     })
     async getPublicExamRoomById(@Param('id') id: string) {
         return this.examRoomService.getExamRoomPublicById(id);
+    }
+
+    @Get(':id/participants')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get participants for an exam room' })
+    @ApiParam({ name: 'id', description: 'Exam room ID' })
+    @ApiQuery({ name: 'page', required: false, type: Number })
+    @ApiQuery({ name: 'limit', required: false, type: Number })
+    @ApiResponse({
+        status: 200,
+        description: 'Participants retrieved successfully',
+        type: Object,
+    })
+    async getParticipants(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string,
+        @Query('page') page?: number,
+        @Query('limit') limit?: number
+    ) {
+        return this.examRoomService.getParticipants(
+            id,
+            req.user,
+            page ? Number(page) : 1,
+            limit ? Number(limit) : 10
+        );
+    }
+
+    @Get(':id/sessions')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get exam sessions for an exam room' })
+    @ApiParam({ name: 'id', description: 'Exam room ID' })
+    @ApiQuery({ name: 'page', required: false, type: Number })
+    @ApiQuery({ name: 'limit', required: false, type: Number })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam sessions retrieved successfully',
+        type: Object,
+    })
+    async getExamSessions(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string,
+        @Query('page') page?: number,
+        @Query('limit') limit?: number
+    ) {
+        return this.examRoomService.getExamSessions(
+            id,
+            req.user,
+            page ? Number(page) : 1,
+            limit ? Number(limit) : 10
+        );
     }
 }

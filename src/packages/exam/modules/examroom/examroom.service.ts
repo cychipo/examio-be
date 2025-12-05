@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { User } from '@prisma/client';
-import { ASSESS_TYPE } from '../../types';
 import { CreateExamRoomDto } from './dto/create-examroom.dto';
 import { GetExamRoomsDto } from './dto/get-examroom.dto';
 import { UpdateExamRoomDto } from './dto/update-examroom.dto';
@@ -49,9 +48,6 @@ export class ExamRoomService {
                     description: dto.description || '',
                     quizSetId: dto.quizSetId,
                     hostId: user.id,
-                    assessType: dto.assessType ?? ASSESS_TYPE.PUBLIC,
-                    allowRetake: dto.allowRetake || false,
-                    maxAttempts: dto.maxAttempts || 1,
                 },
                 user.id
             );
@@ -93,6 +89,7 @@ export class ExamRoomService {
                         id: true,
                         email: true,
                         name: true,
+                        username: true,
                     },
                 },
                 examSessions: {
@@ -126,7 +123,7 @@ export class ExamRoomService {
 
     async getExamRoomPublicById(id: string) {
         const examRoom = await this.examRoomRepository.findOne({
-            where: { id, assessType: ASSESS_TYPE.PUBLIC },
+            where: { id },
             include: {
                 quizSet: {
                     select: {
@@ -147,9 +144,7 @@ export class ExamRoomService {
             cache: true,
         });
         if (!examRoom) {
-            throw new NotFoundException(
-                'Phòng thi không tồn tại hoặc không công khai'
-            );
+            throw new NotFoundException('Phòng thi không tồn tại');
         }
         return examRoom;
     }
@@ -164,10 +159,6 @@ export class ExamRoomService {
                 { title: { contains: dto.search, mode: 'insensitive' } },
                 { description: { contains: dto.search, mode: 'insensitive' } },
             ];
-        }
-
-        if (dto.assessType !== undefined) {
-            where.assessType = dto.assessType;
         }
 
         if (dto.quizSetId) {
@@ -206,6 +197,39 @@ export class ExamRoomService {
             page: result.page,
             limit: result.size,
             totalPages: result.totalPages,
+        };
+    }
+
+    /**
+     * Get all exam rooms for a user without pagination
+     * Used for dropdowns and selection lists
+     */
+    async getAllExamRooms(user: User) {
+        const examRooms = await this.prisma.examRoom.findMany({
+            where: {
+                hostId: user.id,
+            },
+            include: {
+                quizSet: {
+                    select: {
+                        id: true,
+                        title: true,
+                        thumbnail: true,
+                    },
+                },
+                _count: {
+                    select: {
+                        examSessions: true,
+                    },
+                },
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+
+        return {
+            examRooms,
         };
     }
 
@@ -249,13 +273,6 @@ export class ExamRoomService {
                         description: dto.description,
                     }),
                     ...(dto.quizSetId && { quizSetId: dto.quizSetId }),
-                    ...(dto.assessType !== undefined && {
-                        assessType: dto.assessType,
-                    }),
-                    ...(dto.allowRetake !== undefined && {
-                        allowRetake: dto.allowRetake,
-                    }),
-                    ...(dto.maxAttempts && { maxAttempts: dto.maxAttempts }),
                 },
                 user.id
             );
@@ -288,5 +305,132 @@ export class ExamRoomService {
                 'Cập nhật phòng thi thất bại'
             );
         }
+    }
+
+    /**
+     * Get participants for an exam room (across all sessions)
+     */
+    async getParticipants(
+        examRoomId: string,
+        user: User,
+        page = 1,
+        limit = 10
+    ) {
+        // Check ownership
+        const examRoom = await this.examRoomRepository.findOne({
+            where: { id: examRoomId, hostId: user.id },
+            cache: true,
+        });
+
+        if (!examRoom) {
+            throw new NotFoundException('Phòng thi không tồn tại');
+        }
+
+        const skip = (page - 1) * limit;
+
+        const [participants, total] = await Promise.all([
+            this.prisma.examSessionParticipant.findMany({
+                where: {
+                    examSession: {
+                        examRoomId: examRoomId,
+                    },
+                },
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            name: true,
+                            username: true,
+                            avatar: true,
+                        },
+                    },
+                    examSession: {
+                        select: {
+                            id: true,
+                            startTime: true,
+                            endTime: true,
+                            status: true,
+                        },
+                    },
+                },
+                skip,
+                take: limit,
+                orderBy: {
+                    createdAt: 'desc',
+                },
+            }),
+            this.prisma.examSessionParticipant.count({
+                where: {
+                    examSession: {
+                        examRoomId: examRoomId,
+                    },
+                },
+            }),
+        ]);
+
+        return {
+            participants,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        };
+    }
+
+    /**
+     * Get exam sessions for an exam room with pagination
+     */
+    async getExamSessions(
+        examRoomId: string,
+        user: User,
+        page = 1,
+        limit = 10
+    ) {
+        // Check ownership
+        const examRoom = await this.examRoomRepository.findOne({
+            where: { id: examRoomId, hostId: user.id },
+            cache: true,
+        });
+
+        if (!examRoom) {
+            throw new NotFoundException('Phòng thi không tồn tại');
+        }
+
+        const skip = (page - 1) * limit;
+
+        const [sessions, total] = await Promise.all([
+            this.prisma.examSession.findMany({
+                where: {
+                    examRoomId: examRoomId,
+                },
+                include: {
+                    _count: {
+                        select: {
+                            participants: true,
+                            examAttempts: true,
+                        },
+                    },
+                },
+                skip,
+                take: limit,
+                orderBy: {
+                    startTime: 'desc',
+                },
+            }),
+            this.prisma.examSession.count({
+                where: {
+                    examRoomId: examRoomId,
+                },
+            }),
+        ]);
+
+        return {
+            sessions,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        };
     }
 }

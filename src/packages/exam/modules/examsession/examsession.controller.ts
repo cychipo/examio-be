@@ -8,6 +8,7 @@ import {
     Put,
     Delete,
     Param,
+    Query,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -18,11 +19,20 @@ import {
     ApiParam,
 } from '@nestjs/swagger';
 import { AuthGuard } from 'src/common/guard/auth.guard';
+import { OptionalAuthGuard } from 'src/common/guard/optional-auth.guard';
 import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
 import { ExamSessionService } from './examsession.service';
 import { CreateExamSessionDto } from './dto/create-examsession.dto';
 import { UpdateExamSessionDto } from './dto/update-examsession.dto';
 import { GetExamSessionsDto } from './dto/get-examsession.dto';
+import {
+    UpdateSharingSettingsDto,
+    VerifyAccessCodeDto,
+    AccessCheckResponseDto,
+    VerifyCodeResponseDto,
+    SharingSettingsResponseDto,
+    ExamSessionPublicInfoDto,
+} from './dto/sharing.dto';
 
 @ApiTags('ExamSessions')
 @ApiExtraModels(CreateExamSessionDto, UpdateExamSessionDto, GetExamSessionsDto)
@@ -99,7 +109,7 @@ export class ExamSessionController {
     })
     async getExamSessions(
         @Req() req: AuthenticatedRequest,
-        @Body() getExamSessionsDto: GetExamSessionsDto
+        @Query() getExamSessionsDto: GetExamSessionsDto
     ) {
         return this.examSessionService.getExamSessions(
             req.user,
@@ -134,5 +144,155 @@ export class ExamSessionController {
     })
     async getPublicExamSessionById(@Param('id') id: string) {
         return this.examSessionService.getExamSessionPublicById(id);
+    }
+
+    // ==================== ACCESS CONTROL ENDPOINTS ====================
+
+    @Get('study/:id/access')
+    @UseGuards(OptionalAuthGuard)
+    @ApiOperation({ summary: 'Check access for an exam session' })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Access check result',
+        type: AccessCheckResponseDto,
+    })
+    async checkAccess(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.examSessionService.checkAccess(id, req.user?.id);
+    }
+
+    @Get('study/:id/info')
+    @ApiOperation({ summary: 'Get public info for an exam session' })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam session public info',
+        type: ExamSessionPublicInfoDto,
+    })
+    async getPublicInfo(@Param('id') id: string) {
+        return this.examSessionService.getExamSessionPublicInfo(id);
+    }
+
+    @Get('study/:id')
+    @UseGuards(OptionalAuthGuard)
+    @ApiOperation({ summary: 'Get exam session for study with access check' })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam session for study',
+        type: Object,
+    })
+    async getForStudy(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.examSessionService.getExamSessionForStudy(id, req.user?.id);
+    }
+
+    @Post('study/:id/verify-code')
+    @ApiOperation({ summary: 'Verify access code for a private exam session' })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Code verification result',
+        type: VerifyCodeResponseDto,
+    })
+    async verifyCode(
+        @Param('id') id: string,
+        @Body() dto: VerifyAccessCodeDto
+    ) {
+        return this.examSessionService.verifyAccessCode(id, dto.accessCode);
+    }
+
+    @Post('study/:id/with-code')
+    @ApiOperation({ summary: 'Get exam session using access code' })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam session for study',
+        type: Object,
+    })
+    async getWithCode(
+        @Param('id') id: string,
+        @Body() dto: VerifyAccessCodeDto
+    ) {
+        return this.examSessionService.getExamSessionWithCode(
+            id,
+            dto.accessCode
+        );
+    }
+
+    @Get(':id/sharing')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get sharing settings for an exam session' })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Sharing settings',
+    })
+    async getSharingSettings(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.examSessionService.getSharingSettings(id, req.user);
+    }
+
+    @Put(':id/sharing')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Update sharing settings for an exam session' })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Sharing settings updated',
+        type: SharingSettingsResponseDto,
+    })
+    async updateSharingSettings(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: UpdateSharingSettingsDto
+    ) {
+        return this.examSessionService.updateSharingSettings(id, req.user, dto);
+    }
+
+    @Post(':id/generate-code')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Generate a new access code' })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'New access code generated',
+    })
+    async generateCode(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        const accessCode = this.examSessionService.generateAccessCode();
+        await this.examSessionService.updateSharingSettings(id, req.user, {
+            isPublic: false,
+            accessCode,
+            whitelist: [],
+        });
+        return { accessCode };
+    }
+
+    @Get('users/search')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Search users by username for whitelist' })
+    @ApiResponse({
+        status: 200,
+        description: 'List of matching users',
+    })
+    async searchUsers(
+        @Query('q') query: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.examSessionService.searchUsers(query, req.user.id);
     }
 }

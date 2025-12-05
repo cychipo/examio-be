@@ -101,6 +101,13 @@ export class UserRepository extends BaseRepository<User> {
                     { username: credential.toLowerCase() },
                 ],
             },
+            include: {
+                wallet: {
+                    select: {
+                        balance: true,
+                    },
+                },
+            },
         });
     }
 
