@@ -31,6 +31,21 @@ import { GetExamAttemptsDto } from './dto/get-examattempt.dto';
 export class ExamAttemptController {
     constructor(private readonly examAttemptService: ExamAttemptService) {}
 
+    // ==================== HISTORY STATS ENDPOINT ====================
+
+    @Get('history-stats')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get aggregated history statistics for user' })
+    @ApiResponse({
+        status: 200,
+        description: 'History stats retrieved successfully',
+        type: Object,
+    })
+    async getHistoryStats(@Req() req: AuthenticatedRequest) {
+        return this.examAttemptService.getHistoryStats(req.user);
+    }
+
     // ==================== NEW QUIZ ENDPOINTS ====================
 
     @Post('start')
