@@ -7,9 +7,10 @@ import { AuthModule } from 'src/packages/auth/auth.module';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { ExamAttemptRepository } from './examattempt.repository';
 import { ExamSessionRepository } from '../examsession/examsession.repository';
+import { RedisModule } from 'src/packages/redis/redis.module';
 
 @Module({
-    imports: [AuthModule],
+    imports: [AuthModule, RedisModule],
     providers: [
         PrismaService,
         ExamAttemptService,

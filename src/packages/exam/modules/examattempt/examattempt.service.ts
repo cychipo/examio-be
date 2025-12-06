@@ -14,6 +14,9 @@ import { GetExamAttemptsDto } from './dto/get-examattempt.dto';
 import { UpdateExamAttemptDto } from './dto/update-examattempt.dto';
 import { ExamAttemptRepository } from './examattempt.repository';
 import { ExamSessionRepository } from '../examsession/examsession.repository';
+import { RedisService } from 'src/packages/redis/redis.service';
+import { getUserCacheKey, CACHE_MODULES, getListCachePattern } from 'src/common/constants/cache-keys';
+import { EXPIRED_TIME } from 'src/constants/redis';
 
 @Injectable()
 export class ExamAttemptService {
@@ -21,7 +24,8 @@ export class ExamAttemptService {
         private readonly prisma: PrismaService,
         private readonly examAttemptRepository: ExamAttemptRepository,
         private readonly examSessionRepository: ExamSessionRepository,
-        private readonly generateIdService: GenerateIdService
+        private readonly generateIdService: GenerateIdService,
+        private readonly redisService: RedisService
     ) {}
 
     /**
@@ -937,5 +941,75 @@ export class ExamAttemptService {
             }
             throw new InternalServerErrorException('Cập nhật bài làm thất bại');
         }
+    }
+
+    /**
+     * Get aggregated history statistics for user
+     * Optimized with COUNT queries (O(1) with indexed fields) and Redis caching
+     */
+    async getHistoryStats(user: User) {
+        const cacheKey = getUserCacheKey('QUIZ_STATS', user.id) + ':history';
+
+        // Check cache first
+        const cached = await this.redisService.get<{
+            totalPDFs: number;
+            examsCreated: number;
+            flashcardSets: number;
+            totalStudyHours: number;
+        }>(cacheKey);
+
+        if (cached) {
+            return cached;
+        }
+
+        // Execute all count queries in parallel for O(1) performance
+        const [totalPDFs, examsCreated, flashcardSets, examAttempts] = await Promise.all([
+            // Count PDFs uploaded by user (indexed on userId)
+            this.prisma.userStorage.count({
+                where: { userId: user.id }
+            }),
+            // Count quiz sets created by user (indexed on userId)
+            this.prisma.quizSet.count({
+                where: { userId: user.id }
+            }),
+            // Count flashcard sets created by user (indexed on userId)
+            this.prisma.flashCardSet.count({
+                where: { userId: user.id }
+            }),
+            // Get total time spent on exams (for study hours calculation)
+            this.prisma.examAttempt.findMany({
+                where: {
+                    userId: user.id,
+                    status: EXAM_ATTEMPT_STATUS.COMPLETED,
+                    finishedAt: { not: null }
+                },
+                select: {
+                    startedAt: true,
+                    finishedAt: true
+                }
+            })
+        ]);
+
+        // Calculate total study hours from exam attempts
+        let totalMinutes = 0;
+        for (const attempt of examAttempts) {
+            if (attempt.finishedAt && attempt.startedAt) {
+                const diffMs = new Date(attempt.finishedAt).getTime() - new Date(attempt.startedAt).getTime();
+                totalMinutes += diffMs / (1000 * 60);
+            }
+        }
+        const totalStudyHours = Math.round(totalMinutes / 60);
+
+        const stats = {
+            totalPDFs,
+            examsCreated,
+            flashcardSets,
+            totalStudyHours
+        };
+
+        // Cache for 5 minutes
+        await this.redisService.set(cacheKey, stats, EXPIRED_TIME.FIVE_MINUTES);
+
+        return stats;
     }
 }
