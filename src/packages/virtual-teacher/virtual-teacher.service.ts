@@ -144,11 +144,29 @@ export class VirtualTeacherService {
         } catch (error: any) {
             console.error('❌ Error in processChat:', error);
 
+            // Check for rate limit / quota errors
+            const isQuotaError =
+                error?.status === 429 ||
+                error?.error?.code === 429 ||
+                error?.message?.includes('429') ||
+                error?.message?.includes('quota') ||
+                error?.message?.includes('RESOURCE_EXHAUSTED') ||
+                error?.message?.includes('rate limit');
+
+            if (isQuotaError) {
+                return {
+                    success: false,
+                    response:
+                        'Hệ thống đang bảo trì. Vui lòng thử lại sau ít phút.',
+                    error: 'Hệ thống đang bảo trì. Vui lòng thử lại sau ít phút.',
+                };
+            }
+
             return {
                 success: false,
                 response:
                     'Xin lỗi, tôi gặp lỗi khi xử lý câu hỏi của bạn. Vui lòng thử lại sau.',
-                error: error.message || 'Unknown error',
+                error: 'Processing error',
             };
         }
     }
