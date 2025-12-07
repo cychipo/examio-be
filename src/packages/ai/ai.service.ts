@@ -26,7 +26,7 @@ export class AIService {
     private apiKeys: string[];
     private currentKeyIndex: number = 0;
     private readonly modalName =
-        process.env.GEMINI_MODAL_NAME || 'gemini-2.0-flash';
+        process.env.GEMINI_MODAL_NAME || 'gemini-2.5-flash-lite';
     private ai: GoogleGenAI;
     private failedKeys: Set<string> = new Set();
     private keyResetTime: number = Date.now() + 60000;
