@@ -284,9 +284,11 @@ export class AIService {
     }
 
     async generateContent(prompt: string): Promise<string | undefined> {
-        const response = await this.ensureClient().models.generateContent({
-            model: this.modalName,
-            contents: prompt,
+        const response = await this.retryWithBackoff(async () => {
+            return this.ensureClient().models.generateContent({
+                model: this.modalName,
+                contents: prompt,
+            });
         });
         return response.text;
     }

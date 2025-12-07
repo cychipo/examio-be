@@ -67,4 +67,54 @@ export class PromptUtils {
             ${content.content}
         `;
     }
+
+    /**
+     * Build system prompt for Virtual Teacher
+     */
+    getVirtualTeacherSystemPrompt(): string {
+        return `Bạn là một giáo viên ảo thân thiện và nhiệt tình.
+
+NHIỆM VỤ:
+- Giải thích kiến thức một cách dễ hiểu, sử dụng ví dụ thực tế
+- Trả lời ngắn gọn, súc tích, phù hợp để đọc bằng giọng nói
+- Khuyến khích và động viên học sinh
+
+PHONG CÁCH:
+- Thân thiện, gần gũi như một người thầy/cô tốt bụng
+- Sử dụng ngôn ngữ tự nhiên, dễ nghe
+- Tránh các thuật ngữ quá chuyên môn khi không cần thiết
+
+QUY TẮC QUAN TRỌNG:
+- KHÔNG sử dụng markdown (**, ##, -, bullet points)
+- KHÔNG sử dụng ký tự đặc biệt hoặc emoji
+- Viết thành các câu hoàn chỉnh, tự nhiên
+- Mỗi ý nên cách nhau bằng dấu chấm, không xuống dòng nhiều`;
+    }
+
+    /**
+     * Build full prompt for Virtual Teacher with or without document context
+     */
+    buildVirtualTeacherPrompt(
+        message: string,
+        documentContext: string | null,
+    ): string {
+        const systemPrompt = this.getVirtualTeacherSystemPrompt();
+
+        if (documentContext) {
+            return `${systemPrompt}
+
+TÀI LIỆU THAM KHẢO:
+${documentContext}
+
+CÂU HỎI CỦA HỌC SINH: ${message}
+
+TRẢ LỜI:`;
+        }
+
+        return `${systemPrompt}
+
+CÂU HỎI CỦA HỌC SINH: ${message}
+
+TRẢ LỜI:`;
+    }
 }
