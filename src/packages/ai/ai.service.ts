@@ -808,7 +808,9 @@ export class AIService {
             type:
                 typeResult === TYPE_RESULT.QUIZZ
                     ? JobType.QUIZ
-                    : JobType.FLASHCARD,
+                    : typeResult === TYPE_RESULT.FLASHCARD
+                    ? JobType.FLASHCARD
+                    : JobType.KNOWLEDGE_BASE,
             userId: user.id,
             file,
             params: {
@@ -946,11 +948,23 @@ export class AIService {
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
-                // Set result
                 job.result = {
                     type: JobType.FLASHCARD,
                     flashcards: savedFlashcards.flashcards as any[],
                     historyId: savedFlashcards.id,
+                    fileInfo: {
+                        id: userStorage.id,
+                        filename: userStorage.filename,
+                    },
+                };
+            } else if (
+                Number(job.params.typeResult) === TYPE_RESULT.KNOWLEDGE_BASE
+            ) {
+                job.progress = 90;
+                this.jobQueue.set(jobId, job);
+
+                job.result = {
+                    type: JobType.KNOWLEDGE_BASE,
                     fileInfo: {
                         id: userStorage.id,
                         filename: userStorage.filename,

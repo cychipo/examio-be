@@ -3,6 +3,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { AIService } from '../ai/ai.service';
 import { PromptUtils } from 'src/utils/prompt';
 import { ChatRequestDto, ChatResponseDto } from './dto/chat.dto';
+import { User } from '@prisma/client';
+import { TYPE_RESULT } from '../ai/constant/type-result';
 
 @Injectable()
 export class VirtualTeacherService {
@@ -12,6 +14,14 @@ export class VirtualTeacherService {
         private readonly prisma: PrismaService,
         private readonly aiService: AIService
     ) {}
+
+    async uploadFileForTraining(file: Express.Multer.File, user: User) {
+        return this.aiService.createJob(
+            file,
+            user,
+            TYPE_RESULT.KNOWLEDGE_BASE
+        );
+    }
 
     /**
      * Get relevant document content using semantic search (vector-based)
@@ -108,24 +118,8 @@ export class VirtualTeacherService {
      * Post-process the AI response to make it suitable for TTS
      */
     private postProcessResponse(response: string): string {
-        let processed = response;
-
-        processed = processed.replace(/\*\*/g, '');
-        processed = processed.replace(/##/g, '');
-        processed = processed.replace(/\*/g, '');
-        processed = processed.replace(/#/g, '');
-
-        processed = processed.replace(/^[-•]\s*/gm, '');
-        processed = processed.replace(/^\d+\.\s*/gm, '');
-
-        processed = processed.replace(/\n\n+/g, '. ');
-        processed = processed.replace(/\n/g, ' ');
-
-        processed = processed.replace(/\s+/g, ' ');
-        processed = processed.replace(/\.+/g, '.');
-        processed = processed.replace(/\.\s*\./g, '.');
-
-        return processed.trim();
+        // Only trim whitespace, preserve Markdown characters for frontend rendering
+        return response.trim();
     }
 
     /**

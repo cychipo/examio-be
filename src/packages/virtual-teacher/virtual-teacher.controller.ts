@@ -1,4 +1,5 @@
-import { Controller, Post, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Req, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
     ApiTags,
     ApiOperation,
@@ -16,6 +17,26 @@ export class VirtualTeacherController {
     constructor(
         private readonly virtualTeacherService: VirtualTeacherService,
     ) {}
+
+    @Post('upload')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiOperation({
+        summary: 'Upload file for AI Virtual Teacher knowledge base',
+        description:
+            'Upload a PDF file to be processed (OCR, Vectorize) and added to the knowledge base.',
+    })
+    async uploadFile(
+        @Req() req: AuthenticatedRequest,
+        @UploadedFile() file: Express.Multer.File,
+    ) {
+        const jobId = await this.virtualTeacherService.uploadFileForTraining(
+            file,
+            req.user
+        );
+        return { success: true, jobId };
+    }
 
     @Post('chat')
     @UseGuards(AuthGuard)
