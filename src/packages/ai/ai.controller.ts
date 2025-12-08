@@ -37,16 +37,28 @@ export class AIController {
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Get recent file uploads with generated history' })
     @ApiQuery({ name: 'limit', required: false, type: Number })
+    @ApiQuery({
+        name: 'includeHistory',
+        required: false,
+        type: Boolean,
+        description: 'Include quiz/flashcard history (default: true)',
+    })
     @ApiResponse({
         status: 200,
         description: 'List of recent uploads retrieved successfully',
     })
     async getRecentUploads(
         @Req() req: AuthenticatedRequest,
-        @Query('limit') limit?: string
+        @Query('limit') limit?: string,
+        @Query('includeHistory') includeHistory?: string
     ) {
         const parsedLimit = limit ? parseInt(limit, 10) : 10;
-        return this.aiService.getRecentUploads(req.user.id, parsedLimit);
+        const shouldIncludeHistory = includeHistory !== 'false';
+        return this.aiService.getRecentUploads(
+            req.user.id,
+            parsedLimit,
+            shouldIncludeHistory
+        );
     }
 
     @Get('upload/:id')

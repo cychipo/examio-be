@@ -156,6 +156,74 @@ export class AIService {
             [];
     }
 
+    /**
+     * Public method for semantic document search
+     * Creates embedding from query and finds similar document chunks
+     * @param userStorageId Document ID
+     * @param query User's question/query text
+     * @param topK Number of chunks to return (default: 5)
+     * @returns Combined content from most relevant chunks
+     */
+    async searchDocumentsByQuery(
+        userStorageId: string,
+        query: string,
+        topK: number = 5
+    ): Promise<string | null> {
+        try {
+            // Create embedding for the query
+            const queryEmbedding = await this.createQueryEmbedding(query);
+
+            // Find similar documents
+            const similarDocs = await this.findSimilarDocuments(
+                userStorageId,
+                queryEmbedding,
+                topK,
+                0.5 // Lower threshold for chat context to get more relevant results
+            );
+
+            if (!similarDocs.length) {
+                return null;
+            }
+
+            // Combine content from similar chunks
+            let combinedContent = '';
+            for (const doc of similarDocs) {
+                const chunk = `[Trang ${doc.pageRange}]: ${doc.content}\n\n`;
+                if (combinedContent.length + chunk.length > 6000) break;
+                combinedContent += chunk;
+            }
+
+            return combinedContent.trim() || null;
+        } catch (error) {
+            console.error('[AIService] searchDocumentsByQuery error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Create embedding for a query string (simpler than keyword embedding)
+     */
+    private async createQueryEmbedding(query: string): Promise<number[]> {
+        const embeddingResponse = await this.retryWithBackoff(() =>
+            this.ensureClient().models.embedContent({
+                model: AIService.VECTOR_SEARCH_CONFIG.EMBEDDING_MODEL,
+                contents: query,
+            })
+        );
+
+        const vector =
+            embeddingResponse.embeddings &&
+            Array.isArray(embeddingResponse.embeddings)
+                ? embeddingResponse.embeddings.map((e) => e.values).flat()
+                : [];
+
+        if (!vector.length) {
+            throw new Error('Empty embedding vector');
+        }
+
+        return vector.filter((v): v is number => typeof v === 'number');
+    }
+
     private getNextApiKey(): string {
         if (!this.apiKeys.length) {
             throw new NotFoundException('Không có API keys được cấu hình');
@@ -1630,34 +1698,43 @@ export class AIService {
     }
 
     /**
-     * Lấy danh sách các file đã upload gần đây kèm theo lịch sử generate quiz/flashcard
+     * Lấy danh sách các file đã upload gần đây
+     * @param includeHistory - Nếu false, không trả về quiz/flashcard history
      */
-    async getRecentUploads(userId: string, limit: number = 10) {
+    async getRecentUploads(
+        userId: string,
+        limit: number = 10,
+        includeHistory: boolean = true
+    ) {
         const uploads = await this.prisma.userStorage.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
             take: limit,
-            include: {
-                historyGeneratedQuizz: {
-                    orderBy: { createdAt: 'desc' },
-                    take: 1,
-                },
-                historyGeneratedFlashcard: {
-                    orderBy: { createdAt: 'desc' },
-                    take: 1,
-                },
-            },
+            include: includeHistory
+                ? {
+                      historyGeneratedQuizz: {
+                          orderBy: { createdAt: 'desc' },
+                          take: 1,
+                      },
+                      historyGeneratedFlashcard: {
+                          orderBy: { createdAt: 'desc' },
+                          take: 1,
+                      },
+                  }
+                : undefined,
         });
 
-        return uploads.map((upload) => ({
+        return uploads.map((upload: any) => ({
             id: upload.id,
             filename: upload.filename,
             url: upload.url,
             size: upload.size,
             mimetype: upload.mimetype,
             createdAt: upload.createdAt,
-            quizHistory: upload.historyGeneratedQuizz[0] || null,
-            flashcardHistory: upload.historyGeneratedFlashcard[0] || null,
+            ...(includeHistory && {
+                quizHistory: upload.historyGeneratedQuizz?.[0] || null,
+                flashcardHistory: upload.historyGeneratedFlashcard?.[0] || null,
+            }),
         }));
     }
 

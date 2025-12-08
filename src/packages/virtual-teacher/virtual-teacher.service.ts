@@ -14,7 +14,42 @@ export class VirtualTeacherService {
     ) {}
 
     /**
-     * Get document content from UserStorage and Document tables
+     * Get relevant document content using semantic search (vector-based)
+     * Creates embedding from user's query and finds most relevant chunks
+     */
+    private async getDocumentContextSemantic(
+        documentId: string,
+        userId: string,
+        userQuery: string
+    ): Promise<string | null> {
+        try {
+            const userStorage = await this.prisma.userStorage.findFirst({
+                where: {
+                    id: documentId,
+                    userId: userId,
+                },
+            });
+
+            if (!userStorage) {
+                return null;
+            }
+
+            // Use semantic search to find relevant chunks
+            const relevantContent = await this.aiService.searchDocumentsByQuery(
+                documentId,
+                userQuery,
+                5 // Top 5 most relevant chunks
+            );
+
+            return relevantContent;
+        } catch (error) {
+            console.error('Error getting document context:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Fallback: Get document content sequentially (for when no specific query)
      */
     private async getDocumentContext(
         documentId: string,
@@ -39,6 +74,7 @@ export class VirtualTeacherService {
                 orderBy: {
                     pageRange: 'asc',
                 },
+                take: 10,
                 select: {
                     content: true,
                     pageRange: true,
@@ -90,6 +126,52 @@ export class VirtualTeacherService {
         processed = processed.replace(/\.\s*\./g, '.');
 
         return processed.trim();
+    }
+
+    /**
+     * Detect if user's message relates to document (RAG) or is a general question
+     * Uses a quick LLM call to classify intent
+     */
+    async detectIntent(
+        message: string,
+        recentHistory: Array<{ role: 'user' | 'model'; content: string }>
+    ): Promise<'RAG' | 'GENERAL'> {
+        try {
+            // Format recent history for context
+            const historyText = recentHistory
+                .slice(-6) // Last 3 exchanges
+                .map(
+                    (h) =>
+                        `${h.role === 'user' ? 'User' : 'AI'}: ${h.content.substring(0, 200)}`
+                )
+                .join('\n');
+
+            const prompt = `Nhiệm vụ: Xác định câu hỏi mới có liên quan đến tài liệu/file đã thảo luận trước đó hay không.
+
+Lịch sử hội thoại gần đây:
+${historyText || '(Không có lịch sử)'}
+
+Câu hỏi mới: "${message}"
+
+Quy tắc:
+- Trả lời "RAG" nếu câu hỏi liên quan đến tài liệu, file, nội dung đã đề cập
+- Trả lời "GENERAL" nếu là câu hỏi chung, hỏi thời tiết, hỏi về chủ đề khác
+
+Chỉ trả lời 1 từ: RAG hoặc GENERAL`;
+
+            const result = await this.aiService.generateContent(prompt);
+            const trimmed = (result || 'RAG').trim().toUpperCase();
+
+            console.log(
+                `[Intent Detection] Message: "${message.substring(0, 50)}..." → ${trimmed.includes('RAG') ? 'RAG' : 'GENERAL'}`
+            );
+
+            return trimmed.includes('RAG') ? 'RAG' : 'GENERAL';
+        } catch (error) {
+            console.error('Error detecting intent:', error);
+            // Default to RAG to be safe (use document context if available)
+            return 'RAG';
+        }
     }
 
     /**
@@ -300,18 +382,27 @@ export class VirtualTeacherService {
 
     /**
      * Streaming chat with conversation history for context-aware responses
-     * @param message Current message
-     * @param history Previous messages (max 30 for sliding window)
-     * @param documentContext Optional document context
+     * Uses semantic search for document context when documentId is provided
      */
     async *processChatWithHistoryStream(
         message: string,
         history: Array<{ role: 'user' | 'model'; content: string }>,
-        documentContext?: string | null
+        documentId?: string | null,
+        userId?: string
     ): AsyncGenerator<string, void, unknown> {
+        // Get document context using semantic search if documentId provided
+        let documentContext: string | null = null;
+        if (documentId && userId) {
+            documentContext = await this.getDocumentContextSemantic(
+                documentId,
+                userId,
+                message // Use user's message for semantic relevance
+            );
+        }
+
         const systemPrompt = this.promptUtils.buildVirtualTeacherPrompt(
             '',
-            documentContext || null
+            documentContext
         );
 
         for await (const chunk of this.aiService.generateChatWithHistoryStream(

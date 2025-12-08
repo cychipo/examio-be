@@ -115,6 +115,31 @@ export class AIChatController {
         return { success: true, message: 'Chat deleted successfully' };
     }
 
+    @Patch(':id/active-document')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Set active document for smart RAG' })
+    @ApiParam({ name: 'id', description: 'Chat ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Active document updated',
+    })
+    async setActiveDocument(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') chatId: string,
+        @Body() dto: { documentId: string | null; documentName: string | null }
+    ): Promise<{
+        activeDocumentId: string | null;
+        activeDocumentName: string | null;
+    }> {
+        return this.aiChatService.setActiveDocument(
+            chatId,
+            req.user.id,
+            dto.documentId,
+            dto.documentName
+        );
+    }
+
     @Patch('message/:id')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')

@@ -612,6 +612,66 @@ export class AIChatService {
         return words.substring(0, 47) + '...';
     }
 
+    /**
+     * Set active document for a chat (used for smart RAG)
+     */
+    async setActiveDocument(
+        chatId: string,
+        userId: string,
+        documentId: string | null,
+        documentName: string | null
+    ): Promise<{
+        activeDocumentId: string | null;
+        activeDocumentName: string | null;
+    }> {
+        const chat = await this.prisma.aIChat.findFirst({
+            where: { id: chatId, userId },
+        });
+
+        if (!chat) {
+            throw new NotFoundException('Chat không tồn tại');
+        }
+
+        const updated = await this.prisma.aIChat.update({
+            where: { id: chatId },
+            data: {
+                activeDocumentId: documentId,
+                activeDocumentName: documentName,
+            },
+        });
+
+        await this.invalidateUserChatsCache(userId);
+        console.log(
+            `[AIChatService] Set active document for chat ${chatId}: ${documentName || 'cleared'}`
+        );
+
+        return {
+            activeDocumentId: updated.activeDocumentId,
+            activeDocumentName: updated.activeDocumentName,
+        };
+    }
+
+    /**
+     * Get chat with active document info
+     */
+    async getChatWithActiveDocument(
+        chatId: string,
+        userId: string
+    ): Promise<{
+        activeDocumentId: string | null;
+        activeDocumentName: string | null;
+    } | null> {
+        const chat = await this.prisma.aIChat.findFirst({
+            where: { id: chatId, userId },
+            select: {
+                activeDocumentId: true,
+                activeDocumentName: true,
+            },
+        });
+
+        return chat;
+    }
+
     private extractR2Key(imageUrl: string): string | null {
         try {
             const url = new URL(imageUrl);
@@ -719,6 +779,14 @@ export class AIChatService {
             // Get chat history for context (cached, sliding window)
             const history = await this.getChatHistoryForAI(chatId, userId);
 
+            // Get chat's active document for smart RAG
+            const chatActiveDoc = await this.getChatWithActiveDocument(
+                chatId,
+                userId
+            );
+            const activeDocumentId =
+                dto.documentId || chatActiveDoc?.activeDocumentId || null;
+
             if (dto.imageUrl) {
                 // Image chat doesn't use history (model limitation)
                 for await (const chunk of this.virtualTeacherService.processImageChatStream(
@@ -730,11 +798,35 @@ export class AIChatService {
                     yield chunk;
                 }
             } else {
-                // Use history-aware chat streaming
+                // Smart RAG: Check if we should apply RAG based on intent
+                let effectiveDocumentId: string | null = null;
+
+                if (activeDocumentId) {
+                    // Chat has active document - use intent detection
+                    const intent =
+                        await this.virtualTeacherService.detectIntent(
+                            dto.message,
+                            history
+                        );
+
+                    if (intent === 'RAG') {
+                        effectiveDocumentId = activeDocumentId;
+                        console.log(
+                            `[Smart RAG] Applying RAG for message: "${dto.message.substring(0, 50)}..."`
+                        );
+                    } else {
+                        console.log(
+                            `[Smart RAG] Skipping RAG (GENERAL intent) for message: "${dto.message.substring(0, 50)}..."`
+                        );
+                    }
+                }
+
+                // Use history-aware chat streaming with optional semantic search
                 for await (const chunk of this.virtualTeacherService.processChatWithHistoryStream(
                     dto.message,
                     history,
-                    null // documentContext handled separately if needed
+                    effectiveDocumentId,
+                    userId
                 )) {
                     fullResponse += chunk;
                     yield chunk;
