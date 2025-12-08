@@ -28,6 +28,11 @@ import { EXPIRED_TIME } from 'src/constants/redis';
 // Cache module key for AI Chat
 const AI_CHAT_MODULE = 'AI_CHAT' as const;
 
+// Chat limits
+const MAX_HISTORY_MESSAGES = 30; // Sliding window size for AI context
+const MAX_USER_MESSAGES_PER_CHAT = 50; // Max user messages per chat (100 total)
+const HISTORY_CACHE_TTL = 60; // Cache history for 60 seconds
+
 @Injectable()
 export class AIChatService {
     constructor(
@@ -37,6 +42,118 @@ export class AIChatService {
         private readonly generateIdService: GenerateIdService,
         private readonly r2Service: R2Service
     ) {}
+
+    /**
+     * Get chat history for AI context (sliding window, cached)
+     * O(1) with cache hit, else O(n) where n = message count
+     * @returns Array of { role: 'user' | 'model', content: string }
+     */
+    private async getChatHistoryForAI(
+        chatId: string,
+        userId: string
+    ): Promise<Array<{ role: 'user' | 'model'; content: string }>> {
+        const cacheKey = getItemCacheKey(
+            AI_CHAT_MODULE,
+            userId,
+            chatId,
+            'ai_history'
+        );
+
+        // Try cache first (O(1))
+        const cached =
+            await this.redisService.get<
+                Array<{ role: 'user' | 'model'; content: string }>
+            >(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
+        // Fetch last 30 messages from DB
+        const messages = await this.prisma.aIChatMessage.findMany({
+            where: { chatId },
+            orderBy: { createdAt: 'desc' },
+            take: MAX_HISTORY_MESSAGES,
+            select: { role: true, content: true },
+        });
+
+        // Reverse to get chronological order and map to AI format
+        const history = messages.reverse().map((msg) => ({
+            role: (msg.role === 'assistant' ? 'model' : 'user') as
+                | 'user'
+                | 'model',
+            content: msg.content,
+        }));
+
+        // Cache for next requests
+        await this.redisService.set(cacheKey, history, HISTORY_CACHE_TTL);
+
+        return history;
+    }
+
+    /**
+     * Get user message count (cached for O(1))
+     */
+    private async getUserMessageCount(chatId: string): Promise<number> {
+        const cacheKey = `ai_chat:msg_count:${chatId}`;
+
+        const cached = await this.redisService.get<number>(cacheKey);
+        if (cached !== null) {
+            return cached;
+        }
+
+        const count = await this.prisma.aIChatMessage.count({
+            where: { chatId, role: 'user' },
+        });
+
+        // Cache indefinitely (invalidated on message create/delete)
+        await this.redisService.set(cacheKey, count, EXPIRED_TIME.ONE_DAY);
+        return count;
+    }
+
+    /**
+     * Increment user message count cache
+     */
+    private async incrementMessageCount(chatId: string): Promise<void> {
+        const cacheKey = `ai_chat:msg_count:${chatId}`;
+        const current = await this.getUserMessageCount(chatId);
+        await this.redisService.set(
+            cacheKey,
+            current + 1,
+            EXPIRED_TIME.ONE_DAY
+        );
+    }
+
+    /**
+     * Check if chat has reached message limit
+     */
+    private async checkMessageLimit(chatId: string): Promise<void> {
+        const count = await this.getUserMessageCount(chatId);
+        if (count >= MAX_USER_MESSAGES_PER_CHAT) {
+            throw new BadRequestException(
+                `Đoạn chat này đã đạt giới hạn ${MAX_USER_MESSAGES_PER_CHAT} tin nhắn. Vui lòng tạo đoạn chat mới.`
+            );
+        }
+    }
+
+    /**
+     * Invalidate history cache when messages change
+     */
+    private async invalidateHistoryCache(
+        userId: string,
+        chatId: string
+    ): Promise<void> {
+        const historyKey = getItemCacheKey(
+            AI_CHAT_MODULE,
+            userId,
+            chatId,
+            'ai_history'
+        );
+        const countKey = `ai_chat:msg_count:${chatId}`;
+        await Promise.all([
+            this.redisService.del(historyKey),
+            this.redisService.del(countKey),
+        ]);
+    }
 
     async getChats(userId: string): Promise<ChatListResponseDto> {
         const cacheKey = getUserCacheKey(AI_CHAT_MODULE, userId);
@@ -565,7 +682,9 @@ export class AIChatService {
             throw new NotFoundException('Chat không tồn tại');
         }
 
+        // Check rate limit and message limit
         await this.checkRateLimit(userId);
+        await this.checkMessageLimit(chatId);
 
         const userMessage = await this.prisma.aIChatMessage.create({
             data: {
@@ -578,6 +697,9 @@ export class AIChatService {
                 documentName: dto.documentName,
             },
         });
+
+        // Increment message count cache
+        await this.incrementMessageCount(chatId);
 
         return {
             userMessage: this.mapToMessageDto(userMessage),
@@ -594,7 +716,11 @@ export class AIChatService {
         let fullResponse = '';
 
         try {
+            // Get chat history for context (cached, sliding window)
+            const history = await this.getChatHistoryForAI(chatId, userId);
+
             if (dto.imageUrl) {
+                // Image chat doesn't use history (model limitation)
                 for await (const chunk of this.virtualTeacherService.processImageChatStream(
                     dto.imageUrl,
                     dto.message,
@@ -604,9 +730,11 @@ export class AIChatService {
                     yield chunk;
                 }
             } else {
-                for await (const chunk of this.virtualTeacherService.processChatStream(
-                    { message: dto.message, documentId: dto.documentId },
-                    userId
+                // Use history-aware chat streaming
+                for await (const chunk of this.virtualTeacherService.processChatWithHistoryStream(
+                    dto.message,
+                    history,
+                    null // documentContext handled separately if needed
                 )) {
                     fullResponse += chunk;
                     yield chunk;
@@ -639,8 +767,10 @@ export class AIChatService {
                 data: { updatedAt: new Date() },
             });
 
+            // Invalidate all caches
             await this.invalidateUserChatsCache(userId);
             await this.invalidateChatMessagesCache(userId, chatId);
+            await this.invalidateHistoryCache(userId, chatId);
 
             yield this.mapToMessageDto(assistantMessage);
         } catch (error) {

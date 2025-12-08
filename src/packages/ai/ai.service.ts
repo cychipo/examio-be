@@ -346,6 +346,43 @@ export class AIService {
     }
 
     /**
+     * Chat with conversation history using streaming
+     * Uses ai.chats.create for context-aware responses
+     * @param message Current user message
+     * @param history Array of previous messages in format { role: 'user' | 'model', content: string }
+     * @param systemPrompt Optional system instruction
+     */
+    async *generateChatWithHistoryStream(
+        message: string,
+        history: Array<{ role: 'user' | 'model'; content: string }>,
+        systemPrompt?: string
+    ): AsyncGenerator<string, void, unknown> {
+        // Convert history to Gemini format
+        const formattedHistory = history.map((msg) => ({
+            role: msg.role,
+            parts: [{ text: msg.content }],
+        }));
+
+        // Create chat session with history
+        const chat = this.ensureClient().chats.create({
+            model: this.modalName,
+            history: formattedHistory,
+            config: systemPrompt
+                ? { systemInstruction: systemPrompt }
+                : undefined,
+        });
+
+        // Send message and stream response
+        const response = await chat.sendMessageStream({ message });
+
+        for await (const chunk of response) {
+            if (chunk.text) {
+                yield chunk.text;
+            }
+        }
+    }
+
+    /**
      * Generate content with image input
      * @param prompt Text prompt
      * @param base64ImageData Base64 encoded image data

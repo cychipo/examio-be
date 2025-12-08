@@ -21,7 +21,6 @@ export class VirtualTeacherService {
         userId: string
     ): Promise<string | null> {
         try {
-            // Verify user owns the document
             const userStorage = await this.prisma.userStorage.findFirst({
                 where: {
                     id: documentId,
@@ -33,7 +32,6 @@ export class VirtualTeacherService {
                 return null;
             }
 
-            // Get all document chunks
             const documents = await this.prisma.document.findMany({
                 where: {
                     userStorageId: documentId,
@@ -51,7 +49,6 @@ export class VirtualTeacherService {
                 return null;
             }
 
-            // Combine all content (limit to ~4000 chars to leave room for prompt)
             let combinedContent = '';
             for (const doc of documents) {
                 if (combinedContent.length + doc.content.length > 4000) {
@@ -77,21 +74,17 @@ export class VirtualTeacherService {
     private postProcessResponse(response: string): string {
         let processed = response;
 
-        // Remove markdown formatting
         processed = processed.replace(/\*\*/g, '');
         processed = processed.replace(/##/g, '');
         processed = processed.replace(/\*/g, '');
         processed = processed.replace(/#/g, '');
 
-        // Remove bullet points and list markers
         processed = processed.replace(/^[-•]\s*/gm, '');
         processed = processed.replace(/^\d+\.\s*/gm, '');
 
-        // Replace multiple newlines with period + space
         processed = processed.replace(/\n\n+/g, '. ');
         processed = processed.replace(/\n/g, ' ');
 
-        // Clean up multiple spaces and periods
         processed = processed.replace(/\s+/g, ' ');
         processed = processed.replace(/\.+/g, '.');
         processed = processed.replace(/\.\s*\./g, '.');
@@ -107,7 +100,6 @@ export class VirtualTeacherService {
         userId: string
     ): Promise<ChatResponseDto> {
         try {
-            // Get document context if documentId provided
             let documentContext: string | null = null;
             if (dto.documentId) {
                 documentContext = await this.getDocumentContext(
@@ -116,13 +108,11 @@ export class VirtualTeacherService {
                 );
             }
 
-            // Build prompt using PromptUtils
             const prompt = this.promptUtils.buildVirtualTeacherPrompt(
                 dto.message,
                 documentContext
             );
 
-            // Call Gemini API using AIService
             const response = await this.aiService.generateContent(prompt);
 
             if (!response) {
@@ -134,7 +124,6 @@ export class VirtualTeacherService {
                 };
             }
 
-            // Post-process for TTS
             const processedResponse = this.postProcessResponse(response);
 
             return {
@@ -144,7 +133,6 @@ export class VirtualTeacherService {
         } catch (error: any) {
             console.error('❌ Error in processChat:', error);
 
-            // Check for rate limit / quota errors
             const isQuotaError =
                 error?.status === 429 ||
                 error?.error?.code === 429 ||
@@ -181,7 +169,6 @@ export class VirtualTeacherService {
         userId: string
     ): Promise<ChatResponseDto> {
         try {
-            // Fetch image from URL
             const imageResponse = await fetch(imageUrl);
             if (!imageResponse.ok) {
                 return {
@@ -195,17 +182,14 @@ export class VirtualTeacherService {
             const base64ImageData =
                 Buffer.from(imageArrayBuffer).toString('base64');
 
-            // Determine mime type from response headers or URL
             const contentType =
                 imageResponse.headers.get('content-type') || 'image/jpeg';
 
-            // Build prompt with image context
             const textPrompt = this.promptUtils.buildVirtualTeacherPrompt(
                 message,
                 null
             );
 
-            // Call Gemini API with image content
             const result = await this.aiService.generateContentWithImage(
                 textPrompt,
                 base64ImageData,
@@ -221,7 +205,6 @@ export class VirtualTeacherService {
                 };
             }
 
-            // Post-process for TTS
             const processedResponse = this.postProcessResponse(result);
 
             return {
@@ -261,7 +244,6 @@ export class VirtualTeacherService {
         dto: ChatRequestDto,
         userId: string
     ): AsyncGenerator<string, void, unknown> {
-        // Get document context if documentId provided
         let documentContext: string | null = null;
         if (dto.documentId) {
             documentContext = await this.getDocumentContext(
@@ -270,13 +252,11 @@ export class VirtualTeacherService {
             );
         }
 
-        // Build prompt using PromptUtils
         const prompt = this.promptUtils.buildVirtualTeacherPrompt(
             dto.message,
             documentContext
         );
 
-        // Stream from AI
         for await (const chunk of this.aiService.generateContentStream(
             prompt
         )) {
@@ -292,7 +272,6 @@ export class VirtualTeacherService {
         message: string,
         userId: string
     ): AsyncGenerator<string, void, unknown> {
-        // Fetch image from URL
         const imageResponse = await fetch(imageUrl);
         if (!imageResponse.ok) {
             throw new Error('Failed to fetch image');
@@ -310,11 +289,35 @@ export class VirtualTeacherService {
             null
         );
 
-        // Stream from AI with image
         for await (const chunk of this.aiService.generateContentWithImageStream(
             textPrompt,
             base64ImageData,
             contentType
+        )) {
+            yield chunk;
+        }
+    }
+
+    /**
+     * Streaming chat with conversation history for context-aware responses
+     * @param message Current message
+     * @param history Previous messages (max 30 for sliding window)
+     * @param documentContext Optional document context
+     */
+    async *processChatWithHistoryStream(
+        message: string,
+        history: Array<{ role: 'user' | 'model'; content: string }>,
+        documentContext?: string | null
+    ): AsyncGenerator<string, void, unknown> {
+        const systemPrompt = this.promptUtils.buildVirtualTeacherPrompt(
+            '',
+            documentContext || null
+        );
+
+        for await (const chunk of this.aiService.generateChatWithHistoryStream(
+            message,
+            history,
+            systemPrompt
         )) {
             yield chunk;
         }
