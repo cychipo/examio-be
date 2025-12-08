@@ -115,29 +115,51 @@ export class AIChatController {
         return { success: true, message: 'Chat deleted successfully' };
     }
 
-    @Patch(':id/active-document')
+    // ================== MULTI-DOCUMENT ENDPOINTS ==================
+
+    @Post(':id/documents')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Set active document for smart RAG' })
+    @ApiOperation({ summary: 'Add a document to chat' })
     @ApiParam({ name: 'id', description: 'Chat ID' })
-    @ApiResponse({
-        status: 200,
-        description: 'Active document updated',
-    })
-    async setActiveDocument(
+    async addDocument(
         @Req() req: AuthenticatedRequest,
         @Param('id') chatId: string,
-        @Body() dto: { documentId: string | null; documentName: string | null }
-    ): Promise<{
-        activeDocumentId: string | null;
-        activeDocumentName: string | null;
-    }> {
-        return this.aiChatService.setActiveDocument(
+        @Body() dto: { documentId: string; documentName: string }
+    ): Promise<{ id: string; documentId: string; documentName: string }> {
+        return this.aiChatService.addDocument(
             chatId,
             req.user.id,
             dto.documentId,
             dto.documentName
         );
+    }
+
+    @Delete(':id/documents/:documentId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Remove a document from chat' })
+    @ApiParam({ name: 'id', description: 'Chat ID' })
+    @ApiParam({ name: 'documentId', description: 'Document ID to remove' })
+    async removeDocument(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') chatId: string,
+        @Param('documentId') documentId: string
+    ): Promise<{ success: boolean }> {
+        await this.aiChatService.removeDocument(chatId, req.user.id, documentId);
+        return { success: true };
+    }
+
+    @Get(':id/documents')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get all documents for a chat' })
+    @ApiParam({ name: 'id', description: 'Chat ID' })
+    async getDocuments(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') chatId: string
+    ): Promise<Array<{ documentId: string; documentName: string }>> {
+        return this.aiChatService.getChatDocuments(chatId, req.user.id);
     }
 
     @Patch('message/:id')

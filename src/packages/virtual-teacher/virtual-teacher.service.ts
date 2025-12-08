@@ -27,28 +27,29 @@ export class VirtualTeacherService {
      * Get relevant document content using semantic search (vector-based)
      * Creates embedding from user's query and finds most relevant chunks
      */
+    /**
+     * Get relevant document content using semantic search (vector-based)
+     * Creates embedding from user's enhanced query and finds most relevant chunks
+     */
     private async getDocumentContextSemantic(
-        documentId: string,
+        documentIds: string | string[],
         userId: string,
-        userQuery: string
+        userQuery: string,
+        history: Array<{ role: 'user' | 'model'; content: string }> = []
     ): Promise<string | null> {
         try {
-            const userStorage = await this.prisma.userStorage.findFirst({
-                where: {
-                    id: documentId,
-                    userId: userId,
-                },
-            });
+            // Contextual Search: Combine history (sliding window of last 30 msgs) with current query
+            // to create a more comprehensive embedding vector
+            const recentHistory = history.slice(-30).map(h => h.content).join(' ');
+            const contextualQuery = recentHistory
+                ? `${recentHistory}\nUser Question: ${userQuery}`
+                : userQuery;
 
-            if (!userStorage) {
-                return null;
-            }
-
-            // Use semantic search to find relevant chunks
+            // Use semantic search to find relevant chunks across ALL documentIds
             const relevantContent = await this.aiService.searchDocumentsByQuery(
-                documentId,
-                userQuery,
-                5 // Top 5 most relevant chunks
+                documentIds,
+                contextualQuery, // Use enriched query for search
+                5 // Top 5 chunks
             );
 
             return relevantContent;
@@ -382,15 +383,25 @@ Chỉ trả lời 1 từ: RAG hoặc GENERAL`;
         message: string,
         history: Array<{ role: 'user' | 'model'; content: string }>,
         documentId?: string | null,
+        documentIds?: string[] | null,
         userId?: string
     ): AsyncGenerator<string, void, unknown> {
-        // Get document context using semantic search if documentId provided
+        // Normalize document IDs
+        let targetIds: string[] = [];
+        if (documentIds && Array.isArray(documentIds)) {
+            targetIds = documentIds;
+        } else if (documentId) {
+            targetIds = [documentId];
+        }
+
+        // Get document context using semantic search if documentIds provided
         let documentContext: string | null = null;
-        if (documentId && userId) {
+        if (targetIds.length > 0 && userId) {
             documentContext = await this.getDocumentContextSemantic(
-                documentId,
+                targetIds,
                 userId,
-                message // Use user's message for semantic relevance
+                message,
+                history // Pass history for Contextual Search
             );
         }
 

@@ -12,22 +12,21 @@ datasource db {
 
 
 model AIChat {
-    id                 String   @unique
-    userId             String
-    title              String   @default("")
-    activeDocumentId   String? // UserStorage ID of active document for RAG
-    activeDocumentName String? // File name for display
-    createdAt          DateTime @default(now())
-    updatedAt          DateTime @default(now()) @updatedAt
+    id        String   @id
+    userId    String
+    title     String   @default("")
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
 
-    user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-    messages AIChatMessage[]
+    user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+    messages  AIChatMessage[]
+    documents AIChatDocument[]  // Multi-file support
 
     @@index([userId, updatedAt(sort: Desc)])
 }
 
 model AIChatMessage {
-    id           String   @unique
+    id           String   @id
     chatId       String
     role         String // "user" | "assistant"
     content      String
@@ -39,6 +38,23 @@ model AIChatMessage {
     chat AIChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
     @@index([chatId, createdAt])
+}
+
+// Junction table for multi-document support
+// Allows O(1) lookup of all documents for a chat via chatId index
+model AIChatDocument {
+    id           String   @id @default(cuid())
+    chatId       String
+    documentId   String   // UserStorage ID
+    documentName String   // File name for display
+    createdAt    DateTime @default(now())
+
+    chat AIChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+    // Composite unique constraint prevents duplicate document per chat
+    @@unique([chatId, documentId])
+    // Index for O(1) lookup of documents by chatId
+    @@index([chatId])
 }
 
 

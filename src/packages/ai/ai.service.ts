@@ -103,7 +103,7 @@ export class AIService {
      * - Returns filtered document chunks
      */
     private async findSimilarDocuments(
-        userStorageId: string,
+        userStorageIds: string | string[],
         keywordEmbedding: number[],
         topK?: number,
         similarityThreshold?: number
@@ -111,6 +111,10 @@ export class AIService {
         if (!Array.isArray(keywordEmbedding) || !keywordEmbedding.length) {
             throw new BadRequestException('Embedding vector không hợp lệ');
         }
+
+        // Normalize ids to array
+        const ids = Array.isArray(userStorageIds) ? userStorageIds : [userStorageIds];
+
         // Set defaults if not provided
         const finalTopK =
             typeof topK === 'number'
@@ -121,17 +125,18 @@ export class AIService {
                 ? similarityThreshold
                 : AIService.VECTOR_SEARCH_CONFIG.SIMILARITY_THRESHOLD;
         try {
-            // Use $1: embedding, $2: userStorageId, $3: threshold, $4: topK
+            // Use $1: embedding, $2: userStorageIds array, $3: threshold, $4: topK
+            // Using = ANY($2::text[]) to match any of the provided IDs
             const result = await this.prisma.$queryRawUnsafe(
                 `SELECT id, "userStorageId", "pageRange", title, content, "createdAt", "updatedAt",
                     1 - (embeddings <=> $1::vector) as similarity_score
                  FROM "Document"
-                 WHERE "userStorageId" = $2
+                 WHERE "userStorageId" = ANY($2::text[])
                    AND 1 - (embeddings <=> $1::vector) > $3
                  ORDER BY embeddings <=> $1::vector ASC
                  LIMIT $4;`,
                 `[${keywordEmbedding.join(',')}]`,
-                userStorageId,
+                ids,
                 finalThreshold,
                 finalTopK
             );
@@ -165,7 +170,7 @@ export class AIService {
      * @returns Combined content from most relevant chunks
      */
     async searchDocumentsByQuery(
-        userStorageId: string,
+        userStorageIds: string | string[],
         query: string,
         topK: number = 5
     ): Promise<string | null> {
@@ -175,7 +180,7 @@ export class AIService {
 
             // Find similar documents
             const similarDocs = await this.findSimilarDocuments(
-                userStorageId,
+                userStorageIds,
                 queryEmbedding,
                 topK,
                 0.5 // Lower threshold for chat context to get more relevant results

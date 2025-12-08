@@ -15,6 +15,7 @@ export const SendMessageSchema = z.object({
         .max(1000, { message: 'Message must be less than 5000 characters' }),
     imageUrl: z.string().optional(),
     documentId: z.string().optional(),
+    documentIds: z.array(z.string()).optional(),
     documentName: z.string().optional(),
 });
 
@@ -48,6 +49,9 @@ export class SendMessageDto extends createZodDto(SendMessageSchema) {
 
     @ApiPropertyOptional({ description: 'Document ID for PDF context' })
     documentId?: string;
+
+    @ApiPropertyOptional({ description: 'List of Document IDs for PDF context' })
+    documentIds?: string[];
 
     @ApiPropertyOptional({ description: 'Document name for display' })
     documentName?: string;

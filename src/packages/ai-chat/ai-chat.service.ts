@@ -613,17 +613,15 @@ export class AIChatService {
     }
 
     /**
-     * Set active document for a chat (used for smart RAG)
+     * Add a document to chat (multi-doc support)
+     * O(1) insert with unique constraint handling
      */
-    async setActiveDocument(
+    async addDocument(
         chatId: string,
         userId: string,
-        documentId: string | null,
-        documentName: string | null
-    ): Promise<{
-        activeDocumentId: string | null;
-        activeDocumentName: string | null;
-    }> {
+        documentId: string,
+        documentName: string
+    ): Promise<{ id: string; documentId: string; documentName: string }> {
         const chat = await this.prisma.aIChat.findFirst({
             where: { id: chatId, userId },
         });
@@ -632,44 +630,99 @@ export class AIChatService {
             throw new NotFoundException('Chat không tồn tại');
         }
 
-        const updated = await this.prisma.aIChat.update({
-            where: { id: chatId },
-            data: {
-                activeDocumentId: documentId,
-                activeDocumentName: documentName,
+        // Upsert to handle duplicates gracefully
+        const doc = await this.prisma.aIChatDocument.upsert({
+            where: {
+                chatId_documentId: { chatId, documentId },
+            },
+            create: {
+                chatId,
+                documentId,
+                documentName,
+            },
+            update: {
+                documentName, // Update name if changed
             },
         });
 
-        await this.invalidateUserChatsCache(userId);
         console.log(
-            `[AIChatService] Set active document for chat ${chatId}: ${documentName || 'cleared'}`
+            `[AIChatService] Added document ${documentName} to chat ${chatId}`
         );
 
         return {
-            activeDocumentId: updated.activeDocumentId,
-            activeDocumentName: updated.activeDocumentName,
+            id: doc.id,
+            documentId: doc.documentId,
+            documentName: doc.documentName,
         };
     }
 
     /**
-     * Get chat with active document info
+     * Remove a document from chat
      */
-    async getChatWithActiveDocument(
+    async removeDocument(
         chatId: string,
-        userId: string
-    ): Promise<{
-        activeDocumentId: string | null;
-        activeDocumentName: string | null;
-    } | null> {
+        userId: string,
+        documentId: string
+    ): Promise<void> {
         const chat = await this.prisma.aIChat.findFirst({
             where: { id: chatId, userId },
-            select: {
-                activeDocumentId: true,
-                activeDocumentName: true,
-            },
         });
 
-        return chat;
+        if (!chat) {
+            throw new NotFoundException('Chat không tồn tại');
+        }
+
+        await this.prisma.aIChatDocument.deleteMany({
+            where: { chatId, documentId },
+        });
+
+        console.log(
+            `[AIChatService] Removed document ${documentId} from chat ${chatId}`
+        );
+    }
+
+    /**
+     * Clear all documents from chat
+     */
+    async clearDocuments(chatId: string, userId: string): Promise<void> {
+        const chat = await this.prisma.aIChat.findFirst({
+            where: { id: chatId, userId },
+        });
+
+        if (!chat) {
+            throw new NotFoundException('Chat không tồn tại');
+        }
+
+        await this.prisma.aIChatDocument.deleteMany({
+            where: { chatId },
+        });
+
+        console.log(`[AIChatService] Cleared all documents from chat ${chatId}`);
+    }
+
+    /**
+     * Get all documents for a chat
+     * O(1) lookup via chatId index
+     */
+    async getChatDocuments(
+        chatId: string,
+        userId: string
+    ): Promise<Array<{ documentId: string; documentName: string }>> {
+        const chat = await this.prisma.aIChat.findFirst({
+            where: { id: chatId, userId },
+        });
+
+        if (!chat) {
+            throw new NotFoundException('Chat không tồn tại');
+        }
+
+        const docs = await this.prisma.aIChatDocument.findMany({
+            where: { chatId },
+            select: { documentId: true, documentName: true },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        return docs;
     }
 
     private extractR2Key(imageUrl: string): string | null {
@@ -779,13 +832,9 @@ export class AIChatService {
             // Get chat history for context (cached, sliding window)
             const history = await this.getChatHistoryForAI(chatId, userId);
 
-            // Get chat's active document for smart RAG
-            const chatActiveDoc = await this.getChatWithActiveDocument(
-                chatId,
-                userId
-            );
-            const activeDocumentId =
-                dto.documentId || chatActiveDoc?.activeDocumentId || null;
+            // Get all documents linked to this chat (O(1) via index)
+            const chatDocs = await this.getChatDocuments(chatId, userId);
+            const chatDocumentIds = chatDocs.map((d) => d.documentId);
 
             if (dto.imageUrl) {
                 // Image chat doesn't use history (model limitation)
@@ -799,10 +848,23 @@ export class AIChatService {
                 }
             } else {
                 // Smart RAG: Check if we should apply RAG based on intent
-                let effectiveDocumentId: string | null = null;
+                let effectiveDocumentIds: string[] = [];
 
-                if (activeDocumentId) {
-                    // Chat has active document - use intent detection
+                // Collect all source IDs: from DTO + from chat's linked documents
+                if (dto.documentIds && Array.isArray(dto.documentIds)) {
+                    effectiveDocumentIds.push(...dto.documentIds);
+                }
+                if (dto.documentId) {
+                    effectiveDocumentIds.push(dto.documentId);
+                }
+                // Add documents from chat's AIChatDocument table
+                effectiveDocumentIds.push(...chatDocumentIds);
+
+                // Deduplicate
+                effectiveDocumentIds = [...new Set(effectiveDocumentIds)];
+
+                if (effectiveDocumentIds.length > 0) {
+                    // Chat has documents - use intent detection
                     const intent =
                         await this.virtualTeacherService.detectIntent(
                             dto.message,
@@ -810,22 +872,39 @@ export class AIChatService {
                         );
 
                     if (intent === 'RAG') {
-                        effectiveDocumentId = activeDocumentId;
                         console.log(
-                            `[Smart RAG] Applying RAG for message: "${dto.message.substring(0, 50)}..."`
+                            `[Smart RAG] Applying RAG for message: "${dto.message.substring(0, 50)}..." with ${effectiveDocumentIds.length} docs`
                         );
                     } else {
                         console.log(
                             `[Smart RAG] Skipping RAG (GENERAL intent) for message: "${dto.message.substring(0, 50)}..."`
                         );
+                        // If general intent, we might still pass IDs but maybe the service handles it?
+                        // The original code passed effectiveDocumentId only if RAG.
+                        // But wait, passing ID implies FORCE RAG in the service?
+                        // Service uses getDocumentContextSemantic if ID is present.
+                        // So if intent is GENERAL, we should probably NOT pass IDs?
+                        // Original code: if intent === 'RAG' { effectiveDocumentId = activeDocumentId; }
+                        // So if GENERAL, effectiveDocumentId remained null (unless dto provided it? NO, original code used local var)
+
+                        // Let's match original logic: Only use IDs if RAG intent is detected OR if explicitly asked?
+                        // Usually if user attaches a file explicitly in this message, they want RAG.
+                        // But here IDs might come from "active" state.
+
+                        // Let's assume if RAG, we pass ALL IDs. If not, we pass empty.
+                        // UNLESS logic says "Always RAG if explicit"?
+                        // Let's stick to "If General, clear IDs".
+                         effectiveDocumentIds = [];
                     }
                 }
 
                 // Use history-aware chat streaming with optional semantic search
+                // Note: passing null for single ID legacy param, and array for new param
                 for await (const chunk of this.virtualTeacherService.processChatWithHistoryStream(
                     dto.message,
                     history,
-                    effectiveDocumentId,
+                    null, // Legacy single ID
+                    effectiveDocumentIds, // New array IDs
                     userId
                 )) {
                     fullResponse += chunk;
