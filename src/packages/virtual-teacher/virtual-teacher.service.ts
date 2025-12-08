@@ -181,8 +181,6 @@ export class VirtualTeacherService {
         userId: string
     ): Promise<ChatResponseDto> {
         try {
-            console.log(`🖼️ Processing image chat for user ${userId}`);
-
             // Fetch image from URL
             const imageResponse = await fetch(imageUrl);
             if (!imageResponse.ok) {
@@ -253,6 +251,72 @@ export class VirtualTeacherService {
                     'Xin lỗi, tôi gặp lỗi khi xử lý hình ảnh. Vui lòng thử lại sau.',
                 error: 'Image processing error',
             };
+        }
+    }
+
+    /**
+     * Streaming chat processing - yields text chunks as they arrive
+     */
+    async *processChatStream(
+        dto: ChatRequestDto,
+        userId: string
+    ): AsyncGenerator<string, void, unknown> {
+        // Get document context if documentId provided
+        let documentContext: string | null = null;
+        if (dto.documentId) {
+            documentContext = await this.getDocumentContext(
+                dto.documentId,
+                userId
+            );
+        }
+
+        // Build prompt using PromptUtils
+        const prompt = this.promptUtils.buildVirtualTeacherPrompt(
+            dto.message,
+            documentContext
+        );
+
+        // Stream from AI
+        for await (const chunk of this.aiService.generateContentStream(
+            prompt
+        )) {
+            yield chunk;
+        }
+    }
+
+    /**
+     * Streaming chat with image processing
+     */
+    async *processImageChatStream(
+        imageUrl: string,
+        message: string,
+        userId: string
+    ): AsyncGenerator<string, void, unknown> {
+        // Fetch image from URL
+        const imageResponse = await fetch(imageUrl);
+        if (!imageResponse.ok) {
+            throw new Error('Failed to fetch image');
+        }
+
+        const imageArrayBuffer = await imageResponse.arrayBuffer();
+        const base64ImageData =
+            Buffer.from(imageArrayBuffer).toString('base64');
+
+        const contentType =
+            imageResponse.headers.get('content-type') || 'image/jpeg';
+
+        const textPrompt = this.promptUtils.buildVirtualTeacherPrompt(
+            message,
+            null
+        );
+
+        // Stream from AI with image
+        for await (const chunk of this.aiService.generateContentWithImageStream(
+            textPrompt,
+            base64ImageData,
+            contentType
+        )) {
+            yield chunk;
         }
     }
 }

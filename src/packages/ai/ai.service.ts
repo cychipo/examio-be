@@ -294,6 +294,58 @@ export class AIService {
     }
 
     /**
+     * Generate content with streaming support
+     * @param prompt Text prompt
+     * @returns AsyncGenerator yielding text chunks
+     */
+    async *generateContentStream(
+        prompt: string
+    ): AsyncGenerator<string, void, unknown> {
+        const response = await this.ensureClient().models.generateContentStream(
+            {
+                model: this.modalName,
+                contents: prompt,
+            }
+        );
+
+        for await (const chunk of response) {
+            if (chunk.text) {
+                yield chunk.text;
+            }
+        }
+    }
+
+    /**
+     * Generate content with image input using streaming
+     */
+    async *generateContentWithImageStream(
+        prompt: string,
+        base64ImageData: string,
+        mimeType: string
+    ): AsyncGenerator<string, void, unknown> {
+        const response = await this.ensureClient().models.generateContentStream(
+            {
+                model: 'gemini-2.5-flash',
+                contents: [
+                    {
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: base64ImageData,
+                        },
+                    },
+                    { text: prompt },
+                ],
+            }
+        );
+
+        for await (const chunk of response) {
+            if (chunk.text) {
+                yield chunk.text;
+            }
+        }
+    }
+
+    /**
      * Generate content with image input
      * @param prompt Text prompt
      * @param base64ImageData Base64 encoded image data

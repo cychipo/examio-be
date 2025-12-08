@@ -8,7 +8,9 @@ import {
     Param,
     UseGuards,
     Req,
+    Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import {
     ApiTags,
     ApiOperation,
@@ -139,5 +141,162 @@ export class AIChatController {
     ): Promise<{ success: boolean; message: string }> {
         await this.aiChatService.deleteMessage(messageId, req.user.id);
         return { success: true, message: 'Message deleted successfully' };
+    }
+
+    @Post('message/:id/regenerate')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Regenerate AI response from a message',
+    })
+    @ApiParam({ name: 'id', description: 'Message ID to regenerate from' })
+    @ApiResponse({ status: 200, type: SendMessageResponseDto })
+    async regenerateFromMessage(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') messageId: string
+    ): Promise<SendMessageResponseDto> {
+        return this.aiChatService.regenerateFromMessage(messageId, req.user.id);
+    }
+
+    @Get(':id/exists')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Check if chat exists' })
+    @ApiParam({ name: 'id', description: 'Chat ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Returns whether chat exists',
+    })
+    async chatExists(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') chatId: string
+    ): Promise<{ exists: boolean }> {
+        const exists = await this.aiChatService.chatExists(chatId, req.user.id);
+        return { exists };
+    }
+
+    @Post(':id/stream')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Send message and stream AI response via SSE' })
+    @ApiParam({ name: 'id', description: 'Chat ID' })
+    async streamMessage(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') chatId: string,
+        @Body() dto: SendMessageDto,
+        @Res() res: Response
+    ): Promise<void> {
+        const origin = (req.headers as any).origin || 'http://localhost:3001';
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.flushHeaders();
+
+        try {
+            const { userMessage, chatTitle, isNewChat } =
+                await this.aiChatService.createUserMessageForStream(
+                    chatId,
+                    req.user.id,
+                    dto
+                );
+
+            res.write(
+                `data: ${JSON.stringify({ type: 'user_message', data: userMessage })}\n\n`
+            );
+
+            let assistantMessage: any = null;
+            for await (const chunk of this.aiChatService.streamMessage(
+                chatId,
+                req.user.id,
+                dto
+            )) {
+                if (typeof chunk === 'string') {
+                    res.write(
+                        `data: ${JSON.stringify({ type: 'chunk', data: chunk })}\n\n`
+                    );
+                } else {
+                    // This is the MessageResponseDto yielded at the end
+                    assistantMessage = chunk;
+                }
+            }
+
+            res.write(
+                `data: ${JSON.stringify({ type: 'done', data: { assistantMessage, isNewChat } })}\n\n`
+            );
+            res.end();
+        } catch (error: any) {
+            res.write(
+                `data: ${JSON.stringify({ type: 'error', data: error.message || 'An error occurred' })}\n\n`
+            );
+            res.end();
+        }
+    }
+
+    @Post('message/:id/regenerate-stream')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Regenerate and stream AI response' })
+    @ApiParam({ name: 'id', description: 'Message ID to regenerate from' })
+    async regenerateStream(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') messageId: string,
+        @Res() res: Response
+    ): Promise<void> {
+        const origin = (req.headers as any).origin || 'http://localhost:3001';
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.flushHeaders();
+
+        try {
+            const { chatId, userMessage } =
+                await this.aiChatService.deleteMessagesAfter(
+                    messageId,
+                    req.user.id
+                );
+
+            // Send info that messages were deleted
+            res.write(
+                `data: ${JSON.stringify({ type: 'messages_deleted', data: { chatId, userMessage } })}\n\n`
+            );
+
+            // Stream new response
+            const dto: SendMessageDto = {
+                message: userMessage.content,
+                imageUrl: userMessage.imageUrl,
+                documentId: userMessage.documentId,
+                documentName: userMessage.documentName,
+            };
+
+            let assistantMessage: any = null;
+            for await (const chunk of this.aiChatService.streamMessage(
+                chatId,
+                req.user.id,
+                dto
+            )) {
+                if (typeof chunk === 'string') {
+                    res.write(
+                        `data: ${JSON.stringify({ type: 'chunk', data: chunk })}\n\n`
+                    );
+                } else {
+                    // This is the MessageResponseDto yielded at the end
+                    assistantMessage = chunk;
+                }
+            }
+
+            res.write(
+                `data: ${JSON.stringify({ type: 'done', data: { assistantMessage } })}\n\n`
+            );
+            res.end();
+        } catch (error: any) {
+            res.write(
+                `data: ${JSON.stringify({ type: 'error', data: error.message || 'An error occurred' })}\n\n`
+            );
+            res.end();
+        }
     }
 }

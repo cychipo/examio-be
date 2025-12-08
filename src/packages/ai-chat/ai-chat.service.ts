@@ -7,6 +7,8 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { VirtualTeacherService } from '../virtual-teacher/virtual-teacher.service';
+import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { R2Service } from '../r2/r2.service';
 import {
     CreateChatDto,
     SendMessageDto,
@@ -20,7 +22,6 @@ import {
 import {
     getUserCacheKey,
     getItemCacheKey,
-    getUserCachePattern,
 } from 'src/common/constants/cache-keys';
 import { EXPIRED_TIME } from 'src/constants/redis';
 
@@ -32,14 +33,12 @@ export class AIChatService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly redisService: RedisService,
-        private readonly virtualTeacherService: VirtualTeacherService
+        private readonly virtualTeacherService: VirtualTeacherService,
+        private readonly generateIdService: GenerateIdService,
+        private readonly r2Service: R2Service
     ) {}
 
-    /**
-     * Get all chats for a user with caching
-     */
     async getChats(userId: string): Promise<ChatListResponseDto> {
-        // Check cache first
         const cacheKey = getUserCacheKey(AI_CHAT_MODULE, userId);
         const cached =
             await this.redisService.get<ChatListResponseDto>(cacheKey);
@@ -48,7 +47,6 @@ export class AIChatService {
             return cached;
         }
 
-        // Fetch from DB
         const chats = await this.prisma.aIChat.findMany({
             where: { userId },
             orderBy: { updatedAt: 'desc' },
@@ -79,19 +77,14 @@ export class AIChatService {
             total: chats.length,
         };
 
-        // Cache result
         await this.redisService.set(cacheKey, result, EXPIRED_TIME.ONE_HOUR);
         return result;
     }
 
-    /**
-     * Get messages for a specific chat
-     */
     async getChatMessages(
         chatId: string,
         userId: string
     ): Promise<MessageResponseDto[]> {
-        // Verify ownership
         const chat = await this.prisma.aIChat.findFirst({
             where: { id: chatId, userId },
         });
@@ -99,7 +92,6 @@ export class AIChatService {
             throw new NotFoundException('Chat không tồn tại');
         }
 
-        // Check cache
         const cacheKey = getItemCacheKey(
             AI_CHAT_MODULE,
             userId,
@@ -115,7 +107,6 @@ export class AIChatService {
             return cached;
         }
 
-        // Fetch from DB
         const messages = await this.prisma.aIChatMessage.findMany({
             where: { chatId },
             orderBy: { createdAt: 'asc' },
@@ -132,26 +123,52 @@ export class AIChatService {
             createdAt: msg.createdAt,
         }));
 
-        // Cache result
         await this.redisService.set(cacheKey, result, EXPIRED_TIME.ONE_HOUR);
         return result;
     }
 
-    /**
-     * Create a new chat
-     */
+    async chatExists(chatId: string, userId: string): Promise<boolean> {
+        const chat = await this.prisma.aIChat.findFirst({
+            where: { id: chatId, userId },
+        });
+        return !!chat;
+    }
+
     async createChat(
         userId: string,
         dto: CreateChatDto
     ): Promise<ChatResponseDto> {
+        const existingEmptyChat = await this.prisma.aIChat.findFirst({
+            where: {
+                userId,
+                title: '',
+            },
+            include: {
+                _count: { select: { messages: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        if (existingEmptyChat && existingEmptyChat._count.messages === 0) {
+            return {
+                id: existingEmptyChat.id,
+                userId: existingEmptyChat.userId,
+                title: existingEmptyChat.title,
+                createdAt: existingEmptyChat.createdAt,
+                updatedAt: existingEmptyChat.updatedAt,
+                messages: [],
+                messageCount: 0,
+            };
+        }
+
         const chat = await this.prisma.aIChat.create({
             data: {
+                id: this.generateIdService.generateId(),
                 userId,
                 title: dto.title || '',
             },
         });
 
-        // Invalidate list cache
         await this.invalidateUserChatsCache(userId);
 
         return {
@@ -165,15 +182,11 @@ export class AIChatService {
         };
     }
 
-    /**
-     * Send a message and get AI response
-     */
     async sendMessage(
         chatId: string,
         userId: string,
         dto: SendMessageDto
     ): Promise<SendMessageResponseDto> {
-        // Verify ownership
         const chat = await this.prisma.aIChat.findFirst({
             where: { id: chatId, userId },
         });
@@ -181,9 +194,9 @@ export class AIChatService {
             throw new NotFoundException('Chat không tồn tại');
         }
 
-        // Create user message
         const userMessage = await this.prisma.aIChatMessage.create({
             data: {
+                id: this.generateIdService.generateId(),
                 chatId,
                 role: 'user',
                 content: dto.message,
@@ -193,18 +206,15 @@ export class AIChatService {
             },
         });
 
-        // Get AI response
         let aiResponse: { success: boolean; response: string; error?: string };
 
         if (dto.imageUrl) {
-            // Process with image
             aiResponse = await this.virtualTeacherService.processImageChat(
                 dto.imageUrl,
                 dto.message,
                 userId
             );
         } else {
-            // Process text only (with optional document context)
             aiResponse = await this.virtualTeacherService.processChat(
                 { message: dto.message, documentId: dto.documentId },
                 userId
@@ -219,19 +229,17 @@ export class AIChatService {
             };
         }
 
-        // Create assistant message
         const assistantMessage = await this.prisma.aIChatMessage.create({
             data: {
+                id: this.generateIdService.generateId(),
                 chatId,
                 role: 'assistant',
                 content: aiResponse.response,
             },
         });
 
-        // Auto-generate title if chat has no title
         let chatTitle = chat.title;
         if (!chat.title) {
-            // Get first 10 words from AI response
             chatTitle = this.generateChatTitle(aiResponse.response);
             await this.prisma.aIChat.update({
                 where: { id: chatId },
@@ -239,13 +247,11 @@ export class AIChatService {
             });
         }
 
-        // Update chat's updatedAt
         await this.prisma.aIChat.update({
             where: { id: chatId },
             data: { updatedAt: new Date() },
         });
 
-        // Invalidate caches
         await this.invalidateUserChatsCache(userId);
         await this.invalidateChatMessagesCache(userId, chatId);
 
@@ -257,15 +263,85 @@ export class AIChatService {
         };
     }
 
-    /**
-     * Update chat title
-     */
+    async regenerateFromMessage(
+        messageId: string,
+        userId: string
+    ): Promise<SendMessageResponseDto> {
+        const message = await this.prisma.aIChatMessage.findFirst({
+            where: { id: messageId },
+            include: { chat: true },
+        });
+
+        if (!message) {
+            throw new NotFoundException('Tin nhắn không tồn tại');
+        }
+
+        if (message.chat.userId !== userId) {
+            throw new ForbiddenException('Không có quyền truy cập');
+        }
+
+        if (message.role !== 'user') {
+            throw new BadRequestException(
+                'Chỉ có thể regenerate từ tin nhắn của bạn'
+            );
+        }
+
+        await this.prisma.aIChatMessage.deleteMany({
+            where: {
+                chatId: message.chatId,
+                createdAt: { gt: message.createdAt },
+            },
+        });
+
+        let aiResponse: { success: boolean; response: string; error?: string };
+
+        if (message.imageUrl) {
+            aiResponse = await this.virtualTeacherService.processImageChat(
+                message.imageUrl,
+                message.content,
+                userId
+            );
+        } else {
+            aiResponse = await this.virtualTeacherService.processChat(
+                {
+                    message: message.content,
+                    documentId: message.documentId || undefined,
+                },
+                userId
+            );
+        }
+
+        if (!aiResponse.success) {
+            await this.invalidateChatMessagesCache(userId, message.chatId);
+            return {
+                success: false,
+                error: aiResponse.error,
+            };
+        }
+
+        const assistantMessage = await this.prisma.aIChatMessage.create({
+            data: {
+                id: this.generateIdService.generateId(),
+                chatId: message.chatId,
+                role: 'assistant',
+                content: aiResponse.response,
+            },
+        });
+
+        await this.invalidateUserChatsCache(userId);
+        await this.invalidateChatMessagesCache(userId, message.chatId);
+
+        return {
+            success: true,
+            assistantMessage: this.mapToMessageDto(assistantMessage),
+        };
+    }
+
     async updateChat(
         chatId: string,
         userId: string,
         dto: UpdateChatDto
     ): Promise<ChatResponseDto> {
-        // Verify ownership
         const chat = await this.prisma.aIChat.findFirst({
             where: { id: chatId, userId },
         });
@@ -278,7 +354,6 @@ export class AIChatService {
             data: { title: dto.title },
         });
 
-        // Invalidate cache
         await this.invalidateUserChatsCache(userId);
 
         return {
@@ -290,11 +365,7 @@ export class AIChatService {
         };
     }
 
-    /**
-     * Delete a chat
-     */
     async deleteChat(chatId: string, userId: string): Promise<void> {
-        // Verify ownership
         const chat = await this.prisma.aIChat.findFirst({
             where: { id: chatId, userId },
         });
@@ -302,24 +373,42 @@ export class AIChatService {
             throw new NotFoundException('Chat không tồn tại');
         }
 
+        const messagesWithImages = await this.prisma.aIChatMessage.findMany({
+            where: {
+                chatId,
+                imageUrl: { not: null },
+            },
+            select: { imageUrl: true },
+        });
+
+        for (const msg of messagesWithImages) {
+            if (msg.imageUrl) {
+                const key = this.extractR2Key(msg.imageUrl);
+                if (key) {
+                    this.r2Service.deleteFile(key).catch((err) => {
+                        console.error(
+                            '[AIChatService] Failed to delete R2 image:',
+                            key,
+                            err
+                        );
+                    });
+                }
+            }
+        }
+
         await this.prisma.aIChat.delete({
             where: { id: chatId },
         });
 
-        // Invalidate caches
         await this.invalidateUserChatsCache(userId);
         await this.invalidateChatMessagesCache(userId, chatId);
     }
 
-    /**
-     * Update a message
-     */
     async updateMessage(
         messageId: string,
         userId: string,
         dto: UpdateMessageDto
     ): Promise<MessageResponseDto> {
-        // Find message and verify ownership
         const message = await this.prisma.aIChatMessage.findFirst({
             where: { id: messageId },
             include: { chat: true },
@@ -346,17 +435,12 @@ export class AIChatService {
             data: { content: dto.content },
         });
 
-        // Invalidate cache
         await this.invalidateChatMessagesCache(userId, message.chatId);
 
         return this.mapToMessageDto(updated);
     }
 
-    /**
-     * Delete a message
-     */
     async deleteMessage(messageId: string, userId: string): Promise<void> {
-        // Find message and verify ownership
         const message = await this.prisma.aIChatMessage.findFirst({
             where: { id: messageId },
             include: { chat: true },
@@ -370,15 +454,25 @@ export class AIChatService {
             throw new ForbiddenException('Không có quyền xóa tin nhắn này');
         }
 
+        if (message.imageUrl) {
+            const key = this.extractR2Key(message.imageUrl);
+            if (key) {
+                this.r2Service.deleteFile(key).catch((err) => {
+                    console.error(
+                        '[AIChatService] Failed to delete R2 image:',
+                        key,
+                        err
+                    );
+                });
+            }
+        }
+
         await this.prisma.aIChatMessage.delete({
             where: { id: messageId },
         });
 
-        // Invalidate cache
         await this.invalidateChatMessagesCache(userId, message.chatId);
     }
-
-    // ================== HELPER METHODS ==================
 
     private mapToMessageDto(message: any): MessageResponseDto {
         return {
@@ -394,12 +488,20 @@ export class AIChatService {
     }
 
     private generateChatTitle(response: string): string {
-        // Take first 10 words or 50 characters
         const words = response.split(/\s+/).slice(0, 10).join(' ');
         if (words.length <= 50) {
             return words;
         }
         return words.substring(0, 47) + '...';
+    }
+
+    private extractR2Key(imageUrl: string): string | null {
+        try {
+            const url = new URL(imageUrl);
+            return url.pathname.substring(1);
+        } catch {
+            return null;
+        }
     }
 
     private async invalidateUserChatsCache(userId: string): Promise<void> {
@@ -424,5 +526,165 @@ export class AIChatService {
         console.log(
             `[AIChatService] Invalidated messages cache for chat: ${chatId}`
         );
+    }
+
+    private getRateLimitKey(userId: string): string {
+        return `rate_limit:ai_chat:${userId}`;
+    }
+
+    async checkRateLimit(userId: string): Promise<void> {
+        const key = this.getRateLimitKey(userId);
+        const count = await this.redisService.get<number>(key);
+
+        if (count !== null && count >= 5) {
+            throw new BadRequestException(
+                'Bạn chỉ được gửi tối đa 5 tin nhắn mỗi phút. Vui lòng chờ một chút.'
+            );
+        }
+
+        if (count === null) {
+            await this.redisService.set(key, 1, 60);
+        } else {
+            await this.redisService.set(key, count + 1, 60);
+        }
+    }
+
+    async createUserMessageForStream(
+        chatId: string,
+        userId: string,
+        dto: SendMessageDto
+    ): Promise<{
+        userMessage: MessageResponseDto;
+        chatTitle: string;
+        isNewChat: boolean;
+    }> {
+        const chat = await this.prisma.aIChat.findFirst({
+            where: { id: chatId, userId },
+        });
+        if (!chat) {
+            throw new NotFoundException('Chat không tồn tại');
+        }
+
+        await this.checkRateLimit(userId);
+
+        const userMessage = await this.prisma.aIChatMessage.create({
+            data: {
+                id: this.generateIdService.generateId(),
+                chatId,
+                role: 'user',
+                content: dto.message,
+                imageUrl: dto.imageUrl,
+                documentId: dto.documentId,
+                documentName: dto.documentName,
+            },
+        });
+
+        return {
+            userMessage: this.mapToMessageDto(userMessage),
+            chatTitle: chat.title,
+            isNewChat: !chat.title,
+        };
+    }
+
+    async *streamMessage(
+        chatId: string,
+        userId: string,
+        dto: SendMessageDto
+    ): AsyncGenerator<string | MessageResponseDto, void, unknown> {
+        let fullResponse = '';
+
+        try {
+            if (dto.imageUrl) {
+                for await (const chunk of this.virtualTeacherService.processImageChatStream(
+                    dto.imageUrl,
+                    dto.message,
+                    userId
+                )) {
+                    fullResponse += chunk;
+                    yield chunk;
+                }
+            } else {
+                for await (const chunk of this.virtualTeacherService.processChatStream(
+                    { message: dto.message, documentId: dto.documentId },
+                    userId
+                )) {
+                    fullResponse += chunk;
+                    yield chunk;
+                }
+            }
+
+            const assistantMessage = await this.prisma.aIChatMessage.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    chatId,
+                    role: 'assistant',
+                    content: fullResponse,
+                },
+            });
+
+            const chat = await this.prisma.aIChat.findFirst({
+                where: { id: chatId, userId },
+            });
+
+            if (chat && !chat.title && fullResponse) {
+                const newTitle = this.generateChatTitle(fullResponse);
+                await this.prisma.aIChat.update({
+                    where: { id: chatId },
+                    data: { title: newTitle },
+                });
+            }
+
+            await this.prisma.aIChat.update({
+                where: { id: chatId },
+                data: { updatedAt: new Date() },
+            });
+
+            await this.invalidateUserChatsCache(userId);
+            await this.invalidateChatMessagesCache(userId, chatId);
+
+            yield this.mapToMessageDto(assistantMessage);
+        } catch (error) {
+            console.error('[AIChatService] Stream error:', error);
+        }
+    }
+
+    async deleteMessagesAfter(
+        messageId: string,
+        userId: string
+    ): Promise<{ chatId: string; userMessage: MessageResponseDto }> {
+        const message = await this.prisma.aIChatMessage.findFirst({
+            where: { id: messageId },
+            include: { chat: true },
+        });
+
+        if (!message) {
+            throw new NotFoundException('Tin nhắn không tồn tại');
+        }
+
+        if (message.chat.userId !== userId) {
+            throw new ForbiddenException('Không có quyền truy cập');
+        }
+
+        if (message.role !== 'user') {
+            throw new BadRequestException(
+                'Chỉ có thể regenerate từ tin nhắn của bạn'
+            );
+        }
+
+        await this.checkRateLimit(userId);
+
+        await this.prisma.aIChatMessage.deleteMany({
+            where: {
+                chatId: message.chatId,
+                createdAt: { gt: message.createdAt },
+            },
+        });
+
+        await this.invalidateChatMessagesCache(userId, message.chatId);
+
+        return {
+            chatId: message.chatId,
+            userMessage: this.mapToMessageDto(message),
+        };
     }
 }

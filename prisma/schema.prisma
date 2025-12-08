@@ -12,7 +12,7 @@ datasource db {
 
 
 model AIChat {
-    id        String   @id @default(cuid())
+    id        String   @unique
     userId    String
     title     String   @default("")
     createdAt DateTime @default(now())
@@ -25,7 +25,7 @@ model AIChat {
 }
 
 model AIChatMessage {
-    id           String   @id @default(cuid())
+    id           String   @unique
     chatId       String
     role         String // "user" | "assistant"
     content      String

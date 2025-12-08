@@ -12,7 +12,7 @@ export const SendMessageSchema = z.object({
     message: z
         .string()
         .min(1, { message: 'Message must not be empty' })
-        .max(5000, { message: 'Message must be less than 5000 characters' }),
+        .max(1000, { message: 'Message must be less than 5000 characters' }),
     imageUrl: z.string().optional(),
     documentId: z.string().optional(),
     documentName: z.string().optional(),
@@ -29,7 +29,7 @@ export const UpdateMessageSchema = z.object({
     content: z
         .string()
         .min(1, { message: 'Content must not be empty' })
-        .max(5000, { message: 'Content must be less than 5000 characters' }),
+        .max(1000, { message: 'Content must be less than 1000 characters' }),
 });
 
 // ================== REQUEST DTOs ==================
