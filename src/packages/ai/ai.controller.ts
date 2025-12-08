@@ -79,6 +79,23 @@ export class AIController {
         return this.aiService.deleteUpload(id, req.user.id);
     }
 
+    @Post('upload-image')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiOperation({ summary: 'Upload an image for AI chat' })
+    @ApiResponse({
+        status: 200,
+        description: 'Image uploaded successfully, returns URL',
+    })
+    @ApiFile('file')
+    async uploadImage(
+        @UploadedFile() file: Express.Multer.File,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.aiService.uploadChatImage(file, req.user.id);
+    }
+
     @Post('regenerate/:id')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')

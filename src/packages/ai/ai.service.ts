@@ -293,6 +293,34 @@ export class AIService {
         return response.text;
     }
 
+    /**
+     * Generate content with image input
+     * @param prompt Text prompt
+     * @param base64ImageData Base64 encoded image data
+     * @param mimeType Image MIME type (e.g., 'image/jpeg', 'image/png')
+     */
+    async generateContentWithImage(
+        prompt: string,
+        base64ImageData: string,
+        mimeType: string
+    ): Promise<string | undefined> {
+        const response = await this.retryWithBackoff(async () => {
+            return this.ensureClient().models.generateContent({
+                model: 'gemini-2.5-flash', // Use vision-capable model
+                contents: [
+                    {
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: base64ImageData,
+                        },
+                    },
+                    { text: prompt },
+                ],
+            });
+        });
+        return response.text;
+    }
+
     private async splitPdfToChunks(
         buffer: Buffer,
         chunkSize: number
@@ -935,6 +963,51 @@ export class AIService {
             .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
 
         return normalized || 'file';
+    }
+
+    /**
+     * Upload image for AI chat and return URL
+     */
+    async uploadChatImage(
+        file: Express.Multer.File,
+        userId: string
+    ): Promise<{ url: string }> {
+        if (!file) {
+            throw new BadRequestException('Chưa cung cấp hình ảnh');
+        }
+
+        const supportedMimeTypes = [
+            'image/jpeg',
+            'image/png',
+            'image/gif',
+            'image/webp',
+        ];
+        if (!file.mimetype || !supportedMimeTypes.includes(file.mimetype)) {
+            throw new BadRequestException(
+                'Chỉ hỗ trợ ảnh định dạng JPEG, PNG, GIF, WebP'
+            );
+        }
+
+        if (file.size > 5 * 1024 * 1024) {
+            throw new BadRequestException('Giới hạn kích thước ảnh là 5MB');
+        }
+
+        const r2Key = `chat-images/${userId}/${this.generateIdService.generateId()}`;
+        const r2File = await this.r2Service.uploadFile(
+            r2Key,
+            file.buffer,
+            file.mimetype
+        );
+
+        if (!r2File) {
+            throw new InternalServerErrorException(
+                'Không upload được ảnh lên R2'
+            );
+        }
+
+        return {
+            url: `https://examio-r2.fayedark.com/${r2File}`,
+        };
     }
 
     private async uploadAndCreateUserStorage(file: any, user: User) {

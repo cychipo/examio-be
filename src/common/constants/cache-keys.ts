@@ -33,6 +33,7 @@ export const CACHE_MODULES = {
     // AI & Storage
     USER_STORAGE: 'user_storage',
     DOCUMENT: 'document',
+    AI_CHAT: 'ai_chat',
 } as const;
 
 export type CacheModule = keyof typeof CACHE_MODULES;
