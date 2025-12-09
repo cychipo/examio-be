@@ -27,6 +27,7 @@ model User {
     historyGeneratedQuizz     HistoryGeneratedQuizz[]
     historyGeneratedFlashcard HistoryGeneratedFlashcard[]
     quizPracticeAttempts      QuizPracticeAttempt[]
+    aiChats                   AIChat[]
 }
 
 model VerifyAccountCode {

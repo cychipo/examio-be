@@ -8,6 +8,7 @@ export enum JobStatus {
 export enum JobType {
     QUIZ = 'quiz',
     FLASHCARD = 'flashcard',
+    KNOWLEDGE_BASE = 'knowledge_base',
 }
 
 export interface JobResponse {

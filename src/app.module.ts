@@ -7,9 +7,19 @@ import { ExamModule } from './packages/exam/exam.module';
 import { R2Module } from './packages/r2/r2.module';
 import { RedisModule } from './packages/redis/redis.module';
 import { VirtualTeacherModule } from './packages/virtual-teacher/virtual-teacher.module';
+import { AIChatModule } from './packages/ai-chat/ai-chat.module';
 
 @Module({
     providers: [PrismaService],
-    imports: [AuthModule, AIModule, FinanceModule, ExamModule, R2Module, RedisModule, VirtualTeacherModule],
+    imports: [
+        AuthModule,
+        AIModule,
+        FinanceModule,
+        ExamModule,
+        R2Module,
+        RedisModule,
+        VirtualTeacherModule,
+        AIChatModule,
+    ],
 })
 export class AppModule {}

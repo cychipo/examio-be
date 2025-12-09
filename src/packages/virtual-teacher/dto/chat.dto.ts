@@ -8,6 +8,7 @@ export const ChatRequestSchema = z.object({
         .min(1, { message: 'Message must not be empty' })
         .max(5000, { message: 'Message must be less than 5000 characters' }),
     documentId: z.string().optional(),
+    documentIds: z.array(z.string()).optional(),
 });
 
 export class ChatRequestDto extends createZodDto(ChatRequestSchema) {
@@ -18,10 +19,16 @@ export class ChatRequestDto extends createZodDto(ChatRequestSchema) {
     message: string;
 
     @ApiPropertyOptional({
-        description: 'Document ID (UserStorage ID) to use as context',
+        description: 'Document ID (UserStorage ID) to use as context (legacy)',
         example: 'abc123',
     })
     documentId?: string;
+
+    @ApiPropertyOptional({
+        description: 'List of Document IDs to use as context',
+        example: ['abc123', 'def456'],
+    })
+    documentIds?: string[];
 }
 
 export class ChatResponseDto {

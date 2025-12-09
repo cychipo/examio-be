@@ -3,6 +3,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { AIService } from '../ai/ai.service';
 import { PromptUtils } from 'src/utils/prompt';
 import { ChatRequestDto, ChatResponseDto } from './dto/chat.dto';
+import { User } from '@prisma/client';
+import { TYPE_RESULT } from '../ai/constant/type-result';
 
 @Injectable()
 export class VirtualTeacherService {
@@ -10,18 +12,61 @@ export class VirtualTeacherService {
 
     constructor(
         private readonly prisma: PrismaService,
-        private readonly aiService: AIService,
+        private readonly aiService: AIService
     ) {}
 
+    async uploadFileForTraining(file: Express.Multer.File, user: User) {
+        return this.aiService.createJob(
+            file,
+            user,
+            TYPE_RESULT.KNOWLEDGE_BASE
+        );
+    }
+
     /**
-     * Get document content from UserStorage and Document tables
+     * Get relevant document content using semantic search (vector-based)
+     * Creates embedding from user's query and finds most relevant chunks
+     */
+    /**
+     * Get relevant document content using semantic search (vector-based)
+     * Creates embedding from user's enhanced query and finds most relevant chunks
+     */
+    private async getDocumentContextSemantic(
+        documentIds: string | string[],
+        userId: string,
+        userQuery: string,
+        history: Array<{ role: 'user' | 'model'; content: string }> = []
+    ): Promise<string | null> {
+        try {
+            // Contextual Search: Combine history (sliding window of last 30 msgs) with current query
+            // to create a more comprehensive embedding vector
+            const recentHistory = history.slice(-30).map(h => h.content).join(' ');
+            const contextualQuery = recentHistory
+                ? `${recentHistory}\nUser Question: ${userQuery}`
+                : userQuery;
+
+            // Use semantic search to find relevant chunks across ALL documentIds
+            const relevantContent = await this.aiService.searchDocumentsByQuery(
+                documentIds,
+                contextualQuery, // Use enriched query for search
+                5 // Top 5 chunks
+            );
+
+            return relevantContent;
+        } catch (error) {
+            console.error('Error getting document context:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Fallback: Get document content sequentially (for when no specific query)
      */
     private async getDocumentContext(
         documentId: string,
-        userId: string,
+        userId: string
     ): Promise<string | null> {
         try {
-            // Verify user owns the document
             const userStorage = await this.prisma.userStorage.findFirst({
                 where: {
                     id: documentId,
@@ -33,7 +78,6 @@ export class VirtualTeacherService {
                 return null;
             }
 
-            // Get all document chunks
             const documents = await this.prisma.document.findMany({
                 where: {
                     userStorageId: documentId,
@@ -41,6 +85,7 @@ export class VirtualTeacherService {
                 orderBy: {
                     pageRange: 'asc',
                 },
+                take: 10,
                 select: {
                     content: true,
                     pageRange: true,
@@ -51,13 +96,12 @@ export class VirtualTeacherService {
                 return null;
             }
 
-            // Combine all content (limit to ~4000 chars to leave room for prompt)
             let combinedContent = '';
             for (const doc of documents) {
                 if (combinedContent.length + doc.content.length > 4000) {
                     combinedContent += doc.content.substring(
                         0,
-                        4000 - combinedContent.length,
+                        4000 - combinedContent.length
                     );
                     break;
                 }
@@ -75,28 +119,54 @@ export class VirtualTeacherService {
      * Post-process the AI response to make it suitable for TTS
      */
     private postProcessResponse(response: string): string {
-        let processed = response;
+        // Only trim whitespace, preserve Markdown characters for frontend rendering
+        return response.trim();
+    }
 
-        // Remove markdown formatting
-        processed = processed.replace(/\*\*/g, '');
-        processed = processed.replace(/##/g, '');
-        processed = processed.replace(/\*/g, '');
-        processed = processed.replace(/#/g, '');
+    /**
+     * Detect if user's message relates to document (RAG) or is a general question
+     * Uses a quick LLM call to classify intent
+     */
+    async detectIntent(
+        message: string,
+        recentHistory: Array<{ role: 'user' | 'model'; content: string }>
+    ): Promise<'RAG' | 'GENERAL'> {
+        try {
+            // Format recent history for context
+            const historyText = recentHistory
+                .slice(-6) // Last 3 exchanges
+                .map(
+                    (h) =>
+                        `${h.role === 'user' ? 'User' : 'AI'}: ${h.content.substring(0, 200)}`
+                )
+                .join('\n');
 
-        // Remove bullet points and list markers
-        processed = processed.replace(/^[-•]\s*/gm, '');
-        processed = processed.replace(/^\d+\.\s*/gm, '');
+            const prompt = `Nhiệm vụ: Xác định câu hỏi mới có liên quan đến tài liệu/file đã thảo luận trước đó hay không.
 
-        // Replace multiple newlines with period + space
-        processed = processed.replace(/\n\n+/g, '. ');
-        processed = processed.replace(/\n/g, ' ');
+Lịch sử hội thoại gần đây:
+${historyText || '(Không có lịch sử)'}
 
-        // Clean up multiple spaces and periods
-        processed = processed.replace(/\s+/g, ' ');
-        processed = processed.replace(/\.+/g, '.');
-        processed = processed.replace(/\.\s*\./g, '.');
+Câu hỏi mới: "${message}"
 
-        return processed.trim();
+Quy tắc:
+- Trả lời "RAG" nếu câu hỏi liên quan đến tài liệu, file, nội dung đã đề cập
+- Trả lời "GENERAL" nếu là câu hỏi chung, hỏi thời tiết, hỏi về chủ đề khác
+
+Chỉ trả lời 1 từ: RAG hoặc GENERAL`;
+
+            const result = await this.aiService.generateContent(prompt);
+            const trimmed = (result || 'RAG').trim().toUpperCase();
+
+            console.log(
+                `[Intent Detection] Message: "${message.substring(0, 50)}..." → ${trimmed.includes('RAG') ? 'RAG' : 'GENERAL'}`
+            );
+
+            return trimmed.includes('RAG') ? 'RAG' : 'GENERAL';
+        } catch (error) {
+            console.error('Error detecting intent:', error);
+            // Default to RAG to be safe (use document context if available)
+            return 'RAG';
+        }
     }
 
     /**
@@ -104,25 +174,22 @@ export class VirtualTeacherService {
      */
     async processChat(
         dto: ChatRequestDto,
-        userId: string,
+        userId: string
     ): Promise<ChatResponseDto> {
         try {
-            // Get document context if documentId provided
             let documentContext: string | null = null;
             if (dto.documentId) {
                 documentContext = await this.getDocumentContext(
                     dto.documentId,
-                    userId,
+                    userId
                 );
             }
 
-            // Build prompt using PromptUtils
             const prompt = this.promptUtils.buildVirtualTeacherPrompt(
                 dto.message,
-                documentContext,
+                documentContext
             );
 
-            // Call Gemini API using AIService
             const response = await this.aiService.generateContent(prompt);
 
             if (!response) {
@@ -134,7 +201,6 @@ export class VirtualTeacherService {
                 };
             }
 
-            // Post-process for TTS
             const processedResponse = this.postProcessResponse(response);
 
             return {
@@ -144,7 +210,6 @@ export class VirtualTeacherService {
         } catch (error: any) {
             console.error('❌ Error in processChat:', error);
 
-            // Check for rate limit / quota errors
             const isQuotaError =
                 error?.status === 429 ||
                 error?.error?.code === 429 ||
@@ -168,6 +233,189 @@ export class VirtualTeacherService {
                     'Xin lỗi, tôi gặp lỗi khi xử lý câu hỏi của bạn. Vui lòng thử lại sau.',
                 error: 'Processing error',
             };
+        }
+    }
+
+    /**
+     * Process chat with image input
+     * Fetches image from URL, converts to base64, and sends to Gemini
+     */
+    async processImageChat(
+        imageUrl: string,
+        message: string,
+        userId: string
+    ): Promise<ChatResponseDto> {
+        try {
+            const imageResponse = await fetch(imageUrl);
+            if (!imageResponse.ok) {
+                return {
+                    success: false,
+                    response: 'Không thể tải hình ảnh. Vui lòng thử lại.',
+                    error: 'Failed to fetch image',
+                };
+            }
+
+            const imageArrayBuffer = await imageResponse.arrayBuffer();
+            const base64ImageData =
+                Buffer.from(imageArrayBuffer).toString('base64');
+
+            const contentType =
+                imageResponse.headers.get('content-type') || 'image/jpeg';
+
+            const textPrompt = this.promptUtils.buildVirtualTeacherPrompt(
+                message,
+                null
+            );
+
+            const result = await this.aiService.generateContentWithImage(
+                textPrompt,
+                base64ImageData,
+                contentType
+            );
+
+            if (!result) {
+                return {
+                    success: false,
+                    response:
+                        'Xin lỗi, tôi không thể phân tích hình ảnh. Vui lòng thử lại.',
+                    error: 'Empty response from AI',
+                };
+            }
+
+            const processedResponse = this.postProcessResponse(result);
+
+            return {
+                success: true,
+                response: processedResponse,
+            };
+        } catch (error: any) {
+            console.error('❌ Error in processImageChat:', error);
+
+            const isQuotaError =
+                error?.status === 429 ||
+                error?.error?.code === 429 ||
+                error?.message?.includes('quota');
+
+            if (isQuotaError) {
+                return {
+                    success: false,
+                    response:
+                        'Hệ thống đang bảo trì. Vui lòng thử lại sau ít phút.',
+                    error: 'Quota exceeded',
+                };
+            }
+
+            return {
+                success: false,
+                response:
+                    'Xin lỗi, tôi gặp lỗi khi xử lý hình ảnh. Vui lòng thử lại sau.',
+                error: 'Image processing error',
+            };
+        }
+    }
+
+    /**
+     * Streaming chat processing - yields text chunks as they arrive
+     */
+    async *processChatStream(
+        dto: ChatRequestDto,
+        userId: string
+    ): AsyncGenerator<string, void, unknown> {
+        let documentContext: string | null = null;
+        if (dto.documentId) {
+            documentContext = await this.getDocumentContext(
+                dto.documentId,
+                userId
+            );
+        }
+
+        const prompt = this.promptUtils.buildVirtualTeacherPrompt(
+            dto.message,
+            documentContext
+        );
+
+        for await (const chunk of this.aiService.generateContentStream(
+            prompt
+        )) {
+            yield chunk;
+        }
+    }
+
+    /**
+     * Streaming chat with image processing
+     */
+    async *processImageChatStream(
+        imageUrl: string,
+        message: string,
+        userId: string
+    ): AsyncGenerator<string, void, unknown> {
+        const imageResponse = await fetch(imageUrl);
+        if (!imageResponse.ok) {
+            throw new Error('Failed to fetch image');
+        }
+
+        const imageArrayBuffer = await imageResponse.arrayBuffer();
+        const base64ImageData =
+            Buffer.from(imageArrayBuffer).toString('base64');
+
+        const contentType =
+            imageResponse.headers.get('content-type') || 'image/jpeg';
+
+        const textPrompt = this.promptUtils.buildVirtualTeacherPrompt(
+            message,
+            null
+        );
+
+        for await (const chunk of this.aiService.generateContentWithImageStream(
+            textPrompt,
+            base64ImageData,
+            contentType
+        )) {
+            yield chunk;
+        }
+    }
+
+    /**
+     * Streaming chat with conversation history for context-aware responses
+     * Uses semantic search for document context when documentId is provided
+     */
+    async *processChatWithHistoryStream(
+        message: string,
+        history: Array<{ role: 'user' | 'model'; content: string }>,
+        documentId?: string | null,
+        documentIds?: string[] | null,
+        userId?: string
+    ): AsyncGenerator<string, void, unknown> {
+        // Normalize document IDs
+        let targetIds: string[] = [];
+        if (documentIds && Array.isArray(documentIds)) {
+            targetIds = documentIds;
+        } else if (documentId) {
+            targetIds = [documentId];
+        }
+
+        // Get document context using semantic search if documentIds provided
+        let documentContext: string | null = null;
+        if (targetIds.length > 0 && userId) {
+            documentContext = await this.getDocumentContextSemantic(
+                targetIds,
+                userId,
+                message,
+                history // Pass history for Contextual Search
+            );
+        }
+
+        const systemPrompt = this.promptUtils.buildVirtualTeacherPrompt(
+            '',
+            documentContext
+        );
+
+        for await (const chunk of this.aiService.generateChatWithHistoryStream(
+            message,
+            history,
+            systemPrompt
+        )) {
+            yield chunk;
         }
     }
 }

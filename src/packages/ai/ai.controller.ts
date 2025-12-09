@@ -37,16 +37,28 @@ export class AIController {
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Get recent file uploads with generated history' })
     @ApiQuery({ name: 'limit', required: false, type: Number })
+    @ApiQuery({
+        name: 'includeHistory',
+        required: false,
+        type: Boolean,
+        description: 'Include quiz/flashcard history (default: true)',
+    })
     @ApiResponse({
         status: 200,
         description: 'List of recent uploads retrieved successfully',
     })
     async getRecentUploads(
         @Req() req: AuthenticatedRequest,
-        @Query('limit') limit?: string
+        @Query('limit') limit?: string,
+        @Query('includeHistory') includeHistory?: string
     ) {
         const parsedLimit = limit ? parseInt(limit, 10) : 10;
-        return this.aiService.getRecentUploads(req.user.id, parsedLimit);
+        const shouldIncludeHistory = includeHistory !== 'false';
+        return this.aiService.getRecentUploads(
+            req.user.id,
+            parsedLimit,
+            shouldIncludeHistory
+        );
     }
 
     @Get('upload/:id')
@@ -77,6 +89,23 @@ export class AIController {
         @Param('id') id: string
     ) {
         return this.aiService.deleteUpload(id, req.user.id);
+    }
+
+    @Post('upload-image')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiOperation({ summary: 'Upload an image for AI chat' })
+    @ApiResponse({
+        status: 200,
+        description: 'Image uploaded successfully, returns URL',
+    })
+    @ApiFile('file')
+    async uploadImage(
+        @UploadedFile() file: Express.Multer.File,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.aiService.uploadChatImage(file, req.user.id);
     }
 
     @Post('regenerate/:id')

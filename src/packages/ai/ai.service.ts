@@ -103,7 +103,7 @@ export class AIService {
      * - Returns filtered document chunks
      */
     private async findSimilarDocuments(
-        userStorageId: string,
+        userStorageIds: string | string[],
         keywordEmbedding: number[],
         topK?: number,
         similarityThreshold?: number
@@ -111,6 +111,10 @@ export class AIService {
         if (!Array.isArray(keywordEmbedding) || !keywordEmbedding.length) {
             throw new BadRequestException('Embedding vector không hợp lệ');
         }
+
+        // Normalize ids to array
+        const ids = Array.isArray(userStorageIds) ? userStorageIds : [userStorageIds];
+
         // Set defaults if not provided
         const finalTopK =
             typeof topK === 'number'
@@ -121,17 +125,18 @@ export class AIService {
                 ? similarityThreshold
                 : AIService.VECTOR_SEARCH_CONFIG.SIMILARITY_THRESHOLD;
         try {
-            // Use $1: embedding, $2: userStorageId, $3: threshold, $4: topK
+            // Use $1: embedding, $2: userStorageIds array, $3: threshold, $4: topK
+            // Using = ANY($2::text[]) to match any of the provided IDs
             const result = await this.prisma.$queryRawUnsafe(
                 `SELECT id, "userStorageId", "pageRange", title, content, "createdAt", "updatedAt",
                     1 - (embeddings <=> $1::vector) as similarity_score
                  FROM "Document"
-                 WHERE "userStorageId" = $2
+                 WHERE "userStorageId" = ANY($2::text[])
                    AND 1 - (embeddings <=> $1::vector) > $3
                  ORDER BY embeddings <=> $1::vector ASC
                  LIMIT $4;`,
                 `[${keywordEmbedding.join(',')}]`,
-                userStorageId,
+                ids,
                 finalThreshold,
                 finalTopK
             );
@@ -154,6 +159,74 @@ export class AIService {
         this.apiKeys =
             process.env.GEMINI_API_KEYS?.split(',').map((key) => key.trim()) ||
             [];
+    }
+
+    /**
+     * Public method for semantic document search
+     * Creates embedding from query and finds similar document chunks
+     * @param userStorageId Document ID
+     * @param query User's question/query text
+     * @param topK Number of chunks to return (default: 5)
+     * @returns Combined content from most relevant chunks
+     */
+    async searchDocumentsByQuery(
+        userStorageIds: string | string[],
+        query: string,
+        topK: number = 5
+    ): Promise<string | null> {
+        try {
+            // Create embedding for the query
+            const queryEmbedding = await this.createQueryEmbedding(query);
+
+            // Find similar documents
+            const similarDocs = await this.findSimilarDocuments(
+                userStorageIds,
+                queryEmbedding,
+                topK,
+                0.5 // Lower threshold for chat context to get more relevant results
+            );
+
+            if (!similarDocs.length) {
+                return null;
+            }
+
+            // Combine content from similar chunks
+            let combinedContent = '';
+            for (const doc of similarDocs) {
+                const chunk = `[Trang ${doc.pageRange}]: ${doc.content}\n\n`;
+                if (combinedContent.length + chunk.length > 6000) break;
+                combinedContent += chunk;
+            }
+
+            return combinedContent.trim() || null;
+        } catch (error) {
+            console.error('[AIService] searchDocumentsByQuery error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Create embedding for a query string (simpler than keyword embedding)
+     */
+    private async createQueryEmbedding(query: string): Promise<number[]> {
+        const embeddingResponse = await this.retryWithBackoff(() =>
+            this.ensureClient().models.embedContent({
+                model: AIService.VECTOR_SEARCH_CONFIG.EMBEDDING_MODEL,
+                contents: query,
+            })
+        );
+
+        const vector =
+            embeddingResponse.embeddings &&
+            Array.isArray(embeddingResponse.embeddings)
+                ? embeddingResponse.embeddings.map((e) => e.values).flat()
+                : [];
+
+        if (!vector.length) {
+            throw new Error('Empty embedding vector');
+        }
+
+        return vector.filter((v): v is number => typeof v === 'number');
     }
 
     private getNextApiKey(): string {
@@ -288,6 +361,123 @@ export class AIService {
             return this.ensureClient().models.generateContent({
                 model: this.modalName,
                 contents: prompt,
+            });
+        });
+        return response.text;
+    }
+
+    /**
+     * Generate content with streaming support
+     * @param prompt Text prompt
+     * @returns AsyncGenerator yielding text chunks
+     */
+    async *generateContentStream(
+        prompt: string
+    ): AsyncGenerator<string, void, unknown> {
+        const response = await this.ensureClient().models.generateContentStream(
+            {
+                model: this.modalName,
+                contents: prompt,
+            }
+        );
+
+        for await (const chunk of response) {
+            if (chunk.text) {
+                yield chunk.text;
+            }
+        }
+    }
+
+    /**
+     * Generate content with image input using streaming
+     */
+    async *generateContentWithImageStream(
+        prompt: string,
+        base64ImageData: string,
+        mimeType: string
+    ): AsyncGenerator<string, void, unknown> {
+        const response = await this.ensureClient().models.generateContentStream(
+            {
+                model: 'gemini-2.5-flash',
+                contents: [
+                    {
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: base64ImageData,
+                        },
+                    },
+                    { text: prompt },
+                ],
+            }
+        );
+
+        for await (const chunk of response) {
+            if (chunk.text) {
+                yield chunk.text;
+            }
+        }
+    }
+
+    /**
+     * Chat with conversation history using streaming
+     * Uses ai.chats.create for context-aware responses
+     * @param message Current user message
+     * @param history Array of previous messages in format { role: 'user' | 'model', content: string }
+     * @param systemPrompt Optional system instruction
+     */
+    async *generateChatWithHistoryStream(
+        message: string,
+        history: Array<{ role: 'user' | 'model'; content: string }>,
+        systemPrompt?: string
+    ): AsyncGenerator<string, void, unknown> {
+        // Convert history to Gemini format
+        const formattedHistory = history.map((msg) => ({
+            role: msg.role,
+            parts: [{ text: msg.content }],
+        }));
+
+        // Create chat session with history
+        const chat = this.ensureClient().chats.create({
+            model: this.modalName,
+            history: formattedHistory,
+            config: systemPrompt
+                ? { systemInstruction: systemPrompt }
+                : undefined,
+        });
+
+        // Send message and stream response
+        const response = await chat.sendMessageStream({ message });
+
+        for await (const chunk of response) {
+            if (chunk.text) {
+                yield chunk.text;
+            }
+        }
+    }
+
+    /**
+     * Generate content with image input
+     * @param prompt Text prompt
+     * @param base64ImageData Base64 encoded image data
+     * @param mimeType Image MIME type (e.g., 'image/jpeg', 'image/png')
+     */
+    async generateContentWithImage(
+        prompt: string,
+        base64ImageData: string,
+        mimeType: string
+    ): Promise<string | undefined> {
+        const response = await this.retryWithBackoff(async () => {
+            return this.ensureClient().models.generateContent({
+                model: 'gemini-2.5-flash', // Use vision-capable model
+                contents: [
+                    {
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: base64ImageData,
+                        },
+                    },
+                    { text: prompt },
+                ],
             });
         });
         return response.text;
@@ -623,7 +813,9 @@ export class AIService {
             type:
                 typeResult === TYPE_RESULT.QUIZZ
                     ? JobType.QUIZ
-                    : JobType.FLASHCARD,
+                    : typeResult === TYPE_RESULT.FLASHCARD
+                    ? JobType.FLASHCARD
+                    : JobType.KNOWLEDGE_BASE,
             userId: user.id,
             file,
             params: {
@@ -761,11 +953,23 @@ export class AIService {
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
-                // Set result
                 job.result = {
                     type: JobType.FLASHCARD,
                     flashcards: savedFlashcards.flashcards as any[],
                     historyId: savedFlashcards.id,
+                    fileInfo: {
+                        id: userStorage.id,
+                        filename: userStorage.filename,
+                    },
+                };
+            } else if (
+                Number(job.params.typeResult) === TYPE_RESULT.KNOWLEDGE_BASE
+            ) {
+                job.progress = 90;
+                this.jobQueue.set(jobId, job);
+
+                job.result = {
+                    type: JobType.KNOWLEDGE_BASE,
                     fileInfo: {
                         id: userStorage.id,
                         filename: userStorage.filename,
@@ -935,6 +1139,51 @@ export class AIService {
             .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
 
         return normalized || 'file';
+    }
+
+    /**
+     * Upload image for AI chat and return URL
+     */
+    async uploadChatImage(
+        file: Express.Multer.File,
+        userId: string
+    ): Promise<{ url: string }> {
+        if (!file) {
+            throw new BadRequestException('Chưa cung cấp hình ảnh');
+        }
+
+        const supportedMimeTypes = [
+            'image/jpeg',
+            'image/png',
+            'image/gif',
+            'image/webp',
+        ];
+        if (!file.mimetype || !supportedMimeTypes.includes(file.mimetype)) {
+            throw new BadRequestException(
+                'Chỉ hỗ trợ ảnh định dạng JPEG, PNG, GIF, WebP'
+            );
+        }
+
+        if (file.size > 5 * 1024 * 1024) {
+            throw new BadRequestException('Giới hạn kích thước ảnh là 5MB');
+        }
+
+        const r2Key = `chat-images/${userId}/${this.generateIdService.generateId()}`;
+        const r2File = await this.r2Service.uploadFile(
+            r2Key,
+            file.buffer,
+            file.mimetype
+        );
+
+        if (!r2File) {
+            throw new InternalServerErrorException(
+                'Không upload được ảnh lên R2'
+            );
+        }
+
+        return {
+            url: `https://examio-r2.fayedark.com/${r2File}`,
+        };
     }
 
     private async uploadAndCreateUserStorage(file: any, user: User) {
@@ -1468,34 +1717,43 @@ export class AIService {
     }
 
     /**
-     * Lấy danh sách các file đã upload gần đây kèm theo lịch sử generate quiz/flashcard
+     * Lấy danh sách các file đã upload gần đây
+     * @param includeHistory - Nếu false, không trả về quiz/flashcard history
      */
-    async getRecentUploads(userId: string, limit: number = 10) {
+    async getRecentUploads(
+        userId: string,
+        limit: number = 10,
+        includeHistory: boolean = true
+    ) {
         const uploads = await this.prisma.userStorage.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
             take: limit,
-            include: {
-                historyGeneratedQuizz: {
-                    orderBy: { createdAt: 'desc' },
-                    take: 1,
-                },
-                historyGeneratedFlashcard: {
-                    orderBy: { createdAt: 'desc' },
-                    take: 1,
-                },
-            },
+            include: includeHistory
+                ? {
+                      historyGeneratedQuizz: {
+                          orderBy: { createdAt: 'desc' },
+                          take: 1,
+                      },
+                      historyGeneratedFlashcard: {
+                          orderBy: { createdAt: 'desc' },
+                          take: 1,
+                      },
+                  }
+                : undefined,
         });
 
-        return uploads.map((upload) => ({
+        return uploads.map((upload: any) => ({
             id: upload.id,
             filename: upload.filename,
             url: upload.url,
             size: upload.size,
             mimetype: upload.mimetype,
             createdAt: upload.createdAt,
-            quizHistory: upload.historyGeneratedQuizz[0] || null,
-            flashcardHistory: upload.historyGeneratedFlashcard[0] || null,
+            ...(includeHistory && {
+                quizHistory: upload.historyGeneratedQuizz?.[0] || null,
+                flashcardHistory: upload.historyGeneratedFlashcard?.[0] || null,
+            }),
         }));
     }
 
