@@ -12,7 +12,7 @@ import { EXAM_SESSION_STATUS, ASSESS_TYPE } from '../../types';
 import { CreateExamSessionDto } from './dto/create-examsession.dto';
 import { GetExamSessionsDto } from './dto/get-examsession.dto';
 import { UpdateExamSessionDto } from './dto/update-examsession.dto';
-import { UpdateSharingSettingsDto } from './dto/sharing.dto';
+import { ExamSessionUpdateSharingSettingsDto } from './dto/sharing.dto';
 import { ExamSessionRepository } from './examsession.repository';
 import { ExamRoomRepository } from '../examroom/examroom.repository';
 
@@ -656,7 +656,7 @@ export class ExamSessionService {
     async updateSharingSettings(
         id: string,
         user: User,
-        dto: UpdateSharingSettingsDto
+        dto: ExamSessionUpdateSharingSettingsDto
     ) {
         // Check ownership
         const examSession = await this.prisma.examSession.findUnique({

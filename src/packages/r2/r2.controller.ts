@@ -112,21 +112,21 @@ export class R2Controller {
         };
     }
 
-    @Delete('file/*')
+    @Delete('file/*path')
     @ApiOperation({ summary: 'Delete a file from R2 bucket' })
     @ApiResponse({
         status: 200,
         description: 'File deleted successfully',
         type: DeleteFileResponseDto,
     })
-    async deleteFile(@Param('0') key: string): Promise<DeleteFileResponseDto> {
+    async deleteFile(@Param('path') key: string): Promise<DeleteFileResponseDto> {
         await this.r2Service.deleteFile(key);
         return {
             message: 'File deleted successfully',
         };
     }
 
-    @Delete('directory/*')
+    @Delete('directory/*path')
     @ApiOperation({ summary: 'Delete entire directory and all files inside' })
     @ApiResponse({
         status: 200,
@@ -134,7 +134,7 @@ export class R2Controller {
         type: DeleteDirectoryResponseDto,
     })
     async deleteDirectory(
-        @Param('0') directory: string
+        @Param('path') directory: string
     ): Promise<DeleteDirectoryResponseDto> {
         const deletedCount = await this.r2Service.deleteDirectory(directory);
         return {

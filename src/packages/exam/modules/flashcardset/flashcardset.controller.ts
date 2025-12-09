@@ -32,11 +32,11 @@ import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
 import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
 import {
-    UpdateSharingSettingsDto,
-    VerifyAccessCodeDto,
-    AccessCheckResponseDto,
-    VerifyCodeResponseDto,
-    SharingSettingsResponseDto,
+    FlashcardSetUpdateSharingSettingsDto,
+    FlashcardSetVerifyAccessCodeDto,
+    FlashcardSetAccessCheckResponseDto,
+    FlashcardSetVerifyCodeResponseDto,
+    FlashcardSetSharingSettingsResponseDto,
     FlashcardSetPublicInfoDto,
 } from './dto/sharing.dto';
 import {
@@ -313,7 +313,7 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 200,
         description: 'Access check result',
-        type: AccessCheckResponseDto,
+        type: FlashcardSetAccessCheckResponseDto,
     })
     async checkAccess(
         @Param('id') id: string,
@@ -359,11 +359,11 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 200,
         description: 'Code verification result',
-        type: VerifyCodeResponseDto,
+        type: FlashcardSetVerifyCodeResponseDto,
     })
     async verifyCode(
         @Param('id') id: string,
-        @Body() dto: VerifyAccessCodeDto
+        @Body() dto: FlashcardSetVerifyAccessCodeDto
     ) {
         return this.flashcardsetService.verifyAccessCode(id, dto.accessCode);
     }
@@ -378,7 +378,7 @@ export class FlashcardsetController {
     })
     async getWithCode(
         @Param('id') id: string,
-        @Body() dto: VerifyAccessCodeDto
+        @Body() dto: FlashcardSetVerifyAccessCodeDto
     ) {
         return this.flashcardsetService.getFlashcardSetWithCode(
             id,
@@ -410,12 +410,12 @@ export class FlashcardsetController {
     @ApiResponse({
         status: 200,
         description: 'Sharing settings updated',
-        type: SharingSettingsResponseDto,
+        type: FlashcardSetSharingSettingsResponseDto,
     })
     async updateSharingSettings(
         @Param('id') id: string,
         @Req() req: AuthenticatedRequest,
-        @Body() dto: UpdateSharingSettingsDto
+        @Body() dto: FlashcardSetUpdateSharingSettingsDto
     ) {
         return this.flashcardsetService.updateSharingSettings(
             id,

@@ -26,11 +26,11 @@ import { CreateExamSessionDto } from './dto/create-examsession.dto';
 import { UpdateExamSessionDto } from './dto/update-examsession.dto';
 import { GetExamSessionsDto } from './dto/get-examsession.dto';
 import {
-    UpdateSharingSettingsDto,
-    VerifyAccessCodeDto,
-    AccessCheckResponseDto,
-    VerifyCodeResponseDto,
-    SharingSettingsResponseDto,
+    ExamSessionUpdateSharingSettingsDto,
+    ExamSessionVerifyAccessCodeDto,
+    ExamSessionAccessCheckResponseDto,
+    ExamSessionVerifyCodeResponseDto,
+    ExamSessionSharingSettingsResponseDto,
     ExamSessionPublicInfoDto,
 } from './dto/sharing.dto';
 
@@ -155,7 +155,7 @@ export class ExamSessionController {
     @ApiResponse({
         status: 200,
         description: 'Access check result',
-        type: AccessCheckResponseDto,
+        type: ExamSessionAccessCheckResponseDto,
     })
     async checkAccess(
         @Param('id') id: string,
@@ -198,11 +198,11 @@ export class ExamSessionController {
     @ApiResponse({
         status: 200,
         description: 'Code verification result',
-        type: VerifyCodeResponseDto,
+        type: ExamSessionVerifyCodeResponseDto,
     })
     async verifyCode(
         @Param('id') id: string,
-        @Body() dto: VerifyAccessCodeDto
+        @Body() dto: ExamSessionVerifyAccessCodeDto
     ) {
         return this.examSessionService.verifyAccessCode(id, dto.accessCode);
     }
@@ -217,7 +217,7 @@ export class ExamSessionController {
     })
     async getWithCode(
         @Param('id') id: string,
-        @Body() dto: VerifyAccessCodeDto
+        @Body() dto: ExamSessionVerifyAccessCodeDto
     ) {
         return this.examSessionService.getExamSessionWithCode(
             id,
@@ -249,12 +249,12 @@ export class ExamSessionController {
     @ApiResponse({
         status: 200,
         description: 'Sharing settings updated',
-        type: SharingSettingsResponseDto,
+        type: ExamSessionSharingSettingsResponseDto,
     })
     async updateSharingSettings(
         @Param('id') id: string,
         @Req() req: AuthenticatedRequest,
-        @Body() dto: UpdateSharingSettingsDto
+        @Body() dto: ExamSessionUpdateSharingSettingsDto
     ) {
         return this.examSessionService.updateSharingSettings(id, req.user, dto);
     }

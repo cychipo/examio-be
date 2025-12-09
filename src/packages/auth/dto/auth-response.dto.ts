@@ -65,7 +65,7 @@ export class LogoutResponseDto {
     success: boolean;
 }
 
-export class MessageResponseDto {
+export class AuthMessageResponseDto {
     @ApiProperty({ description: 'Thông báo' })
     message: string;
 }

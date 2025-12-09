@@ -7,6 +7,7 @@ import { AuthModule } from '../auth/auth.module';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RedisModule } from '../redis/redis.module';
 import { PdfService } from 'src/common/services/pdf.service';
+import { ImagePreprocessingService } from 'src/common/services/image-preprocessing.service';
 
 @Module({
     providers: [
@@ -14,6 +15,7 @@ import { PdfService } from 'src/common/services/pdf.service';
         GenerateIdService,
         R2Service,
         PrismaService,
+        ImagePreprocessingService,
         PdfService,
     ],
     controllers: [AIController],
