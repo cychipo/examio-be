@@ -4,14 +4,14 @@ import { ApiProperty } from '@nestjs/swagger';
 
 // ================== UPDATE SHARING SETTINGS ==================
 
-export const UpdateSharingSettingsSchema = z.object({
+export const ExamSessionUpdateSharingSettingsSchema = z.object({
     isPublic: z.boolean(),
     accessCode: z.string().length(6).optional().nullable(),
     whitelist: z.array(z.string()).optional().default([]),
 });
 
-export class UpdateSharingSettingsDto extends createZodDto(
-    UpdateSharingSettingsSchema
+export class ExamSessionUpdateSharingSettingsDto extends createZodDto(
+    ExamSessionUpdateSharingSettingsSchema
 ) {
     @ApiProperty({
         description: 'Whether the exam session is public',
@@ -36,11 +36,11 @@ export class UpdateSharingSettingsDto extends createZodDto(
 
 // ================== VERIFY ACCESS CODE ==================
 
-export const VerifyAccessCodeSchema = z.object({
+export const ExamSessionVerifyAccessCodeSchema = z.object({
     accessCode: z.string().length(6),
 });
 
-export class VerifyAccessCodeDto extends createZodDto(VerifyAccessCodeSchema) {
+export class ExamSessionVerifyAccessCodeDto extends createZodDto(ExamSessionVerifyAccessCodeSchema) {
     @ApiProperty({
         description: '6-digit access code',
         example: '123456',
@@ -50,7 +50,7 @@ export class VerifyAccessCodeDto extends createZodDto(VerifyAccessCodeSchema) {
 
 // ================== RESPONSE DTOS ==================
 
-export class AccessCheckResponseDto {
+export class ExamSessionAccessCheckResponseDto {
     @ApiProperty({
         description: 'Whether user has access',
         example: true,
@@ -72,7 +72,7 @@ export class AccessCheckResponseDto {
     requiresCode?: boolean;
 }
 
-export class VerifyCodeResponseDto {
+export class ExamSessionVerifyCodeResponseDto {
     @ApiProperty({
         description: 'Whether the code is valid',
         example: true,
@@ -86,7 +86,7 @@ export class VerifyCodeResponseDto {
     message: string;
 }
 
-export class SharingSettingsResponseDto {
+export class ExamSessionSharingSettingsResponseDto {
     @ApiProperty({
         description: 'Success message',
         example: 'Cập nhật cài đặt chia sẻ thành công',

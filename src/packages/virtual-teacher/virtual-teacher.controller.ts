@@ -7,7 +7,7 @@ import {
     ApiCookieAuth,
 } from '@nestjs/swagger';
 import { VirtualTeacherService } from './virtual-teacher.service';
-import { ChatRequestDto, ChatResponseDto } from './dto/chat.dto';
+import { ChatRequestDto, VTChatResponseDto } from './dto/chat.dto';
 import { AuthGuard } from 'src/common/guard/auth.guard';
 import { AuthenticatedRequest } from '../auth/dto/request-with-auth.dto';
 
@@ -49,7 +49,7 @@ export class VirtualTeacherController {
     @ApiResponse({
         status: 200,
         description: 'Chat response from AI teacher',
-        type: ChatResponseDto,
+        type: VTChatResponseDto,
     })
     @ApiResponse({
         status: 401,
@@ -58,7 +58,7 @@ export class VirtualTeacherController {
     async chat(
         @Req() req: AuthenticatedRequest,
         @Body() dto: ChatRequestDto,
-    ): Promise<ChatResponseDto> {
+    ): Promise<VTChatResponseDto> {
         return this.virtualTeacherService.processChat(dto, req.user.id);
     }
 }

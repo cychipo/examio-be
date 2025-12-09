@@ -14,7 +14,7 @@ import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
 import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
 import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
-import { UpdateSharingSettingsDto } from './dto/sharing.dto';
+import { FlashcardSetUpdateSharingSettingsDto } from './dto/sharing.dto';
 import { FlashCardSetRepository } from './flashcardset.repository';
 import { R2Service } from 'src/packages/r2/r2.service';
 
@@ -1002,7 +1002,7 @@ export class FlashcardsetService {
     async updateSharingSettings(
         id: string,
         user: User,
-        dto: UpdateSharingSettingsDto
+        dto: FlashcardSetUpdateSharingSettingsDto
     ) {
         // Check ownership
         const flashcardSet = await this.flashcardSetRepository.findOne({

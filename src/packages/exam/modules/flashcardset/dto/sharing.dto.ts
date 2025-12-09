@@ -3,14 +3,14 @@ import { createZodDto } from 'nestjs-zod';
 import { ApiProperty } from '@nestjs/swagger';
 
 // DTO for updating sharing settings
-export const UpdateSharingSettingsSchema = z.object({
+export const FlashcardSetUpdateSharingSettingsSchema = z.object({
     isPublic: z.boolean(),
     accessCode: z.string().length(6).optional().nullable(),
     whitelist: z.array(z.string()).optional().default([]),
 });
 
-export class UpdateSharingSettingsDto extends createZodDto(
-    UpdateSharingSettingsSchema
+export class FlashcardSetUpdateSharingSettingsDto extends createZodDto(
+    FlashcardSetUpdateSharingSettingsSchema
 ) {
     @ApiProperty({
         description: 'Indicates if the flashcard set is public',
@@ -35,11 +35,11 @@ export class UpdateSharingSettingsDto extends createZodDto(
 }
 
 // DTO for verifying access code
-export const VerifyAccessCodeSchema = z.object({
+export const FlashcardSetVerifyAccessCodeSchema = z.object({
     accessCode: z.string().length(6),
 });
 
-export class VerifyAccessCodeDto extends createZodDto(VerifyAccessCodeSchema) {
+export class FlashcardSetVerifyAccessCodeDto extends createZodDto(FlashcardSetVerifyAccessCodeSchema) {
     @ApiProperty({
         description: '6-digit access code to verify',
         example: '123456',
@@ -48,7 +48,7 @@ export class VerifyAccessCodeDto extends createZodDto(VerifyAccessCodeSchema) {
 }
 
 // Response DTOs
-export class SharingSettingsResponseDto {
+export class FlashcardSetSharingSettingsResponseDto {
     @ApiProperty({ example: 'Cập nhật cài đặt chia sẻ thành công' })
     message: string;
 
@@ -62,7 +62,7 @@ export class SharingSettingsResponseDto {
     whitelist: string[];
 }
 
-export class AccessCheckResponseDto {
+export class FlashcardSetAccessCheckResponseDto {
     @ApiProperty({ example: true })
     hasAccess: boolean;
 
@@ -73,7 +73,7 @@ export class AccessCheckResponseDto {
     requiresCode?: boolean;
 }
 
-export class VerifyCodeResponseDto {
+export class FlashcardSetVerifyCodeResponseDto {
     @ApiProperty({ example: true })
     valid: boolean;
 

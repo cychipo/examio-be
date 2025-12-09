@@ -30,7 +30,7 @@ import {
     LoginResponseDto,
     RegisterResponseDto,
     LogoutResponseDto,
-    MessageResponseDto,
+    AuthMessageResponseDto,
     GetUserResponseDto,
 } from './dto/auth-response.dto';
 import { getCookieConfig } from 'src/common/utils/cookie-config';
@@ -42,7 +42,7 @@ import { getCookieConfig } from 'src/common/utils/cookie-config';
     RegisterResponseDto,
     LoginResponseDto,
     LogoutResponseDto,
-    MessageResponseDto,
+    AuthMessageResponseDto,
     GetUserResponseDto
 )
 @Controller('auth')
@@ -112,7 +112,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'Verification email sent successfully',
-        type: MessageResponseDto,
+        type: AuthMessageResponseDto,
     })
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
@@ -125,7 +125,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'User account verified successfully',
-        type: MessageResponseDto,
+        type: AuthMessageResponseDto,
     })
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
@@ -141,7 +141,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'Code sent successfully',
-        type: MessageResponseDto,
+        type: AuthMessageResponseDto,
     })
     async sendCodeResetPassword(@Body('email') email: string) {
         return this.authService.sendCodeToResetPassword(email);
@@ -152,7 +152,7 @@ export class AuthController {
     @ApiResponse({
         status: 200,
         description: 'Password reset successfully',
-        type: MessageResponseDto,
+        type: AuthMessageResponseDto,
     })
     async resetPassword(
         @Body('email') email: string,

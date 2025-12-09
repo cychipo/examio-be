@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AIService } from '../ai/ai.service';
 import { PromptUtils } from 'src/utils/prompt';
-import { ChatRequestDto, ChatResponseDto } from './dto/chat.dto';
+import { ChatRequestDto, VTChatResponseDto } from './dto/chat.dto';
 import { User } from '@prisma/client';
 import { TYPE_RESULT } from '../ai/constant/type-result';
 
@@ -175,7 +175,7 @@ Chỉ trả lời 1 từ: RAG hoặc GENERAL`;
     async processChat(
         dto: ChatRequestDto,
         userId: string
-    ): Promise<ChatResponseDto> {
+    ): Promise<VTChatResponseDto> {
         try {
             let documentContext: string | null = null;
             if (dto.documentId) {
@@ -244,7 +244,7 @@ Chỉ trả lời 1 từ: RAG hoặc GENERAL`;
         imageUrl: string,
         message: string,
         userId: string
-    ): Promise<ChatResponseDto> {
+    ): Promise<VTChatResponseDto> {
         try {
             const imageResponse = await fetch(imageUrl);
             if (!imageResponse.ok) {

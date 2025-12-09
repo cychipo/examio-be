@@ -31,7 +31,7 @@ export class ChatRequestDto extends createZodDto(ChatRequestSchema) {
     documentIds?: string[];
 }
 
-export class ChatResponseDto {
+export class VTChatResponseDto {
     @ApiProperty({ description: 'Whether the request was successful' })
     success: boolean;
 
