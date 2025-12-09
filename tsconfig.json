@@ -1,19 +1,24 @@
 {
-  "compilerOptions": {
-    "module": "commonjs",
-    "declaration": true,
-    "removeComments": true,
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
-    "allowSyntheticDefaultImports": true,
-    "forceConsistentCasingInFileNames": true,
-    "target": "ES2024",
-    "strictNullChecks": true,
-    "sourceMap": true,
-    "outDir": "./dist",
-    "rootDir": "./",
-    "baseUrl": "./",
-    "skipLibCheck": true,
-    "incremental": true
-  }
+    "compilerOptions": {
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "declaration": true,
+        "removeComments": true,
+        "emitDecoratorMetadata": true,
+        "experimentalDecorators": true,
+        "allowSyntheticDefaultImports": true,
+        "forceConsistentCasingInFileNames": true,
+        "target": "ES2024",
+        "strictNullChecks": true,
+        "sourceMap": true,
+        "outDir": "./dist",
+        "rootDir": "./",
+        "baseUrl": "./",
+        "paths": {
+            ".prisma/client": ["node_modules/.prisma/client"],
+            ".prisma/client/*": ["node_modules/.prisma/client/*"]
+        },
+        "skipLibCheck": true,
+        "incremental": true
+    }
 }
