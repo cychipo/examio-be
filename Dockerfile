@@ -35,25 +35,12 @@ RUN pnpm prisma:merge && pnpm prisma:generate
 # Build ứng dụng NestJS
 RUN pnpm build
 
-# Stage 3: Production dependencies
-FROM node:20-alpine AS production-dependencies
-
-# Cài đặt pnpm
-RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
-
-WORKDIR /app
-
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Cài đặt chỉ production dependencies
-RUN pnpm install --prod --frozen-lockfile
-
-# Stage 4: Production runner
+# Stage 3: Production runner
 FROM node:20-alpine AS runner
 
-# Cài đặt các dependencies cần thiết cho tesseract và pdf processing
-RUN apk add --no-cache \
+# Cài đặt pnpm và các dependencies cần thiết cho tesseract và pdf processing
+RUN corepack enable && corepack prepare pnpm@10.11.0 --activate && \
+    apk add --no-cache \
     tesseract-ocr \
     tesseract-ocr-data-eng \
     tesseract-ocr-data-vie \
@@ -62,18 +49,20 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-# Copy production dependencies
-COPY --from=production-dependencies /app/node_modules ./node_modules
+# Copy package files
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
+
+# Copy prisma schema (needed for prisma generate)
+COPY --from=builder /app/prisma ./prisma
+
+# Install production dependencies and generate Prisma client
+RUN pnpm install --prod --frozen-lockfile && pnpm prisma:generate
 
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
-# Copy prisma schema và client
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-
 # Copy các file cần thiết cho runtime
-COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/eng.traineddata ./eng.traineddata
 COPY --from=builder /app/vie.traineddata ./vie.traineddata
 
