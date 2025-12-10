@@ -15,6 +15,7 @@ export const UpdateExamSessionDtoSchema = z.object({
     accessCode: z.string().length(6).optional().nullable(),
     whitelist: z.array(z.string()).optional(),
     showAnswersAfterSubmit: z.boolean().optional(),
+    passingScore: z.number().min(0).max(100).optional(),
 });
 
 export class UpdateExamSessionDto extends createZodDto(
@@ -91,4 +92,11 @@ export class UpdateExamSessionDto extends createZodDto(
         required: false,
     })
     showAnswersAfterSubmit?: boolean;
+
+    @ApiProperty({
+        description: 'Minimum score percentage to pass (0-100, 0 = no minimum)',
+        example: 50,
+        required: false,
+    })
+    passingScore?: number;
 }
