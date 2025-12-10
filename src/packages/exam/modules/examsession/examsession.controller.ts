@@ -295,4 +295,26 @@ export class ExamSessionController {
     ) {
         return this.examSessionService.searchUsers(query, req.user.id);
     }
+
+    @Get('study/:id/stats')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Get exam session stats for student display',
+    })
+    @ApiParam({ name: 'id', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam session stats for display',
+        type: Object,
+    })
+    async getStatsForStudent(
+        @Param('id') id: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.examSessionService.getExamSessionStatsForStudent(
+            id,
+            req.user.id
+        );
+    }
 }
