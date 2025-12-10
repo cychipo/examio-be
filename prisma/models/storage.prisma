@@ -9,6 +9,7 @@ model UserStorage {
     createdAt        DateTime @default(now())
     updatedAt        DateTime @default(now()) @updatedAt
     processingStatus String   @default("COMPLETED") // PENDING | PROCESSING | COMPLETED | FAILED
+    creditCharged    Boolean  @default(false) // Track if OCR credit was already deducted
 
     user                      User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
     documents                 Document[]

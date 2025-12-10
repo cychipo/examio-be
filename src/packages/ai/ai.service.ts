@@ -544,28 +544,179 @@ export class AIService {
         }
     }
 
-    private async checkUserCredit(
-        userId: string,
-        fileSize: number
-    ): Promise<number> {
-        const cost = Math.max(2, Math.ceil(fileSize / (1024 * 1024))); // 2 credit per MB
+    // ================== CREDIT CALCULATION HELPERS ==================
 
-        // check if user has enough credit
+    /**
+     * Calculate OCR cost based on file size
+     * Formula: max(2, ceil(file_size_MB))
+     */
+    private calculateOcrCost(fileSize: number): number {
+        return Math.max(2, Math.ceil(fileSize / (1024 * 1024)));
+    }
+
+    /**
+     * Calculate question/flashcard generation cost
+     * Formula: ceil(count / 10) - 10 questions = 1 token
+     */
+    private calculateQuestionCost(count: number): number {
+        return Math.ceil(count / 10);
+    }
+
+    /**
+     * Check if user has enough credit for total cost
+     */
+    private async checkUserBalance(
+        userId: string,
+        totalCost: number
+    ): Promise<void> {
         const wallet = await this.prisma.wallet.findUnique({
             where: { userId },
         });
-        if (!wallet || wallet.balance < cost) {
-            throw new BadRequestException('Not enough credits');
+        if (!wallet || wallet.balance < totalCost) {
+            throw new BadRequestException(
+                `Không đủ tín dụng. Cần ${totalCost} tokens, hiện có ${wallet?.balance || 0} tokens`
+            );
+        }
+    }
+
+    /**
+     * Charge for OCR + embedding (only if not already charged)
+     * Sets creditCharged = true on UserStorage
+     */
+    private async chargeForOcr(
+        userId: string,
+        fileSize: number,
+        userStorageId: string,
+        filename: string
+    ): Promise<number> {
+        // Check if already charged
+        const userStorage = await this.prisma.userStorage.findUnique({
+            where: { id: userStorageId },
+        });
+
+        if (userStorage?.creditCharged) {
+            console.log(
+                `[chargeForOcr] Already charged for ${userStorageId}, skipping`
+            );
+            return 0;
         }
 
+        const cost = this.calculateOcrCost(fileSize);
+
+        await this.prisma.$transaction(async (tx) => {
+            const wallet = await tx.wallet.findUnique({
+                where: { userId },
+            });
+
+            if (!wallet || wallet.balance < cost) {
+                throw new BadRequestException('Không đủ tín dụng');
+            }
+
+            await tx.wallet.update({
+                where: { userId },
+                data: { balance: { decrement: cost } },
+            });
+
+            await tx.walletTransaction.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    walletId: wallet.id,
+                    amount: cost,
+                    type: WALLET_TYPE.OCR_EMBEDDING,
+                    description: `Xử lý OCR và lưu trữ file "${filename}" (${(fileSize / (1024 * 1024)).toFixed(2)} MB)`,
+                },
+            });
+
+            // Mark as charged
+            await tx.userStorage.update({
+                where: { id: userStorageId },
+                data: { creditCharged: true },
+            });
+        });
+
+        // Invalidate cache
+        await this.invalidateUserCache(userId);
+
+        console.log(
+            `[chargeForOcr] Charged ${cost} tokens for OCR of ${filename}`
+        );
         return cost;
     }
 
-    private async decrementUserCredit(userId: string, fileSize: number) {
-        const cost = Math.max(2, Math.ceil(fileSize / (1024 * 1024))); // 2 credit per MB
+    /**
+     * Charge for quiz/flashcard generation based on actual result count
+     * Uses proportional pricing: ceil(count / 10)
+     */
+    private async chargeForQuestions(
+        userId: string,
+        actualCount: number,
+        isFlashcard: boolean,
+        userStorageId: string,
+        filename: string
+    ): Promise<number> {
+        if (actualCount <= 0) {
+            console.log(`[chargeForQuestions] No results, skipping charge`);
+            return 0; // No charge if no results
+        }
+
+        const cost = this.calculateQuestionCost(actualCount);
+        const type = isFlashcard
+            ? WALLET_TYPE.FLASHCARD_GENERATION
+            : WALLET_TYPE.QUIZ_GENERATION;
+        const typeName = isFlashcard ? 'flashcard' : 'câu hỏi';
 
         await this.prisma.$transaction(async (tx) => {
-            // Re-check balance inside transaction to prevent race conditions
+            const wallet = await tx.wallet.findUnique({
+                where: { userId },
+            });
+
+            if (!wallet || wallet.balance < cost) {
+                throw new BadRequestException('Không đủ tín dụng');
+            }
+
+            await tx.wallet.update({
+                where: { userId },
+                data: { balance: { decrement: cost } },
+            });
+
+            await tx.walletTransaction.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    walletId: wallet.id,
+                    amount: cost,
+                    type: type,
+                    description: `Tạo ${actualCount} ${typeName} từ file "${filename}"`,
+                },
+            });
+        });
+
+        // Invalidate cache
+        await this.invalidateUserCache(userId);
+
+        console.log(
+            `[chargeForQuestions] Charged ${cost} tokens for ${actualCount} ${typeName}`
+        );
+        return cost;
+    }
+
+    /**
+     * Invalidate user and wallet cache
+     */
+    private async invalidateUserCache(userId: string): Promise<void> {
+        await this.redisService.del(getUserCacheKey('USER', userId));
+        await this.redisService.del(getUserCacheKey('WALLET', userId));
+        await this.redisService.delPattern(`user:*${userId}*`);
+        await this.redisService.delPattern(`wallet:*${userId}*`);
+    }
+
+    /**
+     * @deprecated Use chargeForOcr and chargeForQuestions instead
+     * Kept for backward compatibility during transition
+     */
+    private async decrementUserCredit(userId: string, fileSize: number) {
+        const cost = Math.max(2, Math.ceil(fileSize / (1024 * 1024)));
+
+        await this.prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({
                 where: { userId },
             });
@@ -590,12 +741,7 @@ export class AIService {
             });
         });
 
-        // Invalidate user and wallet cache using user-scoped keys
-        await this.redisService.del(getUserCacheKey('USER', userId));
-        await this.redisService.del(getUserCacheKey('WALLET', userId));
-        // Also invalidate legacy cache keys for backward compatibility
-        await this.redisService.delPattern(`user:*${userId}*`);
-        await this.redisService.delPattern(`wallet:*${userId}*`);
+        await this.invalidateUserCache(userId);
     }
 
     async handleActionsWithFile(
@@ -607,8 +753,17 @@ export class AIService {
         isNarrowSearch: boolean = false,
         keyword?: string
     ) {
-        // Check credit first (don't deduct yet)
-        await this.checkUserCredit(user.id, file.size);
+        // Calculate expected costs upfront
+        const requestedQuantity =
+            Number(typeResult) === TYPE_RESULT.QUIZZ
+                ? quantityQuizz || 40
+                : quantityFlashcard || 40;
+        const ocrCost = this.calculateOcrCost(file.size);
+        const questionCost = this.calculateQuestionCost(requestedQuantity);
+        const totalCost = ocrCost + questionCost;
+
+        // Check total balance upfront
+        await this.checkUserBalance(user.id, totalCost);
 
         // Validate keyword for narrow search
         if (isNarrowSearch === true) {
@@ -617,7 +772,6 @@ export class AIService {
                     'Khi isNarrowSearch là true, keyword không được để trống'
                 );
             }
-            // Validate multiple keywords (max, format)
             const keywordList = keyword
                 .split(',')
                 .map((k) => k.trim())
@@ -635,6 +789,7 @@ export class AIService {
                 );
             }
         }
+
         try {
             console.log('🚀 Starting handleActionsWithFile...');
             this.validatePdfFile(file);
@@ -643,9 +798,21 @@ export class AIService {
                 user
             );
 
+            // OCR + embedding
             await this.extractAndSavePdfChunks(file, userStorage.id);
 
+            // Charge for OCR after successful extraction
+            await this.chargeForOcr(
+                user.id,
+                file.size,
+                userStorage.id,
+                userStorage.filename
+            );
+
             let result;
+            let actualCount = 0;
+            const isFlashcard = Number(typeResult) === TYPE_RESULT.FLASHCARD;
+
             if (Number(typeResult) === TYPE_RESULT.QUIZZ) {
                 const quiz = await this.generateQuizChunkBased(
                     userStorage.id,
@@ -653,22 +820,22 @@ export class AIService {
                     isNarrowSearch,
                     keyword
                 );
+                actualCount = quiz.length;
 
-                // Lưu vào bảng HistoryGeneratedQuizz
                 result = await this.saveQuizzesToHistory(
                     quiz,
                     user.id,
                     userStorage.id
                 );
-            } else if (Number(typeResult) === TYPE_RESULT.FLASHCARD) {
+            } else if (isFlashcard) {
                 const flashcards = await this.generateFlashcardsChunkBased(
                     userStorage.id,
                     quantityFlashcard || 40,
                     isNarrowSearch,
                     keyword
                 );
+                actualCount = flashcards.length;
 
-                // Lưu vào bảng HistoryGeneratedFlashcard
                 result = await this.saveFlashcardsToHistory(
                     flashcards,
                     user.id,
@@ -680,8 +847,14 @@ export class AIService {
                 );
             }
 
-            // Deduct credits only after all operations completed successfully
-            await this.decrementUserCredit(user.id, file.size);
+            // Charge for questions/flashcards based on ACTUAL count returned
+            await this.chargeForQuestions(
+                user.id,
+                actualCount,
+                isFlashcard,
+                userStorage.id,
+                userStorage.filename
+            );
 
             return result;
         } catch (error) {
@@ -860,8 +1033,19 @@ export class AIService {
         }
 
         try {
-            // Check credit first (don't deduct yet)
-            await this.checkUserCredit(job.userId, job.file.size);
+            // Calculate expected costs upfront
+            const requestedQuantity =
+                Number(job.params.typeResult) === TYPE_RESULT.QUIZZ
+                    ? job.params.quantityQuizz || 40
+                    : Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD
+                      ? job.params.quantityFlashcard || 40
+                      : 0;
+            const ocrCost = this.calculateOcrCost(job.file.size);
+            const questionCost = this.calculateQuestionCost(requestedQuantity);
+            const totalCost = ocrCost + questionCost;
+
+            // Check total balance upfront
+            await this.checkUserBalance(job.userId, totalCost);
 
             // Update status to processing
             job.status = JobStatus.PROCESSING;
@@ -906,6 +1090,18 @@ export class AIService {
             job.progress = 60;
             this.jobQueue.set(jobId, job);
 
+            // Charge for OCR after successful extraction
+            await this.chargeForOcr(
+                user.id,
+                job.file.size,
+                userStorage.id,
+                userStorage.filename
+            );
+
+            let actualCount = 0;
+            const isFlashcard =
+                Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD;
+
             // Generate based on type
             if (Number(job.params.typeResult) === TYPE_RESULT.QUIZZ) {
                 const quiz = await this.generateQuizChunkBased(
@@ -914,6 +1110,7 @@ export class AIService {
                     job.params.isNarrowSearch || false,
                     job.params.keyword
                 );
+                actualCount = quiz.length;
                 job.progress = 80;
                 this.jobQueue.set(jobId, job);
 
@@ -925,7 +1122,6 @@ export class AIService {
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
-                // Set result
                 job.result = {
                     type: JobType.QUIZ,
                     quizzes: savedQuizzes.quizzes as any[],
@@ -935,15 +1131,14 @@ export class AIService {
                         filename: userStorage.filename,
                     },
                 };
-            } else if (
-                Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD
-            ) {
+            } else if (isFlashcard) {
                 const flashcards = await this.generateFlashcardsChunkBased(
                     userStorage.id,
                     job.params.quantityFlashcard || 40,
                     job.params.isNarrowSearch || false,
                     job.params.keyword
                 );
+                actualCount = flashcards.length;
                 job.progress = 80;
                 this.jobQueue.set(jobId, job);
 
@@ -967,6 +1162,7 @@ export class AIService {
             } else if (
                 Number(job.params.typeResult) === TYPE_RESULT.KNOWLEDGE_BASE
             ) {
+                // Knowledge base only needs OCR, no question generation
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
@@ -979,14 +1175,22 @@ export class AIService {
                 };
             }
 
+            // Charge for questions/flashcards based on ACTUAL count (skip for knowledge base)
+            if (actualCount > 0) {
+                await this.chargeForQuestions(
+                    user.id,
+                    actualCount,
+                    isFlashcard,
+                    userStorage.id,
+                    userStorage.filename
+                );
+            }
+
             // Mark as completed
             job.status = JobStatus.COMPLETED;
             job.progress = 100;
             job.completedAt = new Date();
             this.jobQueue.set(jobId, job);
-
-            // Deduct credits only after job completed successfully
-            await this.decrementUserCredit(job.userId, job.file!.size);
 
             console.log(`✅ Job ${jobId} completed successfully`);
         } catch (error) {
@@ -996,7 +1200,7 @@ export class AIService {
                 error instanceof Error ? error.message : 'Unknown error';
             job.completedAt = new Date();
             this.jobQueue.set(jobId, job);
-            // Note: Credits are NOT deducted when job fails
+            // Note: OCR may have been charged, but questions were not charged since they failed
         }
     }
 
@@ -1343,10 +1547,13 @@ export class AIService {
             // Perform OCR and vectorization
             await this.extractAndSavePdfChunks(mockFile, userStorageId);
 
-            // Deduct credits (now that processing is complete)
-            await this.decrementUserCredit(
+            // Charge for OCR (uses creditCharged flag to prevent double charging)
+            // AI Teacher only charges for OCR/embedding, not for chat
+            await this.chargeForOcr(
                 userStorage.userId,
-                userStorage.size
+                userStorage.size,
+                userStorageId,
+                userStorage.filename
             );
 
             // Mark as completed
@@ -2055,10 +2262,13 @@ export class AIService {
         const numFlashcards = quantityFlashcard || 10;
         const numQuizzes = quantityQuizz || 10;
 
-        // Check credit first (don't deduct yet)
-        const cost =
+        // Regenerate only charges for questions (OCR was already done)
+        const requestedQuantity =
             typeResult === TYPE_RESULT.FLASHCARD ? numFlashcards : numQuizzes;
-        await this.checkUserCredit(user.id, cost);
+        const questionCost = this.calculateQuestionCost(requestedQuantity);
+
+        // Check balance for question generation only
+        await this.checkUserBalance(user.id, questionCost);
 
         const upload = await this.prisma.userStorage.findFirst({
             where: { id: uploadId, userId: user.id },
@@ -2148,14 +2358,19 @@ export class AIService {
             job.progress = 40;
             this.jobQueue.set(jobId, job);
 
+            let actualCount = 0;
+            const isFlashcard =
+                Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD;
+
             // Generate based on type
-            if (Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD) {
+            if (isFlashcard) {
                 const flashcards = await this.generateFlashcardsChunkBased(
                     uploadId,
                     job.params.quantityFlashcard || 10,
                     job.params.isNarrowSearch || false,
                     job.params.keyword
                 );
+                actualCount = flashcards.length;
                 job.progress = 80;
                 this.jobQueue.set(jobId, job);
 
@@ -2167,7 +2382,6 @@ export class AIService {
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
-                // Set result
                 job.result = {
                     type: JobType.FLASHCARD,
                     flashcards: savedFlashcards.flashcards as any[],
@@ -2184,6 +2398,7 @@ export class AIService {
                     job.params.isNarrowSearch || false,
                     job.params.keyword
                 );
+                actualCount = quizzes.length;
                 job.progress = 80;
                 this.jobQueue.set(jobId, job);
 
@@ -2195,7 +2410,6 @@ export class AIService {
                 job.progress = 90;
                 this.jobQueue.set(jobId, job);
 
-                // Set result
                 job.result = {
                     type: JobType.QUIZ,
                     quizzes: savedQuizzes.quizzes as any[],
@@ -2207,18 +2421,20 @@ export class AIService {
                 };
             }
 
+            // Charge for questions/flashcards based on ACTUAL count
+            await this.chargeForQuestions(
+                job.userId,
+                actualCount,
+                isFlashcard,
+                uploadId,
+                upload.filename
+            );
+
             // Mark as completed
             job.status = JobStatus.COMPLETED;
             job.progress = 100;
             job.completedAt = new Date();
             this.jobQueue.set(jobId, job);
-
-            // Deduct credits only after job completed successfully
-            const cost =
-                Number(job.params.typeResult) === TYPE_RESULT.FLASHCARD
-                    ? job.params.quantityFlashcard || 10
-                    : job.params.quantityQuizz || 10;
-            await this.decrementUserCredit(job.userId, cost);
 
             console.log(`✅ Regenerate job ${jobId} completed successfully`);
         } catch (error) {
