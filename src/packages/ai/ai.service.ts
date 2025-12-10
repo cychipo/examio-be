@@ -113,7 +113,9 @@ export class AIService {
         }
 
         // Normalize ids to array
-        const ids = Array.isArray(userStorageIds) ? userStorageIds : [userStorageIds];
+        const ids = Array.isArray(userStorageIds)
+            ? userStorageIds
+            : [userStorageIds];
 
         // Set defaults if not provided
         const finalTopK =
@@ -814,8 +816,8 @@ export class AIService {
                 typeResult === TYPE_RESULT.QUIZZ
                     ? JobType.QUIZ
                     : typeResult === TYPE_RESULT.FLASHCARD
-                    ? JobType.FLASHCARD
-                    : JobType.KNOWLEDGE_BASE,
+                      ? JobType.FLASHCARD
+                      : JobType.KNOWLEDGE_BASE,
             userId: user.id,
             file,
             params: {
@@ -1184,6 +1186,224 @@ export class AIService {
         return {
             url: `https://examio-r2.fayedark.com/${r2File}`,
         };
+    }
+
+    /**
+     * Quick upload file - only uploads to R2 and creates UserStorage record
+     * Does NOT perform OCR or vectorization. This is done on-demand when chat messages are sent.
+     */
+    async quickUploadFile(
+        file: Express.Multer.File,
+        user: User
+    ): Promise<{ id: string; filename: string; url: string }> {
+        // Validate PDF file
+        this.validatePdfFile(file);
+
+        // Validate page count
+        const pdfDoc = await PDFDocument.load(file.buffer);
+        const pageCount = pdfDoc.getPageCount();
+        if (pageCount > 50) {
+            throw new BadRequestException(
+                `File PDF có ${pageCount} trang. Giới hạn tối đa là 50 trang.`
+            );
+        }
+
+        // Check credit (2 credits per MB minimum)
+        const cost = Math.max(2, Math.ceil(file.size / (1024 * 1024)));
+        const wallet = await this.prisma.wallet.findUnique({
+            where: { userId: user.id },
+        });
+
+        if (!wallet || wallet.balance < cost) {
+            throw new BadRequestException('Không đủ tín dụng');
+        }
+
+        // Upload to R2
+        const r2Key = this.generateIdService.generateId();
+        const r2File = await this.r2Service.uploadFile(
+            r2Key,
+            file.buffer,
+            file.mimetype
+        );
+        if (!r2File) {
+            throw new InternalServerErrorException(
+                'Không upload được file lên R2'
+            );
+        }
+
+        // Fix Vietnamese filename encoding issue
+        const originalFilename = Buffer.from(
+            file.originalname,
+            'latin1'
+        ).toString('utf8');
+
+        // Create UserStorage with processingStatus = PENDING
+        const userStorage = await this.prisma.userStorage.create({
+            data: {
+                id: this.generateIdService.generateId(),
+                userId: user.id,
+                filename: originalFilename,
+                mimetype: file.mimetype,
+                size: file.size,
+                keyR2: r2Key,
+                url: `https://examio-r2.fayedark.com/${r2File}`,
+                processingStatus: 'PENDING', // Mark as pending for on-demand processing
+            },
+        });
+
+        console.log(
+            `✅ Quick upload: ${userStorage.filename} (${userStorage.id}) - status: PENDING`
+        );
+
+        return {
+            id: userStorage.id,
+            filename: userStorage.filename,
+            url: userStorage.url,
+        };
+    }
+
+    /**
+     * Process document on-demand - performs OCR and vectorization for documents with PENDING status
+     * Called when user sends first message with an unprocessed document
+     */
+    async processDocumentOnDemand(userStorageId: string): Promise<boolean> {
+        // Find the document
+        const userStorage = await this.prisma.userStorage.findFirst({
+            where: { id: userStorageId },
+        });
+
+        if (!userStorage) {
+            console.error(
+                `[processDocumentOnDemand] UserStorage not found: ${userStorageId}`
+            );
+            return false;
+        }
+
+        // Check if already processed or currently processing
+        if (userStorage.processingStatus === 'COMPLETED') {
+            console.log(
+                `[processDocumentOnDemand] Document already processed: ${userStorageId}`
+            );
+            return true;
+        }
+
+        if (userStorage.processingStatus === 'PROCESSING') {
+            console.log(
+                `[processDocumentOnDemand] Document currently processing: ${userStorageId}`
+            );
+            // Wait for a bit and check again (simple polling)
+            for (let i = 0; i < 30; i++) {
+                // Max 60 seconds wait
+                await this.delay(2000);
+                const refreshed = await this.prisma.userStorage.findFirst({
+                    where: { id: userStorageId },
+                });
+                if (refreshed?.processingStatus === 'COMPLETED') {
+                    return true;
+                }
+                if (refreshed?.processingStatus === 'FAILED') {
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        try {
+            // Mark as processing
+            await this.prisma.userStorage.update({
+                where: { id: userStorageId },
+                data: { processingStatus: 'PROCESSING' },
+            });
+
+            console.log(
+                `🚀 [processDocumentOnDemand] Starting OCR/vectorization for: ${userStorage.filename}`
+            );
+
+            // Fetch file from R2 (returns a stream, need to convert to Buffer)
+            const fileStream = await this.r2Service.getFile(userStorage.keyR2);
+            if (!fileStream) {
+                throw new Error('Could not fetch file from R2');
+            }
+
+            // Convert stream to Buffer
+            const chunks: Buffer[] = [];
+            for await (const chunk of fileStream as AsyncIterable<Buffer>) {
+                chunks.push(Buffer.from(chunk));
+            }
+            const fileBuffer = Buffer.concat(chunks);
+
+            // Create a mock file object for extractAndSavePdfChunks
+            const mockFile = {
+                buffer: fileBuffer,
+                mimetype: userStorage.mimetype,
+                originalname: userStorage.filename,
+                size: userStorage.size,
+            };
+
+            // Perform OCR and vectorization
+            await this.extractAndSavePdfChunks(mockFile, userStorageId);
+
+            // Deduct credits (now that processing is complete)
+            await this.decrementUserCredit(
+                userStorage.userId,
+                userStorage.size
+            );
+
+            // Mark as completed
+            await this.prisma.userStorage.update({
+                where: { id: userStorageId },
+                data: { processingStatus: 'COMPLETED' },
+            });
+
+            console.log(
+                `✅ [processDocumentOnDemand] Completed: ${userStorage.filename}`
+            );
+            return true;
+        } catch (error) {
+            console.error(
+                `❌ [processDocumentOnDemand] Failed for ${userStorageId}:`,
+                error
+            );
+
+            // Mark as failed
+            await this.prisma.userStorage.update({
+                where: { id: userStorageId },
+                data: { processingStatus: 'FAILED' },
+            });
+
+            return false;
+        }
+    }
+
+    /**
+     * Check if documents need on-demand processing
+     */
+    async checkAndProcessDocuments(documentIds: string[]): Promise<void> {
+        if (!documentIds.length) return;
+
+        // Find documents that need processing
+        const pendingDocs = await this.prisma.userStorage.findMany({
+            where: {
+                id: { in: documentIds },
+                processingStatus: { in: ['PENDING', 'FAILED'] },
+            },
+        });
+
+        if (pendingDocs.length === 0) {
+            console.log(
+                '[checkAndProcessDocuments] All documents already processed'
+            );
+            return;
+        }
+
+        console.log(
+            `[checkAndProcessDocuments] Processing ${pendingDocs.length} pending documents`
+        );
+
+        // Process each document (sequentially to avoid overwhelming the system)
+        for (const doc of pendingDocs) {
+            await this.processDocumentOnDemand(doc.id);
+        }
     }
 
     private async uploadAndCreateUserStorage(file: any, user: User) {
