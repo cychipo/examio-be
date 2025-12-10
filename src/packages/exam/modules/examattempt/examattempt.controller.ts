@@ -143,13 +143,15 @@ export class ExamAttemptController {
         @Req() req: AuthenticatedRequest,
         @Param('examRoomId') examRoomId: string,
         @Query('page') page: string = '1',
-        @Query('limit') limit: string = '10'
+        @Query('limit') limit: string = '10',
+        @Query('distinctUser') distinctUser: string = 'false'
     ) {
         return this.examAttemptService.getExamAttemptsByRoom(
             examRoomId,
             req.user,
             parseInt(page, 10) || 1,
-            parseInt(limit, 10) || 10
+            parseInt(limit, 10) || 10,
+            distinctUser === 'true'
         );
     }
 
@@ -170,13 +172,15 @@ export class ExamAttemptController {
         @Req() req: AuthenticatedRequest,
         @Param('sessionId') sessionId: string,
         @Query('page') page: string = '1',
-        @Query('limit') limit: string = '50'
+        @Query('limit') limit: string = '50',
+        @Query('distinctUser') distinctUser: string = 'false'
     ) {
         return this.examAttemptService.getExamAttemptsBySession(
             sessionId,
             req.user,
             parseInt(page, 10) || 1,
-            parseInt(limit, 10) || 50
+            parseInt(limit, 10) || 50,
+            distinctUser === 'true'
         );
     }
 

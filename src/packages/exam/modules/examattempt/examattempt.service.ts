@@ -414,7 +414,8 @@ export class ExamAttemptService {
         examRoomId: string,
         user: User,
         page: number = 1,
-        limit: number = 10
+        limit: number = 10,
+        distinctUser: boolean = false
     ) {
         // First verify user owns this exam room
         const examRoom = await this.prisma.examRoom.findUnique({
@@ -431,6 +432,95 @@ export class ExamAttemptService {
         }
 
         const skip = (page - 1) * limit;
+
+        // If distinctUser is true, get only the latest attempt per user
+        if (distinctUser) {
+            // Get all attempts ordered by startedAt desc
+            const allAttempts = await this.prisma.examAttempt.findMany({
+                where: {
+                    examSession: {
+                        examRoomId: examRoomId,
+                    },
+                },
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            username: true,
+                            name: true,
+                            email: true,
+                            avatar: true,
+                        },
+                    },
+                    examSession: {
+                        select: {
+                            id: true,
+                            startTime: true,
+                            endTime: true,
+                        },
+                    },
+                },
+                orderBy: { startedAt: 'desc' },
+            });
+
+            // Group by userId and take the most recent (first occurrence)
+            const uniqueUserMap = new Map();
+            const uniqueAttempts: typeof allAttempts = [];
+
+            for (const attempt of allAttempts) {
+                if (!uniqueUserMap.has(attempt.userId)) {
+                    uniqueUserMap.set(attempt.userId, true);
+                    uniqueAttempts.push(attempt);
+                }
+            }
+
+            // Apply pagination to unique attempts
+            const paginatedAttempts = uniqueAttempts.slice(skip, skip + limit);
+            const total = uniqueAttempts.length;
+
+            // Transform data
+            const transformedAttempts = paginatedAttempts.map((attempt) => {
+                let timeSpentSeconds = 0;
+                if (attempt.finishedAt && attempt.startedAt) {
+                    timeSpentSeconds = Math.floor(
+                        (new Date(attempt.finishedAt).getTime() -
+                            new Date(attempt.startedAt).getTime()) /
+                            1000
+                    );
+                } else if (attempt.startedAt) {
+                    timeSpentSeconds = Math.floor(
+                        (Date.now() - new Date(attempt.startedAt).getTime()) /
+                            1000
+                    );
+                }
+
+                return {
+                    id: attempt.id,
+                    status: attempt.status,
+                    score: attempt.score,
+                    totalQuestions: attempt.totalQuestions,
+                    correctAnswers: attempt.correctAnswers,
+                    startedAt: attempt.startedAt,
+                    finishedAt: attempt.finishedAt,
+                    timeSpentSeconds,
+                    answers: attempt.answers,
+                    user: attempt.user,
+                    session: {
+                        id: attempt.examSession.id,
+                        startTime: attempt.examSession.startTime,
+                        endTime: attempt.examSession.endTime,
+                    },
+                };
+            });
+
+            return {
+                attempts: transformedAttempts,
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+            };
+        }
 
         // Get attempts with user and session info in single query
         const [attempts, total] = await Promise.all([
@@ -600,7 +690,8 @@ export class ExamAttemptService {
         sessionId: string,
         user: User,
         page: number = 1,
-        limit: number = 50
+        limit: number = 50,
+        distinctUser: boolean = false
     ) {
         // First verify user owns this session's exam room
         const session = await this.prisma.examSession.findUnique({
@@ -621,6 +712,110 @@ export class ExamAttemptService {
         }
 
         const skip = (page - 1) * limit;
+
+        // If distinctUser is true, get only the best attempt per user
+        // BUT aggregate violation counts from ALL attempts
+        if (distinctUser) {
+            // Get all attempts ordered by score desc
+            const allAttempts = await this.prisma.examAttempt.findMany({
+                where: { examSessionId: sessionId },
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            username: true,
+                            name: true,
+                            email: true,
+                            avatar: true,
+                        },
+                    },
+                    examSession: {
+                        select: {
+                            id: true,
+                            startTime: true,
+                            endTime: true,
+                        },
+                    },
+                },
+                orderBy: { score: 'desc' },
+            });
+
+            // Group by userId:
+            // - Take the best score attempt as representative
+            // - SUM violationCount from all attempts
+            // - COUNT total attempts per user
+            const userAttemptsMap = new Map<
+                string,
+                {
+                    bestAttempt: (typeof allAttempts)[0];
+                    totalViolations: number;
+                    attemptCount: number;
+                }
+            >();
+
+            for (const attempt of allAttempts) {
+                const existing = userAttemptsMap.get(attempt.userId);
+                if (existing) {
+                    existing.totalViolations += attempt.violationCount;
+                    existing.attemptCount += 1;
+                } else {
+                    userAttemptsMap.set(attempt.userId, {
+                        bestAttempt: attempt, // First one is best due to orderBy score desc
+                        totalViolations: attempt.violationCount,
+                        attemptCount: 1,
+                    });
+                }
+            }
+
+            const uniqueData = Array.from(userAttemptsMap.values());
+
+            // Apply pagination
+            const paginatedData = uniqueData.slice(skip, skip + limit);
+            const total = uniqueData.length;
+
+            // Transform data with aggregated violation count
+            const transformedAttempts = paginatedData.map((data) => {
+                const attempt = data.bestAttempt;
+                let timeSpentSeconds = 0;
+                if (attempt.finishedAt && attempt.startedAt) {
+                    timeSpentSeconds = Math.floor(
+                        (new Date(attempt.finishedAt).getTime() -
+                            new Date(attempt.startedAt).getTime()) /
+                            1000
+                    );
+                }
+
+                return {
+                    id: attempt.id,
+                    status: attempt.status,
+                    score: attempt.score,
+                    totalQuestions: attempt.totalQuestions,
+                    correctAnswers: attempt.correctAnswers,
+                    startedAt: attempt.startedAt,
+                    finishedAt: attempt.finishedAt,
+                    timeSpentSeconds,
+                    // Return AGGREGATED violation count from all attempts
+                    violationCount: data.totalViolations,
+                    // Return count of attempts for this user
+                    attemptCount: data.attemptCount,
+                    answers: attempt.answers,
+                    user: attempt.user,
+                    session: {
+                        id: attempt.examSession.id,
+                        startTime: attempt.examSession.startTime,
+                        endTime: attempt.examSession.endTime,
+                    },
+                };
+            });
+
+            return {
+                attempts: transformedAttempts,
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+            };
+        }
 
         // Get attempts with user info and violation count
         const [attempts, total] = await Promise.all([

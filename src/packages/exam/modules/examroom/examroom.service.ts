@@ -217,6 +217,11 @@ export class ExamRoomService {
                         id: true,
                         title: true,
                         thumbnail: true,
+                        _count: {
+                            select: {
+                                detailsQuizQuestions: true,
+                            },
+                        },
                     },
                 },
                 _count: {
@@ -330,7 +335,7 @@ export class ExamRoomService {
 
         const skip = (page - 1) * limit;
 
-        const [sessions, total] = await Promise.all([
+        const [sessions, total, distinctParticipants] = await Promise.all([
             this.prisma.examSession.findMany({
                 where: {
                     examRoomId: examRoomId,
@@ -357,6 +362,16 @@ export class ExamRoomService {
                     examRoomId: examRoomId,
                 },
             }),
+            // Count distinct participants across ALL sessions in this room
+            this.prisma.examAttempt.findMany({
+                where: {
+                    examSession: {
+                        examRoomId: examRoomId,
+                    },
+                },
+                distinct: ['userId'],
+                select: { userId: true },
+            }),
         ]);
 
         // Map sessions to add distinctUserCount
@@ -372,6 +387,7 @@ export class ExamRoomService {
             page,
             limit,
             totalPages: Math.ceil(total / limit),
+            totalDistinctParticipants: distinctParticipants.length,
         };
     }
 }
