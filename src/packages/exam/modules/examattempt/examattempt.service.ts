@@ -7,6 +7,7 @@ import {
     BadRequestException,
 } from '@nestjs/common';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { CryptoService } from 'src/common/services/crypto.service';
 import { User } from '@prisma/client';
 import { EXAM_SESSION_STATUS, EXAM_ATTEMPT_STATUS } from '../../types';
 import { CreateExamAttemptDto } from './dto/create-examattempt.dto';
@@ -29,7 +30,8 @@ export class ExamAttemptService {
         private readonly examAttemptRepository: ExamAttemptRepository,
         private readonly examSessionRepository: ExamSessionRepository,
         private readonly generateIdService: GenerateIdService,
-        private readonly redisService: RedisService
+        private readonly redisService: RedisService,
+        private readonly cryptoService: CryptoService
     ) {}
 
     /**
@@ -1314,5 +1316,271 @@ export class ExamAttemptService {
         await this.redisService.set(cacheKey, stats, EXPIRED_TIME.FIVE_MINUTES);
 
         return stats;
+    }
+
+    // ==================== SECURE QUIZ METHODS ====================
+
+    /**
+     * Get exam attempt with encrypted questions and JWT tokens
+     * NEVER returns answer field - secure endpoint for quiz taking
+     */
+    async getSecureQuizQuestions(attemptId: string, user: User) {
+        const attempt = await this.prisma.examAttempt.findFirst({
+            where: { id: attemptId, userId: user.id },
+            include: {
+                examSession: {
+                    include: {
+                        examRoom: {
+                            include: {
+                                quizSet: {
+                                    include: {
+                                        detailsQuizQuestions: {
+                                            include: {
+                                                quizQuestion: true,
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!attempt) {
+            throw new NotFoundException('Bài làm không tồn tại');
+        }
+
+        // Calculate expiry time based on session end time
+        const expirySeconds = this.cryptoService.calculateExpirySeconds(
+            attempt.examSession.endTime
+        );
+
+        // Generate secure questions with JWT tokens and encrypted content
+        const secureQuestions =
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                (d, index) => {
+                    const q = d.quizQuestion;
+
+                    // Sign JWT token for this question
+                    const token = this.cryptoService.signQuestionToken(
+                        {
+                            qid: q.id,
+                            aid: attemptId,
+                            uid: user.id,
+                            i: index,
+                            t: 'question',
+                        },
+                        expirySeconds
+                    );
+
+                    // Encrypt question content and options
+                    const questionEncrypted = this.cryptoService.encryptContent(
+                        q.question
+                    );
+                    const optionsEncrypted = this.cryptoService.encryptOptions(
+                        q.options
+                    );
+
+                    return {
+                        index,
+                        token,
+                        question_encrypted: questionEncrypted,
+                        options_encrypted: optionsEncrypted,
+                    };
+                }
+            );
+
+        // Calculate time limit from session
+        let timeLimitMinutes: number | null = null;
+        if (attempt.examSession.endTime) {
+            const diffMs =
+                attempt.examSession.endTime.getTime() -
+                attempt.examSession.startTime.getTime();
+            timeLimitMinutes = Math.floor(diffMs / 60000);
+        }
+
+        // Return minimal data - no answers, no full question text exposed
+        return {
+            attemptId: attempt.id,
+            status: attempt.status,
+            currentIndex: attempt.currentIndex,
+            answers: attempt.answers,
+            markedQuestions: attempt.markedQuestions,
+            totalQuestions: attempt.totalQuestions,
+            timeLimitMinutes,
+            startedAt: attempt.startedAt,
+            questions: secureQuestions,
+        };
+    }
+
+    /**
+     * Submit exam attempt with JWT token verification
+     * Each answer must have a valid JWT token matching the attempt
+     */
+    async submitSecureExamAttempt(
+        attemptId: string,
+        user: User,
+        answers: Array<{ token: string; chosen_option: string }>
+    ) {
+        // Get attempt with session and questions
+        const attempt = await this.prisma.examAttempt.findFirst({
+            where: { id: attemptId, userId: user.id },
+            include: {
+                examSession: {
+                    include: {
+                        examRoom: {
+                            include: {
+                                quizSet: {
+                                    include: {
+                                        detailsQuizQuestions: {
+                                            include: {
+                                                quizQuestion: true,
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!attempt) {
+            throw new NotFoundException('Bài làm không tồn tại');
+        }
+
+        if (attempt.status !== EXAM_ATTEMPT_STATUS.IN_PROGRESS) {
+            throw new BadRequestException('Bài làm đã được nộp trước đó');
+        }
+
+        // Build question map for lookup
+        const questionMap = new Map<
+            string,
+            { id: string; answer: string; index: number }
+        >();
+        attempt.examSession.examRoom.quizSet.detailsQuizQuestions.forEach(
+            (d, index) => {
+                questionMap.set(d.quizQuestion.id, {
+                    id: d.quizQuestion.id,
+                    answer: d.quizQuestion.answer,
+                    index,
+                });
+            }
+        );
+
+        // Verify tokens and calculate score
+        let correctCount = 0;
+        let invalidTokenCount = 0;
+        const verifiedAnswers: Record<string, string> = {};
+
+        for (const ans of answers) {
+            try {
+                // Verify JWT token
+                const decoded = this.cryptoService.verifyQuestionToken(
+                    ans.token
+                );
+
+                // Validate token belongs to this attempt and user
+                if (decoded.aid !== attemptId) {
+                    invalidTokenCount++;
+                    continue;
+                }
+                if (decoded.uid !== user.id) {
+                    invalidTokenCount++;
+                    continue;
+                }
+                if (decoded.t !== 'question') {
+                    invalidTokenCount++;
+                    continue;
+                }
+
+                // Check question exists in this exam
+                const question = questionMap.get(decoded.qid);
+                if (!question) {
+                    invalidTokenCount++;
+                    continue;
+                }
+
+                // Store verified answer
+                verifiedAnswers[decoded.qid] = ans.chosen_option;
+
+                // Check if correct
+                if (question.answer === ans.chosen_option) {
+                    correctCount++;
+                }
+            } catch (error) {
+                // Token verification failed
+                invalidTokenCount++;
+            }
+        }
+
+        // Log violations if invalid tokens found
+        if (invalidTokenCount > 0) {
+            console.warn(
+                `[SECURITY] Attempt ${attemptId}: ${invalidTokenCount} invalid tokens detected`
+            );
+        }
+
+        const totalQuestions = questionMap.size;
+        const score =
+            totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
+
+        try {
+            const updatedAttempt = await this.prisma.examAttempt.update({
+                where: { id: attemptId },
+                data: {
+                    status: EXAM_ATTEMPT_STATUS.COMPLETED,
+                    finishedAt: new Date(),
+                    score,
+                    correctAnswers: correctCount,
+                    totalQuestions,
+                    answers: verifiedAnswers,
+                },
+            });
+
+            const showAnswers = attempt.examSession.showAnswersAfterSubmit;
+            const passingScore = attempt.examSession.passingScore || 0;
+            const passed = score >= passingScore;
+
+            // Prepare response
+            const response: any = {
+                message: 'Nộp bài thành công',
+                examAttempt: {
+                    id: updatedAttempt.id,
+                    status: updatedAttempt.status,
+                    score: updatedAttempt.score,
+                    finishedAt: updatedAttempt.finishedAt,
+                },
+                score,
+                totalQuestions,
+                correctAnswers: correctCount,
+                percentage: Math.round(score * 10) / 10,
+                showAnswers,
+                passed,
+                passingScore,
+            };
+
+            // Only include answers if allowed
+            if (showAnswers) {
+                response.questions =
+                    attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                        (d) => ({
+                            id: d.quizQuestion.id,
+                            question: d.quizQuestion.question,
+                            options: d.quizQuestion.options,
+                            answer: d.quizQuestion.answer,
+                            userAnswer:
+                                verifiedAnswers[d.quizQuestion.id] || null,
+                        })
+                    );
+            }
+
+            return response;
+        } catch (error) {
+            throw new InternalServerErrorException('Nộp bài thất bại');
+        }
     }
 }
