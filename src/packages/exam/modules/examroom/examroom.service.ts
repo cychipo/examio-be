@@ -98,9 +98,11 @@ export class ExamRoomService {
             },
             cache: true,
         });
+
         if (!examRoom) {
             throw new NotFoundException('Phòng thi không tồn tại');
         }
+
         return examRoom;
     }
 
@@ -215,6 +217,11 @@ export class ExamRoomService {
                         id: true,
                         title: true,
                         thumbnail: true,
+                        _count: {
+                            select: {
+                                detailsQuizQuestions: true,
+                            },
+                        },
                     },
                 },
                 _count: {
@@ -308,77 +315,6 @@ export class ExamRoomService {
     }
 
     /**
-     * Get participants for an exam room (across all sessions)
-     */
-    async getParticipants(
-        examRoomId: string,
-        user: User,
-        page = 1,
-        limit = 10
-    ) {
-        // Check ownership
-        const examRoom = await this.examRoomRepository.findOne({
-            where: { id: examRoomId, hostId: user.id },
-            cache: true,
-        });
-
-        if (!examRoom) {
-            throw new NotFoundException('Phòng thi không tồn tại');
-        }
-
-        const skip = (page - 1) * limit;
-
-        const [participants, total] = await Promise.all([
-            this.prisma.examSessionParticipant.findMany({
-                where: {
-                    examSession: {
-                        examRoomId: examRoomId,
-                    },
-                },
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            name: true,
-                            username: true,
-                            avatar: true,
-                        },
-                    },
-                    examSession: {
-                        select: {
-                            id: true,
-                            startTime: true,
-                            endTime: true,
-                            status: true,
-                        },
-                    },
-                },
-                skip,
-                take: limit,
-                orderBy: {
-                    createdAt: 'desc',
-                },
-            }),
-            this.prisma.examSessionParticipant.count({
-                where: {
-                    examSession: {
-                        examRoomId: examRoomId,
-                    },
-                },
-            }),
-        ]);
-
-        return {
-            participants,
-            total,
-            page,
-            limit,
-            totalPages: Math.ceil(total / limit),
-        };
-    }
-
-    /**
      * Get exam sessions for an exam room with pagination
      */
     async getExamSessions(
@@ -399,7 +335,7 @@ export class ExamRoomService {
 
         const skip = (page - 1) * limit;
 
-        const [sessions, total] = await Promise.all([
+        const [sessions, total, distinctParticipants] = await Promise.all([
             this.prisma.examSession.findMany({
                 where: {
                     examRoomId: examRoomId,
@@ -407,9 +343,12 @@ export class ExamRoomService {
                 include: {
                     _count: {
                         select: {
-                            participants: true,
                             examAttempts: true,
                         },
+                    },
+                    examAttempts: {
+                        distinct: ['userId'],
+                        select: { userId: true },
                     },
                 },
                 skip,
@@ -423,14 +362,32 @@ export class ExamRoomService {
                     examRoomId: examRoomId,
                 },
             }),
+            // Count distinct participants across ALL sessions in this room
+            this.prisma.examAttempt.findMany({
+                where: {
+                    examSession: {
+                        examRoomId: examRoomId,
+                    },
+                },
+                distinct: ['userId'],
+                select: { userId: true },
+            }),
         ]);
 
+        // Map sessions to add distinctUserCount
+        const sessionsWithDistinctCount = sessions.map((session) => ({
+            ...session,
+            distinctUserCount: session.examAttempts.length,
+            examAttempts: undefined,
+        }));
+
         return {
-            sessions,
+            sessions: sessionsWithDistinctCount,
             total,
             page,
             limit,
             totalPages: Math.ceil(total / limit),
+            totalDistinctParticipants: distinctParticipants.length,
         };
     }
 }

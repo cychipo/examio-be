@@ -4,8 +4,8 @@ import { FlashcardsetModule } from './modules/flashcardset/flashcardset.module';
 import { ExamRoomModule } from './modules/examroom/examroom.module';
 import { ExamSessionModule } from './modules/examsession/examsession.module';
 import { ExamAttemptModule } from './modules/examattempt/examattempt.module';
-import { ParticipantModule } from './modules/participant/participant.module';
 import { QuizPracticeAttemptModule } from './modules/quizpracticeattempt/quiz-practice-attempt.module';
+import { CheatingLogModule } from './modules/cheatinglog/cheatinglog.module';
 
 @Module({
     imports: [
@@ -14,8 +14,8 @@ import { QuizPracticeAttemptModule } from './modules/quizpracticeattempt/quiz-pr
         ExamRoomModule,
         ExamSessionModule,
         ExamAttemptModule,
-        ParticipantModule,
         QuizPracticeAttemptModule,
+        CheatingLogModule,
     ],
     exports: [
         QuizsetModule,
@@ -23,8 +23,8 @@ import { QuizPracticeAttemptModule } from './modules/quizpracticeattempt/quiz-pr
         ExamRoomModule,
         ExamSessionModule,
         ExamAttemptModule,
-        ParticipantModule,
         QuizPracticeAttemptModule,
+        CheatingLogModule,
     ],
 })
 export class ExamModule {}

@@ -1,18 +1,21 @@
 model UserStorage {
-    id        String   @unique
-    userId    String
-    filename  String
-    url       String
-    mimetype  String
-    size      Int
-    keyR2     String   @unique
-    createdAt DateTime @default(now())
-    updatedAt DateTime @default(now()) @updatedAt
+    id               String   @unique
+    userId           String
+    filename         String
+    url              String
+    mimetype         String
+    size             Int
+    keyR2            String   @unique
+    createdAt        DateTime @default(now())
+    updatedAt        DateTime @default(now()) @updatedAt
+    processingStatus String   @default("COMPLETED") // PENDING | PROCESSING | COMPLETED | FAILED
+    creditCharged    Boolean  @default(false) // Track if OCR credit was already deducted
 
     user                      User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
     documents                 Document[]
     historyGeneratedQuizz     HistoryGeneratedQuizz[]
     historyGeneratedFlashcard HistoryGeneratedFlashcard[]
+    aiChatDocuments           AIChatDocument[]
 }
 
 model Document {

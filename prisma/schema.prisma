@@ -17,9 +17,9 @@ model AIChat {
     createdAt DateTime @default(now())
     updatedAt DateTime @default(now()) @updatedAt
 
-    user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+    user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
     messages  AIChatMessage[]
-    documents AIChatDocument[]  // Multi-file support
+    documents AIChatDocument[] // Multi-file support
 
     @@index([userId, updatedAt(sort: Desc)])
 }
@@ -44,11 +44,12 @@ model AIChatMessage {
 model AIChatDocument {
     id           String   @id @default(cuid())
     chatId       String
-    documentId   String   // UserStorage ID
-    documentName String   // File name for display
+    documentId   String // UserStorage ID (file gốc)
+    documentName String // File name for display
     createdAt    DateTime @default(now())
 
-    chat AIChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+    chat        AIChat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+    userStorage UserStorage @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
     // Composite unique constraint prevents duplicate document per chat
     @@unique([chatId, documentId])
@@ -190,8 +191,7 @@ model ExamSession {
     createdBy              String?
     updatedBy              String?
 
-    examRoom     ExamRoom                 @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
-    participants ExamSessionParticipant[]
+    examRoom     ExamRoom      @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
     examAttempts ExamAttempt[]
 
     @@index([accessCode])
@@ -219,24 +219,26 @@ model ExamAttempt {
     createdBy String?
     updatedBy String?
 
-    examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
-    user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    examSession  ExamSession   @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
+    user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+    cheatingLogs CheatingLog[]
 }
 
-model ExamSessionParticipant {
-    id            String    @id @default(cuid())
-    examSessionId String
-    userId        String
-    status        Int       @default(0) // 0: PENDING, 1: APPROVED, 2: REJECTED, 3: LEFT
-    joinedAt      DateTime?
-    leftAt        DateTime?
-    createdAt     DateTime  @default(now())
-    updatedAt     DateTime  @default(now()) @updatedAt
-    createdBy     String?
-    updatedBy     String?
+// Cheating log for exam attempts - tracks violations per type
+model CheatingLog {
+    id             String   @id @default(cuid())
+    examAttemptId  String
+    type           String // TAB_SWITCH, WINDOW_BLUR, DEVTOOLS_OPEN, COPY_PASTE, RIGHT_CLICK, FULLSCREEN_EXIT, PRINT_SCREEN
+    count          Int      @default(1)
+    description    String? // Human-readable description
+    lastOccurredAt DateTime @default(now())
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @default(now()) @updatedAt
 
-    examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
-    user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    examAttempt ExamAttempt @relation(fields: [examAttemptId], references: [id], onDelete: Cascade)
+
+    @@unique([examAttemptId, type]) // Upsert by type - O(1) lookup
+    @@index([examAttemptId])
 }
 
 model HistoryGeneratedQuizz {
@@ -346,20 +348,23 @@ model WalletTransaction {
 
 
 model UserStorage {
-    id        String   @unique
-    userId    String
-    filename  String
-    url       String
-    mimetype  String
-    size      Int
-    keyR2     String   @unique
-    createdAt DateTime @default(now())
-    updatedAt DateTime @default(now()) @updatedAt
+    id               String   @unique
+    userId           String
+    filename         String
+    url              String
+    mimetype         String
+    size             Int
+    keyR2            String   @unique
+    createdAt        DateTime @default(now())
+    updatedAt        DateTime @default(now()) @updatedAt
+    processingStatus String   @default("COMPLETED") // PENDING | PROCESSING | COMPLETED | FAILED
+    creditCharged    Boolean  @default(false) // Track if OCR credit was already deducted
 
     user                      User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
     documents                 Document[]
     historyGeneratedQuizz     HistoryGeneratedQuizz[]
     historyGeneratedFlashcard HistoryGeneratedFlashcard[]
+    aiChatDocuments           AIChatDocument[]
 }
 
 model Document {
@@ -401,7 +406,6 @@ model User {
     flashCardSets             FlashCardSet[]
     examRooms                 ExamRoom[]
     examAttempts              ExamAttempt[]
-    examSessionParticipants   ExamSessionParticipant[]
     historyGeneratedQuizz     HistoryGeneratedQuizz[]
     historyGeneratedFlashcard HistoryGeneratedFlashcard[]
     quizPracticeAttempts      QuizPracticeAttempt[]

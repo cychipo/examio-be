@@ -7,11 +7,18 @@ import { RedisModule } from '../redis/redis.module';
 import { VirtualTeacherModule } from '../virtual-teacher/virtual-teacher.module';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { R2Module } from '../r2/r2.module';
+import { AIModule } from '../ai/ai.module';
 
 @Module({
     controllers: [AIChatController],
     providers: [AIChatService, PrismaService, GenerateIdService],
     exports: [AIChatService],
-    imports: [AuthModule, RedisModule, VirtualTeacherModule, R2Module],
+    imports: [
+        AuthModule,
+        RedisModule,
+        VirtualTeacherModule,
+        R2Module,
+        AIModule,
+    ],
 })
 export class AIChatModule {}

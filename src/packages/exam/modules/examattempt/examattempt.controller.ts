@@ -127,6 +127,52 @@ export class ExamAttemptController {
         return this.examAttemptService.getExamAttemptForQuiz(id, req.user);
     }
 
+    // ==================== SECURE QUIZ ENDPOINTS ====================
+
+    @Get(':id/secure-quiz')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Get exam attempt with encrypted questions and JWT tokens',
+    })
+    @ApiParam({ name: 'id', description: 'Exam attempt ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Secure quiz data with encrypted questions',
+        type: Object,
+    })
+    async getSecureQuizQuestions(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string
+    ) {
+        return this.examAttemptService.getSecureQuizQuestions(id, req.user);
+    }
+
+    @Post(':id/secure-submit')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Submit exam attempt with JWT token verification',
+    })
+    @ApiParam({ name: 'id', description: 'Exam attempt ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Exam submitted with score calculation',
+        type: Object,
+    })
+    async submitSecureExamAttempt(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string,
+        @Body()
+        dto: { answers: Array<{ token: string; chosen_option: string }> }
+    ) {
+        return this.examAttemptService.submitSecureExamAttempt(
+            id,
+            req.user,
+            dto.answers
+        );
+    }
+
     @Get('list-by-room/:examRoomId')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
@@ -143,13 +189,44 @@ export class ExamAttemptController {
         @Req() req: AuthenticatedRequest,
         @Param('examRoomId') examRoomId: string,
         @Query('page') page: string = '1',
-        @Query('limit') limit: string = '10'
+        @Query('limit') limit: string = '10',
+        @Query('distinctUser') distinctUser: string = 'false'
     ) {
         return this.examAttemptService.getExamAttemptsByRoom(
             examRoomId,
             req.user,
             parseInt(page, 10) || 1,
-            parseInt(limit, 10) || 10
+            parseInt(limit, 10) || 10,
+            distinctUser === 'true'
+        );
+    }
+
+    @Get('list-by-session/:sessionId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Get all exam attempts for a session (owner only)',
+    })
+    @ApiParam({ name: 'sessionId', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description:
+            'List of exam attempts with user details and violation count',
+        type: Object,
+    })
+    async getExamAttemptsBySession(
+        @Req() req: AuthenticatedRequest,
+        @Param('sessionId') sessionId: string,
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+        @Query('distinctUser') distinctUser: string = 'false'
+    ) {
+        return this.examAttemptService.getExamAttemptsBySession(
+            sessionId,
+            req.user,
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 50,
+            distinctUser === 'true'
         );
     }
 

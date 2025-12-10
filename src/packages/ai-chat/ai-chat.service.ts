@@ -9,6 +9,7 @@ import { RedisService } from '../redis/redis.service';
 import { VirtualTeacherService } from '../virtual-teacher/virtual-teacher.service';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { R2Service } from '../r2/r2.service';
+import { AIService } from '../ai/ai.service';
 import {
     CreateChatDto,
     SendMessageDto,
@@ -40,7 +41,8 @@ export class AIChatService {
         private readonly redisService: RedisService,
         private readonly virtualTeacherService: VirtualTeacherService,
         private readonly generateIdService: GenerateIdService,
-        private readonly r2Service: R2Service
+        private readonly r2Service: R2Service,
+        private readonly aiService: AIService
     ) {}
 
     /**
@@ -697,7 +699,9 @@ export class AIChatService {
             where: { chatId },
         });
 
-        console.log(`[AIChatService] Cleared all documents from chat ${chatId}`);
+        console.log(
+            `[AIChatService] Cleared all documents from chat ${chatId}`
+        );
     }
 
     /**
@@ -864,6 +868,11 @@ export class AIChatService {
                 effectiveDocumentIds = [...new Set(effectiveDocumentIds)];
 
                 if (effectiveDocumentIds.length > 0) {
+                    // Process any documents that haven't been OCR'd yet (on-demand processing)
+                    await this.aiService.checkAndProcessDocuments(
+                        effectiveDocumentIds
+                    );
+
                     // Chat has documents - use intent detection
                     const intent =
                         await this.virtualTeacherService.detectIntent(
@@ -894,7 +903,7 @@ export class AIChatService {
                         // Let's assume if RAG, we pass ALL IDs. If not, we pass empty.
                         // UNLESS logic says "Always RAG if explicit"?
                         // Let's stick to "If General, clear IDs".
-                         effectiveDocumentIds = [];
+                        effectiveDocumentIds = [];
                     }
                 }
 

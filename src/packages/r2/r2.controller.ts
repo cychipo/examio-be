@@ -91,6 +91,70 @@ export class R2Controller {
         };
     }
 
+    @Post('image')
+    @ApiOperation({ summary: 'Upload image to R2 bucket (max 2MB)' })
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: {
+                file: {
+                    type: 'string',
+                    format: 'binary',
+                    description: 'Image file to upload (max 2MB)',
+                },
+            },
+            required: ['file'],
+        },
+    })
+    @ApiResponse({
+        status: 201,
+        description: 'Image uploaded successfully',
+        type: UploadFileResponseDto,
+    })
+    @ApiResponse({
+        status: 400,
+        description: 'Invalid file type or size exceeds 2MB',
+    })
+    @UseInterceptors(FileInterceptor('file'))
+    async uploadImage(
+        @UploadedFile() file: Express.Multer.File
+    ): Promise<{ url: string }> {
+        if (!file) {
+            throw new BadRequestException('No file provided');
+        }
+
+        // Validate file type
+        if (!file.mimetype.startsWith('image/')) {
+            throw new BadRequestException(
+                'Invalid file type. Only images are allowed.'
+            );
+        }
+
+        // Validate file size (max 2MB)
+        const maxSize = 2 * 1024 * 1024; // 2MB in bytes
+        if (file.size > maxSize) {
+            throw new BadRequestException(
+                `File size exceeds 2MB limit. Current size: ${(file.size / (1024 * 1024)).toFixed(2)}MB`
+            );
+        }
+
+        // Sanitize filename and create unique key
+        const sanitizedFilename = sanitizeFilename(file.originalname);
+        const key = `${Date.now()}-${sanitizedFilename}`;
+
+        const fullKey = await this.r2Service.uploadFile(
+            key,
+            file.buffer,
+            file.mimetype,
+            'images' // Always store in images directory
+        );
+
+        const url = this.r2Service.getPublicUrl(fullKey);
+
+        return { url };
+    }
+
     @Get('files')
     @ApiOperation({ summary: 'List files in directory' })
     @ApiResponse({
@@ -119,7 +183,9 @@ export class R2Controller {
         description: 'File deleted successfully',
         type: DeleteFileResponseDto,
     })
-    async deleteFile(@Param('path') key: string): Promise<DeleteFileResponseDto> {
+    async deleteFile(
+        @Param('path') key: string
+    ): Promise<DeleteFileResponseDto> {
         await this.r2Service.deleteFile(key);
         return {
             message: 'File deleted successfully',

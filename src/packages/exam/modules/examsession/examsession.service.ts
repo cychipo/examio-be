@@ -117,17 +117,6 @@ export class ExamSessionService {
                         },
                     },
                 },
-                participants: {
-                    include: {
-                        user: {
-                            select: {
-                                id: true,
-                                email: true,
-                                name: true,
-                            },
-                        },
-                    },
-                },
                 _count: {
                     select: {
                         examAttempts: true,
@@ -249,7 +238,6 @@ export class ExamSessionService {
                     },
                     _count: {
                         select: {
-                            participants: true,
                             examAttempts: true,
                         },
                     },
@@ -796,5 +784,120 @@ export class ExamSessionService {
         });
 
         return users;
+    }
+
+    /**
+     * Get exam session stats for student display
+     * Returns only required fields to avoid data leakage:
+     * - durationMinutes: endTime - startTime (null if no endTime)
+     * - totalQuestions: from quizSet
+     * - passingScore: percentage (0 = no minimum)
+     * - currentAttempt: current attempt number for user
+     * - maxAttempts: null if unlimited
+     * - progress: from latest in-progress attempt
+     */
+    async getExamSessionStatsForStudent(id: string, userId: string) {
+        const examSession = await this.prisma.examSession.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                status: true,
+                startTime: true,
+                endTime: true,
+                passingScore: true,
+                allowRetake: true,
+                maxAttempts: true,
+                examRoom: {
+                    select: {
+                        id: true,
+                        title: true,
+                        description: true,
+                        quizSet: {
+                            select: {
+                                _count: {
+                                    select: { detailsQuizQuestions: true },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!examSession) {
+            throw new NotFoundException('Phiên thi không tồn tại');
+        }
+
+        // Calculate duration in minutes if endTime exists
+        let durationMinutes: number | null = null;
+        if (examSession.endTime) {
+            const start = examSession.startTime.getTime();
+            const end = examSession.endTime.getTime();
+            durationMinutes = Math.floor((end - start) / (1000 * 60));
+        }
+
+        // Get total questions from quiz set
+        const totalQuestions =
+            examSession.examRoom.quizSet._count.detailsQuizQuestions;
+
+        // Get user's attempts for this session
+        const userAttempts = await this.prisma.examAttempt.findMany({
+            where: {
+                examSessionId: id,
+                userId: userId,
+            },
+            select: {
+                id: true,
+                status: true,
+                answers: true,
+                markedQuestions: true,
+                totalQuestions: true,
+                createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        // Current attempt count
+        const currentAttempt = userAttempts.length;
+
+        // Max attempts - null if unlimited (allowRetake = false means only 1 try)
+        const maxAttempts = examSession.allowRetake
+            ? examSession.maxAttempts
+            : null;
+
+        // Find latest in-progress attempt for progress display
+        const inProgressAttempt = userAttempts.find((a) => a.status === 0); // 0 = IN_PROGRESS
+
+        // Calculate progress
+        let progress = {
+            answered: 0,
+            marked: 0,
+            total: totalQuestions,
+        };
+
+        if (inProgressAttempt) {
+            const answers = inProgressAttempt.answers as Record<string, string>;
+            progress.answered = Object.keys(answers).length;
+            progress.marked = inProgressAttempt.markedQuestions.length;
+            progress.total = inProgressAttempt.totalQuestions || totalQuestions;
+        }
+
+        return {
+            id: examSession.id,
+            title: examSession.examRoom.title,
+            description: examSession.examRoom.description,
+            startTime: examSession.startTime.toISOString(),
+            endTime: examSession.endTime?.toISOString() || null,
+            status: examSession.status,
+            // Stats fields
+            durationMinutes,
+            totalQuestions,
+            passingScore: examSession.passingScore,
+            // Attempt info
+            currentAttempt,
+            maxAttempts,
+            // Progress
+            progress,
+        };
     }
 }
