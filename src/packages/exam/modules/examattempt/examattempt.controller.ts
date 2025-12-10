@@ -153,6 +153,33 @@ export class ExamAttemptController {
         );
     }
 
+    @Get('list-by-session/:sessionId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Get all exam attempts for a session (owner only)',
+    })
+    @ApiParam({ name: 'sessionId', description: 'Exam session ID' })
+    @ApiResponse({
+        status: 200,
+        description:
+            'List of exam attempts with user details and violation count',
+        type: Object,
+    })
+    async getExamAttemptsBySession(
+        @Req() req: AuthenticatedRequest,
+        @Param('sessionId') sessionId: string,
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50'
+    ) {
+        return this.examAttemptService.getExamAttemptsBySession(
+            sessionId,
+            req.user,
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 50
+        );
+    }
+
     @Get(':id/detail')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')

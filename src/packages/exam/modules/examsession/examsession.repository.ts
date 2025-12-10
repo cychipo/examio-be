@@ -76,18 +76,6 @@ export class ExamSessionRepository extends BaseRepository<ExamSession> {
                         },
                     },
                 },
-                participants: {
-                    include: {
-                        user: {
-                            select: {
-                                id: true,
-                                username: true,
-                                email: true,
-                                avatar: true,
-                            },
-                        },
-                    },
-                },
                 examAttempts: {
                     include: {
                         user: {

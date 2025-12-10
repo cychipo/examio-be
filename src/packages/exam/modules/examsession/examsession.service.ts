@@ -117,17 +117,6 @@ export class ExamSessionService {
                         },
                     },
                 },
-                participants: {
-                    include: {
-                        user: {
-                            select: {
-                                id: true,
-                                email: true,
-                                name: true,
-                            },
-                        },
-                    },
-                },
                 _count: {
                     select: {
                         examAttempts: true,
@@ -249,7 +238,6 @@ export class ExamSessionService {
                     },
                     _count: {
                         select: {
-                            participants: true,
                             examAttempts: true,
                         },
                     },

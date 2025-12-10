@@ -159,8 +159,26 @@ model ExamAttempt {
     createdBy String?
     updatedBy String?
 
-    examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
-    user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+    examSession  ExamSession   @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
+    user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+    cheatingLogs CheatingLog[]
+}
+
+// Cheating log for exam attempts - tracks violations per type
+model CheatingLog {
+    id             String   @id @default(cuid())
+    examAttemptId  String
+    type           String // TAB_SWITCH, WINDOW_BLUR, DEVTOOLS_OPEN, COPY_PASTE, RIGHT_CLICK, FULLSCREEN_EXIT, PRINT_SCREEN
+    count          Int      @default(1)
+    description    String? // Human-readable description
+    lastOccurredAt DateTime @default(now())
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @default(now()) @updatedAt
+
+    examAttempt ExamAttempt @relation(fields: [examAttemptId], references: [id], onDelete: Cascade)
+
+    @@unique([examAttemptId, type]) // Upsert by type - O(1) lookup
+    @@index([examAttemptId])
 }
 
 model HistoryGeneratedQuizz {

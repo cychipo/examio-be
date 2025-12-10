@@ -15,7 +15,11 @@ import { UpdateExamAttemptDto } from './dto/update-examattempt.dto';
 import { ExamAttemptRepository } from './examattempt.repository';
 import { ExamSessionRepository } from '../examsession/examsession.repository';
 import { RedisService } from 'src/packages/redis/redis.service';
-import { getUserCacheKey, CACHE_MODULES, getListCachePattern } from 'src/common/constants/cache-keys';
+import {
+    getUserCacheKey,
+    CACHE_MODULES,
+    getListCachePattern,
+} from 'src/common/constants/cache-keys';
 import { EXPIRED_TIME } from 'src/constants/redis';
 
 @Injectable()
@@ -588,6 +592,107 @@ export class ExamAttemptService {
         };
     }
 
+    /**
+     * Get all exam attempts for a specific session (owner only)
+     * Includes violationCount for cheating detection display
+     */
+    async getExamAttemptsBySession(
+        sessionId: string,
+        user: User,
+        page: number = 1,
+        limit: number = 50
+    ) {
+        // First verify user owns this session's exam room
+        const session = await this.prisma.examSession.findUnique({
+            where: { id: sessionId },
+            include: {
+                examRoom: {
+                    select: { hostId: true },
+                },
+            },
+        });
+
+        if (!session) {
+            throw new NotFoundException('Phiên thi không tồn tại');
+        }
+
+        if (session.examRoom.hostId !== user.id) {
+            throw new ForbiddenException('Bạn không có quyền xem dữ liệu này');
+        }
+
+        const skip = (page - 1) * limit;
+
+        // Get attempts with user info and violation count
+        const [attempts, total] = await Promise.all([
+            this.prisma.examAttempt.findMany({
+                where: { examSessionId: sessionId },
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            username: true,
+                            name: true,
+                            email: true,
+                            avatar: true,
+                        },
+                    },
+                    examSession: {
+                        select: {
+                            id: true,
+                            startTime: true,
+                            endTime: true,
+                        },
+                    },
+                },
+                orderBy: { score: 'desc' },
+                skip,
+                take: limit,
+            }),
+            this.prisma.examAttempt.count({
+                where: { examSessionId: sessionId },
+            }),
+        ]);
+
+        // Transform - O(n)
+        const transformedAttempts = attempts.map((attempt) => {
+            let timeSpentSeconds = 0;
+            if (attempt.finishedAt && attempt.startedAt) {
+                timeSpentSeconds = Math.floor(
+                    (new Date(attempt.finishedAt).getTime() -
+                        new Date(attempt.startedAt).getTime()) /
+                        1000
+                );
+            }
+
+            return {
+                id: attempt.id,
+                status: attempt.status,
+                score: attempt.score,
+                totalQuestions: attempt.totalQuestions,
+                correctAnswers: attempt.correctAnswers,
+                startedAt: attempt.startedAt,
+                finishedAt: attempt.finishedAt,
+                timeSpentSeconds,
+                violationCount: attempt.violationCount,
+                answers: attempt.answers,
+                user: attempt.user,
+                session: {
+                    id: attempt.examSession.id,
+                    startTime: attempt.examSession.startTime,
+                    endTime: attempt.examSession.endTime,
+                },
+            };
+        });
+
+        return {
+            attempts: transformedAttempts,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        };
+    }
+
     // ==================== EXISTING METHODS ====================
 
     async createExamAttempt(user: User, dto: CreateExamAttemptDto) {
@@ -963,38 +1068,41 @@ export class ExamAttemptService {
         }
 
         // Execute all count queries in parallel for O(1) performance
-        const [totalPDFs, examsCreated, flashcardSets, examAttempts] = await Promise.all([
-            // Count PDFs uploaded by user (indexed on userId)
-            this.prisma.userStorage.count({
-                where: { userId: user.id }
-            }),
-            // Count quiz sets created by user (indexed on userId)
-            this.prisma.quizSet.count({
-                where: { userId: user.id }
-            }),
-            // Count flashcard sets created by user (indexed on userId)
-            this.prisma.flashCardSet.count({
-                where: { userId: user.id }
-            }),
-            // Get total time spent on exams (for study hours calculation)
-            this.prisma.examAttempt.findMany({
-                where: {
-                    userId: user.id,
-                    status: EXAM_ATTEMPT_STATUS.COMPLETED,
-                    finishedAt: { not: null }
-                },
-                select: {
-                    startedAt: true,
-                    finishedAt: true
-                }
-            })
-        ]);
+        const [totalPDFs, examsCreated, flashcardSets, examAttempts] =
+            await Promise.all([
+                // Count PDFs uploaded by user (indexed on userId)
+                this.prisma.userStorage.count({
+                    where: { userId: user.id },
+                }),
+                // Count quiz sets created by user (indexed on userId)
+                this.prisma.quizSet.count({
+                    where: { userId: user.id },
+                }),
+                // Count flashcard sets created by user (indexed on userId)
+                this.prisma.flashCardSet.count({
+                    where: { userId: user.id },
+                }),
+                // Get total time spent on exams (for study hours calculation)
+                this.prisma.examAttempt.findMany({
+                    where: {
+                        userId: user.id,
+                        status: EXAM_ATTEMPT_STATUS.COMPLETED,
+                        finishedAt: { not: null },
+                    },
+                    select: {
+                        startedAt: true,
+                        finishedAt: true,
+                    },
+                }),
+            ]);
 
         // Calculate total study hours from exam attempts
         let totalMinutes = 0;
         for (const attempt of examAttempts) {
             if (attempt.finishedAt && attempt.startedAt) {
-                const diffMs = new Date(attempt.finishedAt).getTime() - new Date(attempt.startedAt).getTime();
+                const diffMs =
+                    new Date(attempt.finishedAt).getTime() -
+                    new Date(attempt.startedAt).getTime();
                 totalMinutes += diffMs / (1000 * 60);
             }
         }
@@ -1004,7 +1112,7 @@ export class ExamAttemptService {
             totalPDFs,
             examsCreated,
             flashcardSets,
-            totalStudyHours
+            totalStudyHours,
         };
 
         // Cache for 5 minutes
