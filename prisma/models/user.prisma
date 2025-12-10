@@ -23,7 +23,6 @@ model User {
     flashCardSets             FlashCardSet[]
     examRooms                 ExamRoom[]
     examAttempts              ExamAttempt[]
-    examSessionParticipants   ExamSessionParticipant[]
     historyGeneratedQuizz     HistoryGeneratedQuizz[]
     historyGeneratedFlashcard HistoryGeneratedFlashcard[]
     quizPracticeAttempts      QuizPracticeAttempt[]

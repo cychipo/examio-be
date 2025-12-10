@@ -191,8 +191,7 @@ model ExamSession {
     createdBy              String?
     updatedBy              String?
 
-    examRoom     ExamRoom                 @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
-    participants ExamSessionParticipant[]
+    examRoom     ExamRoom      @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
     examAttempts ExamAttempt[]
 
     @@index([accessCode])
@@ -219,22 +218,6 @@ model ExamAttempt {
     updatedAt DateTime @default(now()) @updatedAt
     createdBy String?
     updatedBy String?
-
-    examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
-    user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model ExamSessionParticipant {
-    id            String    @id @default(cuid())
-    examSessionId String
-    userId        String
-    status        Int       @default(0) // 0: PENDING, 1: APPROVED, 2: REJECTED, 3: LEFT
-    joinedAt      DateTime?
-    leftAt        DateTime?
-    createdAt     DateTime  @default(now())
-    updatedAt     DateTime  @default(now()) @updatedAt
-    createdBy     String?
-    updatedBy     String?
 
     examSession ExamSession @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
     user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -404,7 +387,6 @@ model User {
     flashCardSets             FlashCardSet[]
     examRooms                 ExamRoom[]
     examAttempts              ExamAttempt[]
-    examSessionParticipants   ExamSessionParticipant[]
     historyGeneratedQuizz     HistoryGeneratedQuizz[]
     historyGeneratedFlashcard HistoryGeneratedFlashcard[]
     quizPracticeAttempts      QuizPracticeAttempt[]

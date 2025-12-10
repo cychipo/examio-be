@@ -145,32 +145,6 @@ export class ExamRoomController {
         return this.examRoomService.getExamRoomPublicById(id);
     }
 
-    @Get(':id/participants')
-    @UseGuards(AuthGuard)
-    @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Get participants for an exam room' })
-    @ApiParam({ name: 'id', description: 'Exam room ID' })
-    @ApiQuery({ name: 'page', required: false, type: Number })
-    @ApiQuery({ name: 'limit', required: false, type: Number })
-    @ApiResponse({
-        status: 200,
-        description: 'Participants retrieved successfully',
-        type: Object,
-    })
-    async getParticipants(
-        @Req() req: AuthenticatedRequest,
-        @Param('id') id: string,
-        @Query('page') page?: number,
-        @Query('limit') limit?: number
-    ) {
-        return this.examRoomService.getParticipants(
-            id,
-            req.user,
-            page ? Number(page) : 1,
-            limit ? Number(limit) : 10
-        );
-    }
-
     @Get(':id/sessions')
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
