@@ -14,6 +14,7 @@ import { GithubStrategy } from './strategies/github.strategy';
 import { WalletService } from '../finance/modules/wallet/wallet.service';
 import { UserRepository } from './repositories/user.repository';
 import { WalletRepository } from '../finance/modules/wallet/wallet.repository';
+import { WalletTransactionRepository } from '../finance/modules/wallet/wallettransaction.repository';
 
 @Module({
     imports: [
@@ -35,6 +36,7 @@ import { WalletRepository } from '../finance/modules/wallet/wallet.repository';
         AuthGuard,
         WalletService,
         WalletRepository,
+        WalletTransactionRepository,
         UserRepository,
     ],
     controllers: [AuthController],

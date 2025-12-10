@@ -4,6 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { RedisService } from 'src/packages/redis/redis.service';
 import { WalletTransaction } from '@prisma/client';
 import { EXPIRED_TIME } from 'src/constants/redis';
+import { PaginationResult } from 'src/common/interfaces/pagination.interface';
 
 @Injectable()
 export class WalletTransactionRepository extends BaseRepository<WalletTransaction> {
@@ -16,7 +17,58 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
     }
 
     /**
-     * Tìm transactions theo wallet ID
+     * Tìm transactions theo wallet ID với phân trang
+     */
+    async paginateByWalletId(
+        walletId: string,
+        page = 1,
+        size = 10,
+        cache = true,
+        cacheTTL = this.defaultCacheTTL
+    ): Promise<PaginationResult<WalletTransaction>> {
+        // Ensure page and size are integers (query params come as strings)
+        const pageNum = Number(page) || 1;
+        const sizeNum = Number(size) || 10;
+
+        const cacheKey = `${this.cachePrefix}:wallet:${walletId}:page:${pageNum}:size:${sizeNum}`;
+
+        if (cache) {
+            const cached =
+                await this.redis.get<PaginationResult<WalletTransaction>>(
+                    cacheKey
+                );
+            if (cached) return cached;
+        }
+
+        const skip = (pageNum - 1) * sizeNum;
+
+        const [data, total] = await Promise.all([
+            this.model.findMany({
+                where: { walletId },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: sizeNum,
+            }),
+            this.model.count({ where: { walletId } }),
+        ]);
+
+        const result: PaginationResult<WalletTransaction> = {
+            data,
+            total,
+            page: pageNum,
+            size: sizeNum,
+            totalPages: Math.ceil(total / sizeNum),
+        };
+
+        if (cache) {
+            await this.redis.set(cacheKey, result, cacheTTL);
+        }
+
+        return result;
+    }
+
+    /**
+     * Tìm transactions theo wallet ID (legacy)
      */
     async findByWalletId(
         walletId: string,
@@ -44,7 +96,6 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
         transactionId?: string;
         userId?: string;
     }): Promise<WalletTransaction> {
-        // BaseRepository.create() handles cache invalidation automatically
         return this.create(
             {
                 id: data.transactionId,
@@ -58,7 +109,7 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
     }
 
     /**
-     * Get transaction statistics
+     * Get transaction statistics - O(1) with cache
      */
     async getStatistics(walletId: string): Promise<{
         totalIncome: number;

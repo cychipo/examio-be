@@ -163,6 +163,10 @@ export class UserRepository extends BaseRepository<User> {
         // BaseRepository.update() handles user-scoped cache invalidation
         const result = await this.update(id, data, userId || id);
 
+        // Invalidate ALL user cache variants using pattern match
+        // This clears user:user:{userId}:* including :relations:wallet, etc.
+        await this.invalidateUserCache(id);
+
         // Also invalidate email and username lookup caches (special case for User)
         await this.redis.del(
             `${this.cachePrefix}:email:${result.email.toLowerCase()}`
