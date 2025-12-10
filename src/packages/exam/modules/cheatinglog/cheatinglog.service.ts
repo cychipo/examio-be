@@ -128,4 +128,39 @@ export class CheatingLogService {
 
         return this.cheatingLogRepository.getSessionStats(sessionId);
     }
+
+    /**
+     * Get all attempts for a user in a session with their cheating logs
+     * Single optimized query - for host only
+     */
+    async getUserAttemptsWithLogs(
+        sessionId: string,
+        userId: string,
+        requestingUser: User
+    ) {
+        // Verify user is the host
+        const session = await this.prisma.examSession.findUnique({
+            where: { id: sessionId },
+            include: {
+                examRoom: {
+                    select: { hostId: true },
+                },
+            },
+        });
+
+        if (!session) {
+            throw new NotFoundException('Exam session not found');
+        }
+
+        if (session.examRoom.hostId !== requestingUser.id) {
+            throw new ForbiddenException(
+                'Only the exam host can view user attempt details'
+            );
+        }
+
+        return this.cheatingLogRepository.getUserAttemptsWithLogs(
+            sessionId,
+            userId
+        );
+    }
 }

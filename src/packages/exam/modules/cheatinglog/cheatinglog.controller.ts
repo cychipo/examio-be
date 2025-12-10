@@ -57,4 +57,25 @@ export class CheatingLogController {
     ) {
         return this.cheatingLogService.getSessionStats(sessionId, req.user);
     }
+
+    @Get('session/:sessionId/user/:userId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary:
+            'Get all attempts for a user in a session with cheating logs (host only)',
+    })
+    @ApiParam({ name: 'sessionId', description: 'Exam session ID' })
+    @ApiParam({ name: 'userId', description: 'User ID' })
+    async getUserAttemptsWithLogs(
+        @Req() req: AuthenticatedRequest,
+        @Param('sessionId') sessionId: string,
+        @Param('userId') userId: string
+    ) {
+        return this.cheatingLogService.getUserAttemptsWithLogs(
+            sessionId,
+            userId,
+            req.user
+        );
+    }
 }

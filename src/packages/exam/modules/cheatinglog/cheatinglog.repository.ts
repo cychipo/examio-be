@@ -85,4 +85,117 @@ export class CheatingLogRepository {
         });
         return result._sum.count || 0;
     }
+
+    /**
+     * Get all attempts for a user in a session with their cheating logs
+     * Single query to avoid N+1 problem
+     */
+    async getUserAttemptsWithLogs(
+        sessionId: string,
+        userId: string
+    ): Promise<{
+        attempts: Array<{
+            id: string;
+            status: number;
+            score: number;
+            totalQuestions: number;
+            correctAnswers: number;
+            startedAt: Date;
+            finishedAt: Date | null;
+            violationCount: number;
+            timeSpentSeconds: number;
+            cheatingLogs: Array<{
+                id: string;
+                type: string;
+                description: string;
+                count: number;
+                lastOccurredAt: Date;
+            }>;
+        }>;
+        aggregatedLogs: Array<{
+            type: string;
+            description: string;
+            totalCount: number;
+        }>;
+    }> {
+        // Get all attempts for this user in this session
+        const attempts = await this.prisma.examAttempt.findMany({
+            where: {
+                examSessionId: sessionId,
+                userId: userId,
+            },
+            select: {
+                id: true,
+                status: true,
+                score: true,
+                totalQuestions: true,
+                correctAnswers: true,
+                startedAt: true,
+                finishedAt: true,
+                violationCount: true,
+                cheatingLogs: {
+                    orderBy: { lastOccurredAt: 'desc' },
+                },
+            },
+            orderBy: { startedAt: 'desc' },
+        });
+
+        // Calculate time spent for each attempt
+        const attemptsWithTime = attempts.map((attempt) => {
+            const start = new Date(attempt.startedAt).getTime();
+            const end = attempt.finishedAt
+                ? new Date(attempt.finishedAt).getTime()
+                : Date.now();
+            const timeSpentSeconds = Math.floor((end - start) / 1000);
+
+            return {
+                id: attempt.id,
+                status: attempt.status,
+                score: attempt.score,
+                totalQuestions: attempt.totalQuestions,
+                correctAnswers: attempt.correctAnswers,
+                startedAt: attempt.startedAt,
+                finishedAt: attempt.finishedAt,
+                violationCount: attempt.violationCount,
+                timeSpentSeconds,
+                cheatingLogs: attempt.cheatingLogs.map((log) => ({
+                    id: log.id,
+                    type: log.type,
+                    description:
+                        CHEATING_TYPE_DESCRIPTIONS[log.type as CHEATING_TYPE] ||
+                        log.type,
+                    count: log.count,
+                    lastOccurredAt: log.lastOccurredAt,
+                })),
+            };
+        });
+
+        // Aggregate logs across all attempts
+        const logsMap = new Map<
+            string,
+            { type: string; description: string; totalCount: number }
+        >();
+        for (const attempt of attempts) {
+            for (const log of attempt.cheatingLogs) {
+                const existing = logsMap.get(log.type);
+                if (existing) {
+                    existing.totalCount += log.count;
+                } else {
+                    logsMap.set(log.type, {
+                        type: log.type,
+                        description:
+                            CHEATING_TYPE_DESCRIPTIONS[
+                                log.type as CHEATING_TYPE
+                            ] || log.type,
+                        totalCount: log.count,
+                    });
+                }
+            }
+        }
+
+        return {
+            attempts: attemptsWithTime,
+            aggregatedLogs: Array.from(logsMap.values()),
+        };
+    }
 }
