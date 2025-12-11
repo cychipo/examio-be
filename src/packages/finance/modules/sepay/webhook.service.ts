@@ -104,13 +104,16 @@ export class WebhookService {
         }
 
         // Xử lý dựa vào paymentType
+        console.log('🚀 ~ WebhookService ~ processWebhook ~ payment:', payment);
         if (payment.paymentType === 'subscription') {
+            console.log('Processing subscription payment');
             await this.processSubscriptionPayment(
                 payment,
                 paymentId,
                 amountReceived
             );
         } else {
+            console.log('Processing credit payment');
             await this.processCreditPayment(payment, paymentId, amountReceived);
         }
 

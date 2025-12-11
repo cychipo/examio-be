@@ -154,10 +154,21 @@ export class AuthService {
 
     async sendVerificationEmail(user: User) {
         try {
+            // Check if user is already verified
+            if (user.isVerified) {
+                return { message: 'Tài khoản đã được xác minh' };
+            }
+
             const code = generateCode(6);
 
-            await this.prisma.verifyAccountCode.create({
-                data: {
+            // Use upsert to handle existing verification code
+            await this.prisma.verifyAccountCode.upsert({
+                where: { userId: user.id },
+                update: {
+                    code,
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                },
+                create: {
                     id: this.generateIdService.generateId(),
                     userId: user.id,
                     code,
@@ -178,6 +189,7 @@ export class AuthService {
 
             return { message: 'Email xác minh đã được gửi' };
         } catch (error) {
+            console.log(error);
             throw new InternalServerErrorException(
                 'Gửi email không thành công'
             );
