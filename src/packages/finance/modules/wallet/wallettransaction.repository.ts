@@ -124,10 +124,10 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
 
         const stats = transactions.reduce(
             (acc, tx) => {
-                if (tx.amount > 0) {
+                if (tx.direction === 'ADD') {
                     acc.totalIncome += tx.amount;
                 } else {
-                    acc.totalExpense += Math.abs(tx.amount);
+                    acc.totalExpense += tx.amount;
                 }
                 acc.transactionCount++;
                 return acc;
@@ -138,5 +138,51 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
         await this.redis.set(cacheKey, stats, EXPIRED_TIME.TEN_MINUTES);
 
         return stats;
+    }
+
+    /**
+     * Get usage breakdown grouped by transaction type
+     * Returns total used credits per transaction type
+     */
+    async getUsageBreakdownByType(walletId: string): Promise<{
+        [type: number]: number;
+    }> {
+        const cacheKey = this.getCacheKey(`usage_breakdown:${walletId}`);
+        const cached = await this.redis.get<{ [type: number]: number }>(
+            cacheKey
+        );
+        if (cached) return cached;
+
+        // Get all SUBTRACT transactions
+        const transactions = await this.model.findMany({
+            where: {
+                walletId,
+                direction: 'SUBTRACT',
+            },
+        });
+
+        // Group by type
+        const breakdown = transactions.reduce(
+            (acc, tx) => {
+                acc[tx.type] = (acc[tx.type] || 0) + tx.amount;
+                return acc;
+            },
+            {} as { [type: number]: number }
+        );
+
+        await this.redis.set(cacheKey, breakdown, EXPIRED_TIME.TEN_MINUTES);
+
+        return breakdown;
+    }
+
+    /**
+     * Invalidate all cache for a wallet
+     */
+    async invalidateWalletCache(walletId: string): Promise<void> {
+        // Clear stats and usage breakdown cache
+        await Promise.all([
+            this.redis.del(this.getCacheKey(`stats:${walletId}`)),
+            this.redis.del(this.getCacheKey(`usage_breakdown:${walletId}`)),
+        ]);
     }
 }

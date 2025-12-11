@@ -112,6 +112,17 @@ export class AuthService {
                     },
                 });
 
+                // Create default subscription (tier NONE)
+                await tx.userSubscription.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: user.id,
+                        tier: 0, // NONE
+                        billingCycle: 'monthly',
+                        isActive: false,
+                    },
+                });
+
                 return user;
             });
 
@@ -352,6 +363,17 @@ export class AuthService {
                         id: this.generateIdService.generateId(),
                         userId: user.id,
                         balance: 20,
+                    },
+                });
+
+                // Create default subscription (tier NONE)
+                await tx.userSubscription.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: user.id,
+                        tier: 0, // NONE
+                        billingCycle: 'monthly',
+                        isActive: false,
                     },
                 });
 

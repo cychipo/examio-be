@@ -1,15 +1,19 @@
 model Payment {
-    id        String   @unique
-    userId    String
-    amount    Float
-    currency  String
-    status    Int // 0 = unpaid, 1 = paid, 2 = overdue, 3 = cancelled
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-    createdBy String?
-    updatedBy String?
+    id          String    @unique
+    userId      String
+    amount      Float
+    currency    String
+    status      Int // 0 = unpaid, 1 = paid, 2 = overdue, 3 = cancelled
+    paymentType String    @default("credits") // credits | subscription
+    expiresAt   DateTime? // Payment expires after 10 minutes, null for legacy
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+    createdBy   String?
+    updatedBy   String?
 
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId, paymentType, status])
 }
 
 model Wallet {

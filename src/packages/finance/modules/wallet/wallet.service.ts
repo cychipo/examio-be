@@ -76,19 +76,26 @@ export class WalletService {
                 true
             );
 
-        // Get statistics for usage breakdown (cached)
+        // Get statistics for totals (cached)
         const stats = await this.walletTransactionRepository.getStatistics(
             wallet.id
         );
 
-        // Calculate usage breakdown from all transactions
+        // Get usage breakdown by type (cached)
+        const usageByType =
+            await this.walletTransactionRepository.getUsageBreakdownByType(
+                wallet.id
+            );
+
+        // Map usage breakdown to expected structure
         const usageBreakdown = {
-            examGeneration: 0,
+            examGeneration:
+                usageByType[WALLET_TRANSACTION_TYPE.USE_SERVICES] || 0, // All USE_SERVICES for now
             flashcardCreation: 0,
             pdfProcessing: 0,
         };
 
-        // Use stats for totals
+        // Calculate totals from stats
         const totalPurchased = stats.totalIncome;
         const totalUsed = stats.totalExpense;
 
@@ -96,16 +103,26 @@ export class WalletService {
         const transformedTransactions = transactionsPaginated.data.map(
             (tx: any) => {
                 // Determine specific type from description for AI services
-                let typeLabel = TRANSACTION_TYPE_LABELS[tx.type] || 'Không xác định';
+                let typeLabel =
+                    TRANSACTION_TYPE_LABELS[tx.type] || 'Không xác định';
                 const desc = (tx.description || '').toLowerCase();
 
                 if (tx.type === WALLET_TRANSACTION_TYPE.USE_SERVICES) {
                     if (desc.includes('quiz') || desc.includes('câu hỏi')) {
-                        typeLabel = TRANSACTION_TYPE_LABELS[WALLET_TRANSACTION_TYPE.AI_EXAM_GENERATION];
+                        typeLabel =
+                            TRANSACTION_TYPE_LABELS[
+                                WALLET_TRANSACTION_TYPE.AI_EXAM_GENERATION
+                            ];
                     } else if (desc.includes('flashcard')) {
-                        typeLabel = TRANSACTION_TYPE_LABELS[WALLET_TRANSACTION_TYPE.AI_FLASHCARD_CREATION];
+                        typeLabel =
+                            TRANSACTION_TYPE_LABELS[
+                                WALLET_TRANSACTION_TYPE.AI_FLASHCARD_CREATION
+                            ];
                     } else if (desc.includes('ocr') || desc.includes('pdf')) {
-                        typeLabel = TRANSACTION_TYPE_LABELS[WALLET_TRANSACTION_TYPE.AI_PDF_PROCESSING];
+                        typeLabel =
+                            TRANSACTION_TYPE_LABELS[
+                                WALLET_TRANSACTION_TYPE.AI_PDF_PROCESSING
+                            ];
                     }
                 }
 
