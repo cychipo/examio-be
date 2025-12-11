@@ -22,6 +22,7 @@ import {
 @Injectable()
 export class WebhookService {
     private readonly logger = new Logger(WebhookService.name);
+    private readonly webhookSecretKey = process.env.PAYMENT_WEBHOOK_SECRET_KEY;
 
     constructor(
         private readonly prisma: PrismaService,
@@ -40,7 +41,15 @@ export class WebhookService {
      *    - credits: Cộng credits vào wallet
      *    - subscription: Kích hoạt/nâng cấp subscription
      */
-    async processWebhook(data: SepayWebhook): Promise<{ success: boolean }> {
+    async processWebhook(
+        data: SepayWebhook,
+        apiKey: string
+    ): Promise<{ success: boolean }> {
+        if (apiKey !== this.webhookSecretKey) {
+            this.logger.warn(`Invalid API key: ${apiKey}`);
+            return { success: false };
+        }
+
         // Chỉ xử lý tiền vào
         if (data.transferType !== 'in') {
             this.logger.log(

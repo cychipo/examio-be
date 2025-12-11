@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Logger } from '@nestjs/common';
+import { Body, Controller, Post, Logger, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { SepayWebhook } from '../../types/webhook';
 import { WebhookService } from './webhook.service';
@@ -20,11 +20,19 @@ export class WebhookController {
     @ApiResponse({ status: 404, description: 'Payment không tồn tại' })
     @ApiResponse({ status: 409, description: 'Payment đã được xử lý' })
     async handleSepayWebhook(
+        @Headers() headers,
         @Body() webhookData: SepayWebhook
     ): Promise<{ success: boolean; message?: string }> {
-        console.log('Received SePay webhook: ', webhookData);
         this.logger.log(
-            `Received SePay webhook: ${JSON.stringify(webhookData)}`
+            `Received SePay webhook: ${JSON.stringify(webhookData)}`,
+            headers
+        );
+
+        const authHeader = headers.authorization;
+        const apiKey = authHeader?.replace(/^Apikey\s+/i, '').trim();
+        console.log(
+            '🚀 ~ WebhookController ~ handleSepayWebhook ~ apiKey:',
+            apiKey
         );
 
         if (!webhookData || !webhookData.content) {
@@ -32,12 +40,18 @@ export class WebhookController {
             return { success: false, message: 'Invalid data' };
         }
 
+        if (!apiKey) {
+            this.logger.warn('Invalid API key');
+            return { success: false, message: 'Invalid API key' };
+        }
+
         try {
-            return await this.webhookService.processWebhook(webhookData);
+            return await this.webhookService.processWebhook(
+                webhookData,
+                apiKey
+            );
         } catch (error) {
             this.logger.error(`Webhook processing failed: ${error.message}`);
-            // Vẫn trả về success để SePay không retry
-            // Lỗi đã được log để xử lý thủ công
             return { success: false, message: error.message };
         }
     }
