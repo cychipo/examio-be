@@ -2,6 +2,7 @@ import { Body, Controller, Post, Logger, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { SepayWebhook } from '../../types/webhook';
 import { WebhookService } from './webhook.service';
+import { UnauthorizedException } from '@nestjs/common';
 
 @ApiTags('Webhook')
 @Controller('webhook')
@@ -29,20 +30,15 @@ export class WebhookController {
         );
 
         const authHeader = headers.authorization;
-        const apiKey = authHeader?.replace(/^Apikey\s+/i, '').trim();
-        console.log(
-            '🚀 ~ WebhookController ~ handleSepayWebhook ~ apiKey:',
-            apiKey
-        );
+        if (!authHeader?.toLowerCase().startsWith('apikey ')) {
+            throw new UnauthorizedException('Invalid authorization header');
+        }
+
+        const apiKey = authHeader.split(' ')[1]?.trim();
 
         if (!webhookData || !webhookData.content) {
             this.logger.warn('Invalid webhook data received');
             return { success: false, message: 'Invalid data' };
-        }
-
-        if (!apiKey) {
-            this.logger.warn('Invalid API key');
-            return { success: false, message: 'Invalid API key' };
         }
 
         try {
