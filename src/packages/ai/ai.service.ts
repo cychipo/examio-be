@@ -623,6 +623,7 @@ export class AIService {
                     walletId: wallet.id,
                     amount: cost,
                     type: WALLET_TYPE.OCR_EMBEDDING,
+                    direction: 'SUBTRACT',
                     description: `Xử lý OCR và lưu trữ file "${filename}" (${(fileSize / (1024 * 1024)).toFixed(2)} MB)`,
                 },
             });
@@ -685,6 +686,7 @@ export class AIService {
                     walletId: wallet.id,
                     amount: cost,
                     type: type,
+                    direction: 'SUBTRACT',
                     description: `Tạo ${actualCount} ${typeName} từ file "${filename}"`,
                 },
             });

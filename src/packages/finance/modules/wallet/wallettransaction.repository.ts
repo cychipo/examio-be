@@ -4,6 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { RedisService } from 'src/packages/redis/redis.service';
 import { WalletTransaction } from '@prisma/client';
 import { EXPIRED_TIME } from 'src/constants/redis';
+import { PaginationResult } from 'src/common/interfaces/pagination.interface';
 
 @Injectable()
 export class WalletTransactionRepository extends BaseRepository<WalletTransaction> {
@@ -16,7 +17,58 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
     }
 
     /**
-     * Tìm transactions theo wallet ID
+     * Tìm transactions theo wallet ID với phân trang
+     */
+    async paginateByWalletId(
+        walletId: string,
+        page = 1,
+        size = 10,
+        cache = true,
+        cacheTTL = this.defaultCacheTTL
+    ): Promise<PaginationResult<WalletTransaction>> {
+        // Ensure page and size are integers (query params come as strings)
+        const pageNum = Number(page) || 1;
+        const sizeNum = Number(size) || 10;
+
+        const cacheKey = `${this.cachePrefix}:wallet:${walletId}:page:${pageNum}:size:${sizeNum}`;
+
+        if (cache) {
+            const cached =
+                await this.redis.get<PaginationResult<WalletTransaction>>(
+                    cacheKey
+                );
+            if (cached) return cached;
+        }
+
+        const skip = (pageNum - 1) * sizeNum;
+
+        const [data, total] = await Promise.all([
+            this.model.findMany({
+                where: { walletId },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: sizeNum,
+            }),
+            this.model.count({ where: { walletId } }),
+        ]);
+
+        const result: PaginationResult<WalletTransaction> = {
+            data,
+            total,
+            page: pageNum,
+            size: sizeNum,
+            totalPages: Math.ceil(total / sizeNum),
+        };
+
+        if (cache) {
+            await this.redis.set(cacheKey, result, cacheTTL);
+        }
+
+        return result;
+    }
+
+    /**
+     * Tìm transactions theo wallet ID (legacy)
      */
     async findByWalletId(
         walletId: string,
@@ -44,7 +96,6 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
         transactionId?: string;
         userId?: string;
     }): Promise<WalletTransaction> {
-        // BaseRepository.create() handles cache invalidation automatically
         return this.create(
             {
                 id: data.transactionId,
@@ -58,7 +109,7 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
     }
 
     /**
-     * Get transaction statistics
+     * Get transaction statistics - O(1) with cache
      */
     async getStatistics(walletId: string): Promise<{
         totalIncome: number;
@@ -73,10 +124,10 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
 
         const stats = transactions.reduce(
             (acc, tx) => {
-                if (tx.amount > 0) {
+                if (tx.direction === 'ADD') {
                     acc.totalIncome += tx.amount;
                 } else {
-                    acc.totalExpense += Math.abs(tx.amount);
+                    acc.totalExpense += tx.amount;
                 }
                 acc.transactionCount++;
                 return acc;
@@ -87,5 +138,51 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
         await this.redis.set(cacheKey, stats, EXPIRED_TIME.TEN_MINUTES);
 
         return stats;
+    }
+
+    /**
+     * Get usage breakdown grouped by transaction type
+     * Returns total used credits per transaction type
+     */
+    async getUsageBreakdownByType(walletId: string): Promise<{
+        [type: number]: number;
+    }> {
+        const cacheKey = this.getCacheKey(`usage_breakdown:${walletId}`);
+        const cached = await this.redis.get<{ [type: number]: number }>(
+            cacheKey
+        );
+        if (cached) return cached;
+
+        // Get all SUBTRACT transactions
+        const transactions = await this.model.findMany({
+            where: {
+                walletId,
+                direction: 'SUBTRACT',
+            },
+        });
+
+        // Group by type
+        const breakdown = transactions.reduce(
+            (acc, tx) => {
+                acc[tx.type] = (acc[tx.type] || 0) + tx.amount;
+                return acc;
+            },
+            {} as { [type: number]: number }
+        );
+
+        await this.redis.set(cacheKey, breakdown, EXPIRED_TIME.TEN_MINUTES);
+
+        return breakdown;
+    }
+
+    /**
+     * Invalidate all cache for a wallet
+     */
+    async invalidateWalletCache(walletId: string): Promise<void> {
+        // Clear stats and usage breakdown cache
+        await Promise.all([
+            this.redis.del(this.getCacheKey(`stats:${walletId}`)),
+            this.redis.del(this.getCacheKey(`usage_breakdown:${walletId}`)),
+        ]);
     }
 }
