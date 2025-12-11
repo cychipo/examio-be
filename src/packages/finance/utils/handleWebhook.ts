@@ -15,5 +15,5 @@ export function getPaymentIdFromWebhook(content: string): string | null {
     const regex = new RegExp(`${PAYMENT_SYSTEM_CODE}([A-Za-z0-9_-]+)`, 'i');
     const match = content.match(regex);
 
-    return match ? match[1] : null;
+    return match ? match[1].toLocaleLowerCase() : null;
 }

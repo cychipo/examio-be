@@ -30,7 +30,7 @@ export class SePayService {
     async createQR(amount: number, paymentId: string) {
         const bank = await this.getBankAccount();
         return {
-            QR: `https://qr.sepay.vn/img?acc=${this.accountNumber}&bank=${this.bankId}&amount=${amount}&des=${PAYMENT_SYSTEM_CODE}${paymentId}`,
+            QR: `https://qr.sepay.vn/img?acc=${this.accountNumber}&bank=${this.bankId}&amount=${amount}&des=${PAYMENT_SYSTEM_CODE}${paymentId.toUpperCase()}`,
             bank: bank.bankaccounts[0],
         };
     }

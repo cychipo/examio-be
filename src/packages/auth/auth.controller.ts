@@ -133,7 +133,7 @@ export class AuthController {
         @Body('code') code: string,
         @Req() req: AuthenticatedRequest
     ) {
-        return this.authService.verifyAccount(code, req.user.id);
+        return this.authService.verifyAccount(req.user.id, code);
     }
 
     @Post('send-code-reset-password')

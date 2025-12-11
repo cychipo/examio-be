@@ -177,7 +177,7 @@ export class AuthService {
             });
 
             // Send verification email
-            await this.mailService.sendMail(
+            this.mailService.sendMail(
                 user.email,
                 'Xác minh tài khoản của bạn',
                 'verify-account.template',
@@ -202,6 +202,10 @@ export class AuthService {
                 await this.prisma.verifyAccountCode.findUnique({
                     where: { userId },
                 });
+            console.log(
+                '🚀 ~ AuthService ~ verifyAccount ~ verificationCode:',
+                verificationCode
+            );
 
             if (!verificationCode) {
                 throw new NotFoundException('Mã xác minh không hợp lệ');
@@ -277,7 +281,7 @@ export class AuthService {
             }
 
             // Send reset password email
-            await this.mailService.sendMail(
+            this.mailService.sendMail(
                 user.email,
                 'Yêu cầu đặt lại mật khẩu',
                 'reset-password.template',
