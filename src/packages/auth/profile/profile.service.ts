@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+    Injectable,
+    NotFoundException,
+    BadRequestException,
+} from '@nestjs/common';
 import { User } from '@prisma/client';
 import { UserRepository } from '../repositories/user.repository';
 import { UpdateProfileDto, ProfileResponseDto } from './dto/profile.dto';
@@ -91,6 +95,15 @@ export class ProfileService {
             );
         }
 
+        // Get current user to find old image URL
+        const currentUser = await this.userRepository.findByIdWithRelations(
+            user.id,
+            [],
+            false
+        );
+        const oldImageUrl =
+            type === 'avatar' ? currentUser?.avatar : currentUser?.banner;
+
         // Generate unique filename
         const sanitizedName = sanitizeFilename(file.originalname);
         const filename = `${this.generateIdService.generateId()}-${sanitizedName}`;
@@ -112,7 +125,24 @@ export class ProfileService {
 
         await this.userRepository.updateUser(user.id, updateData, user.id);
 
+        // Delete old image from R2 if it exists
+        if (oldImageUrl) {
+            const oldKey = this.extractR2Key(oldImageUrl);
+            if (oldKey) {
+                await this.r2Service.deleteFile(oldKey).catch((err) => {
+                    console.warn(`Failed to delete old ${type} from R2:`, err);
+                });
+            }
+        }
+
         return { url };
+    }
+
+    /**
+     * Extract R2 key from public URL
+     */
+    private extractR2Key(url: string): string | null {
+        return url?.replace(/^https?:\/\/[^/]+\//, '') || null;
     }
 
     /**

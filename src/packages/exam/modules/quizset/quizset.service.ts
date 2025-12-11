@@ -336,6 +336,8 @@ export class QuizsetService {
             // Handle thumbnail upload if file is provided
             let thumbnailUrl = dto.thumbnail;
             if (thumbnailFile) {
+                const oldThumbnailUrl = quizSet.thumbnail;
+
                 const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
                 const r2Key = await this.r2Service.uploadFile(
                     fileName,
@@ -344,6 +346,22 @@ export class QuizsetService {
                     'quizset-thumbnails'
                 );
                 thumbnailUrl = this.r2Service.getPublicUrl(r2Key);
+
+                // Delete old thumbnail from R2 if it exists
+                if (oldThumbnailUrl) {
+                    const oldKey = oldThumbnailUrl.replace(
+                        /^https?:\/\/[^/]+\//,
+                        ''
+                    );
+                    if (oldKey) {
+                        await this.r2Service.deleteFile(oldKey).catch((err) => {
+                            console.warn(
+                                'Failed to delete old quizset thumbnail from R2:',
+                                err
+                            );
+                        });
+                    }
+                }
             }
 
             // Update using repository (auto invalidate cache)
