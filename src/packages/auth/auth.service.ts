@@ -435,7 +435,7 @@ export class AuthService {
     async getUser(user: User) {
         const foundUser = await this.userRepository.findByIdWithRelations(
             user.id,
-            ['wallet'],
+            ['wallet', 'subscription'],
             true
         );
         if (!foundUser) {

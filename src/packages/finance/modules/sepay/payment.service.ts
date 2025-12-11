@@ -168,8 +168,8 @@ export class PaymentService {
             return {
                 paymentId,
                 amount,
-                qrUrl: qrResult.qrUrl,
-                bankInfo: qrResult.bankInfo,
+                qrUrl: qrResult.QR,
+                bankInfo: qrResult.bank,
             };
         } catch (error) {
             console.log('error create payment', error);
