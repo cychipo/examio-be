@@ -15,6 +15,8 @@ import { WalletService } from '../finance/modules/wallet/wallet.service';
 import { UserRepository } from './repositories/user.repository';
 import { WalletRepository } from '../finance/modules/wallet/wallet.repository';
 import { WalletTransactionRepository } from '../finance/modules/wallet/wallettransaction.repository';
+import { DevicesModule } from '../devices/devices.module';
+import { UserSessionRepository } from '../devices/repositories/user-session.repository';
 
 @Module({
     imports: [
@@ -23,6 +25,7 @@ import { WalletTransactionRepository } from '../finance/modules/wallet/wallettra
             signOptions: { expiresIn: '30d' },
         }),
         PassportModule.register({ session: true }),
+        DevicesModule,
     ],
     providers: [
         PrismaService,

@@ -9,6 +9,7 @@ import { RedisModule } from './packages/redis/redis.module';
 import { VirtualTeacherModule } from './packages/virtual-teacher/virtual-teacher.module';
 import { AIChatModule } from './packages/ai-chat/ai-chat.module';
 import { ProfileModule } from './packages/auth/profile/profile.module';
+import { DevicesModule } from './packages/devices/devices.module';
 
 @Module({
     providers: [PrismaService],
@@ -22,6 +23,7 @@ import { ProfileModule } from './packages/auth/profile/profile.module';
         VirtualTeacherModule,
         AIChatModule,
         ProfileModule,
+        DevicesModule,
     ],
 })
 export class AppModule {}
