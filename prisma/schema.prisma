@@ -313,6 +313,8 @@ model Payment {
     status      Int // 0 = unpaid, 1 = paid, 2 = overdue, 3 = cancelled
     paymentType String    @default("credits") // credits | subscription
     expiresAt   DateTime? // Payment expires after 10 minutes, null for legacy
+    orderId     String? // SePay order ID for VA management
+    vaNumber    String? // SePay VA number for cleanup on cancel
     createdAt   DateTime  @default(now())
     updatedAt   DateTime  @updatedAt
     createdBy   String?

@@ -25,8 +25,11 @@ import { RedisService } from 'src/packages/redis/redis.service';
 export class AIService {
     private apiKeys: string[];
     private currentKeyIndex: number = 0;
-    private readonly modalName =
-        process.env.GEMINI_MODAL_NAME || 'gemini-2.5-flash-lite';
+    // Model rotation support
+    private modelNames: string[];
+    private currentModelIndex: number = 0;
+    private failedModelsPerKey: Map<string, Set<string>> = new Map(); // key -> failed models
+    private modelResetTime: number = Date.now() + 60000;
     private ai: GoogleGenAI;
     private failedKeys: Set<string> = new Set();
     private keyResetTime: number = Date.now() + 60000;
@@ -161,6 +164,9 @@ export class AIService {
         this.apiKeys =
             process.env.GEMINI_API_KEYS?.split(',').map((key) => key.trim()) ||
             [];
+        this.modelNames = process.env.GEMINI_MODAL_NAME?.split(',').map((m) =>
+            m.trim()
+        ) || ['gemini-2.0-flash'];
     }
 
     /**
@@ -282,6 +288,80 @@ export class AIService {
         return this.ai;
     }
 
+    /**
+     * Get the current model name for API calls
+     * Models are rotated when errors occur (priority over key rotation)
+     */
+    private getNextModel(): string {
+        if (!this.modelNames.length) {
+            return 'gemini-2.0-flash';
+        }
+
+        // Reset failed models if time expired
+        if (Date.now() > this.modelResetTime) {
+            console.log('🔄 Reset danh sách failed models...');
+            this.failedModelsPerKey.clear();
+            this.modelResetTime = Date.now() + 60000;
+        }
+
+        const currentKey =
+            this.apiKeys[this.currentKeyIndex % this.apiKeys.length] ||
+            'default';
+        const failedModels =
+            this.failedModelsPerKey.get(currentKey) || new Set();
+
+        const availableModels = this.modelNames.filter(
+            (model) => !failedModels.has(model)
+        );
+
+        if (availableModels.length === 0) {
+            // All models failed for this key, reset and use first model
+            this.currentModelIndex = 0;
+            return this.modelNames[0];
+        }
+
+        const modelIndex = this.currentModelIndex % availableModels.length;
+        const selectedModel = availableModels[modelIndex];
+
+        console.log(
+            `🤖 Sử dụng model ${modelIndex + 1}/${availableModels.length}: ${selectedModel}`
+        );
+        return selectedModel;
+    }
+
+    /**
+     * Mark current model as failed for current key
+     * When all models fail for a key, rotate to next key and reset model index
+     */
+    private markModelAsFailed(model: string): boolean {
+        const currentKey =
+            this.apiKeys[Math.max(0, this.currentKeyIndex - 1)] || 'default';
+
+        if (!this.failedModelsPerKey.has(currentKey)) {
+            this.failedModelsPerKey.set(currentKey, new Set());
+        }
+        this.failedModelsPerKey.get(currentKey)!.add(model);
+
+        const failedModels = this.failedModelsPerKey.get(currentKey)!;
+        console.log(
+            `❌ Đánh dấu model "${model}" đã fail cho key hiện tại. Tổng failed: ${failedModels.size}/${this.modelNames.length}`
+        );
+
+        // Check if all models failed for this key
+        if (failedModels.size >= this.modelNames.length) {
+            console.log(
+                '⚠️ Tất cả models đều fail cho key hiện tại, chuyển sang key tiếp theo...'
+            );
+            this.currentModelIndex = 0; // Reset model index for next key
+            return true; // Signal to rotate key
+        }
+
+        // Rotate to next model
+        this.currentModelIndex =
+            (this.currentModelIndex + 1) % this.modelNames.length;
+        return false; // Don't rotate key yet
+    }
+
     private delay(ms: number): Promise<void> {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
@@ -361,7 +441,7 @@ export class AIService {
     async generateContent(prompt: string): Promise<string | undefined> {
         const response = await this.retryWithBackoff(async () => {
             return this.ensureClient().models.generateContent({
-                model: this.modalName,
+                model: this.getNextModel(),
                 contents: prompt,
             });
         });
@@ -378,7 +458,7 @@ export class AIService {
     ): AsyncGenerator<string, void, unknown> {
         const response = await this.ensureClient().models.generateContentStream(
             {
-                model: this.modalName,
+                model: this.getNextModel(),
                 contents: prompt,
             }
         );
@@ -440,7 +520,7 @@ export class AIService {
 
         // Create chat session with history
         const chat = this.ensureClient().chats.create({
-            model: this.modalName,
+            model: this.getNextModel(),
             history: formattedHistory,
             config: systemPrompt
                 ? { systemInstruction: systemPrompt }
@@ -1880,7 +1960,7 @@ export class AIService {
             try {
                 const result = await this.retryWithBackoff(() =>
                     this.ensureClient().models.generateContent({
-                        model: this.modalName,
+                        model: this.getNextModel(),
                         contents: [
                             {
                                 role: 'user',
@@ -2058,7 +2138,7 @@ export class AIService {
             try {
                 const result = await this.retryWithBackoff(() =>
                     this.ensureClient().models.generateContent({
-                        model: this.modalName,
+                        model: this.getNextModel(),
                         contents: [
                             {
                                 role: 'user',
