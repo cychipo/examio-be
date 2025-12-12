@@ -43,4 +43,10 @@ export class LoginResponse {
         required: false,
     })
     token?: string;
+
+    @ApiProperty({
+        description: 'Device ID để identify thiết bị',
+        required: false,
+    })
+    deviceId?: string;
 }

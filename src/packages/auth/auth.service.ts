@@ -17,12 +17,20 @@ import { User } from '@prisma/client';
 import { generateCode } from 'src/common/utils/generate-code';
 import { WalletService } from 'src/packages/finance/modules/wallet/wallet.service';
 import { UserRepository } from './repositories/user.repository';
+import { UserSessionRepository } from '../devices/repositories/user-session.repository';
+
+export interface DeviceInfo {
+    deviceId: string;
+    userAgent?: string;
+    ipAddress?: string;
+}
 
 @Injectable()
 export class AuthService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly userRepository: UserRepository,
+        private readonly userSessionRepository: UserSessionRepository,
         private readonly jwtService: JwtService,
         private readonly mailService: MailService,
         private readonly passwordService: PasswordService,
@@ -30,7 +38,7 @@ export class AuthService {
         private readonly walletService: WalletService
     ) {}
 
-    async login(loginDto: LoginDto) {
+    async login(loginDto: LoginDto, deviceInfo?: DeviceInfo) {
         const { credential, password } = loginDto;
         if (!credential || !password) {
             throw new BadRequestException('Thông tin đăng nhập không hợp lệ');
@@ -54,7 +62,19 @@ export class AuthService {
             // Generate JWT token
             const token = this.jwtService.sign({ userId: user.id });
 
-            return { token, user: sanitizeUser(user), success: true };
+            // Create session if deviceInfo provided
+            let sessionId: string | undefined;
+            if (deviceInfo) {
+                sessionId = await this.createSession(user.id, deviceInfo);
+            }
+
+            return {
+                token,
+                user: sanitizeUser(user),
+                success: true,
+                sessionId,
+                deviceId: deviceInfo?.deviceId,
+            };
         } catch (error) {
             if (
                 error instanceof NotFoundException ||
@@ -154,10 +174,21 @@ export class AuthService {
 
     async sendVerificationEmail(user: User) {
         try {
+            // Check if user is already verified
+            if (user.isVerified) {
+                return { message: 'Tài khoản đã được xác minh' };
+            }
+
             const code = generateCode(6);
 
-            await this.prisma.verifyAccountCode.create({
-                data: {
+            // Use upsert to handle existing verification code
+            await this.prisma.verifyAccountCode.upsert({
+                where: { userId: user.id },
+                update: {
+                    code,
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                },
+                create: {
                     id: this.generateIdService.generateId(),
                     userId: user.id,
                     code,
@@ -166,7 +197,7 @@ export class AuthService {
             });
 
             // Send verification email
-            await this.mailService.sendMail(
+            this.mailService.sendMail(
                 user.email,
                 'Xác minh tài khoản của bạn',
                 'verify-account.template',
@@ -178,6 +209,7 @@ export class AuthService {
 
             return { message: 'Email xác minh đã được gửi' };
         } catch (error) {
+            console.log(error);
             throw new InternalServerErrorException(
                 'Gửi email không thành công'
             );
@@ -190,6 +222,10 @@ export class AuthService {
                 await this.prisma.verifyAccountCode.findUnique({
                     where: { userId },
                 });
+            console.log(
+                '🚀 ~ AuthService ~ verifyAccount ~ verificationCode:',
+                verificationCode
+            );
 
             if (!verificationCode) {
                 throw new NotFoundException('Mã xác minh không hợp lệ');
@@ -265,7 +301,7 @@ export class AuthService {
             }
 
             // Send reset password email
-            await this.mailService.sendMail(
+            this.mailService.sendMail(
                 user.email,
                 'Yêu cầu đặt lại mật khẩu',
                 'reset-password.template',
@@ -342,7 +378,8 @@ export class AuthService {
     private async handleOAuthLogin(
         email: string,
         username: string,
-        avatar?: string
+        avatar?: string,
+        deviceInfo?: DeviceInfo
     ) {
         let existingUser = await this.userRepository.findByEmail(email, false);
 
@@ -392,21 +429,29 @@ export class AuthService {
 
         const token = this.jwtService.sign({ userId: existingUser.id });
 
+        // Create session if deviceInfo provided
+        let sessionId: string | undefined;
+        if (deviceInfo) {
+            sessionId = await this.createSession(existingUser.id, deviceInfo);
+        }
+
         return {
             token,
             user: sanitizeUser(existingUser),
             success: true,
+            sessionId,
+            deviceId: deviceInfo?.deviceId,
         };
     }
 
-    async googleLogin(user: any) {
+    async googleLogin(user: any, deviceInfo?: DeviceInfo) {
         const { email, picture } = user;
         const username = email.split('@')[0];
 
-        return this.handleOAuthLogin(email, username, picture);
+        return this.handleOAuthLogin(email, username, picture, deviceInfo);
     }
 
-    async facebookLogin(user: any) {
+    async facebookLogin(user: any, deviceInfo?: DeviceInfo) {
         const { email, picture, username } = user;
 
         if (!email) {
@@ -418,29 +463,124 @@ export class AuthService {
         return this.handleOAuthLogin(
             email,
             username || email.split('@')[0],
-            picture
+            picture,
+            deviceInfo
         );
     }
 
-    async githubLogin(user: any) {
+    async githubLogin(user: any, deviceInfo?: DeviceInfo) {
         const { email, avatar, username } = user;
 
         return this.handleOAuthLogin(
             email,
             username || email.split('@')[0],
-            avatar
+            avatar,
+            deviceInfo
         );
     }
 
     async getUser(user: User) {
         const foundUser = await this.userRepository.findByIdWithRelations(
             user.id,
-            ['wallet'],
+            ['wallet', 'subscription'],
             true
         );
         if (!foundUser) {
             throw new NotFoundException('Người dùng không tồn tại');
         }
         return { user: sanitizeUser(foundUser) };
+    }
+
+    // Session management
+    async createSession(
+        userId: string,
+        deviceInfo: DeviceInfo
+    ): Promise<string> {
+        const sessionId = this.generateIdService.generateId();
+        const { browser, os, deviceName } = this.parseUserAgent(
+            deviceInfo.userAgent || ''
+        );
+
+        await this.userSessionRepository.create({
+            id: this.generateIdService.generateId(),
+            userId,
+            sessionId,
+            deviceId: deviceInfo.deviceId,
+            deviceName,
+            browser,
+            os,
+            ipAddress: deviceInfo.ipAddress || null,
+            country: null, // Can be added with IP geolocation later
+            city: null,
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+        });
+
+        return sessionId;
+    }
+
+    private parseUserAgent(userAgent: string): {
+        browser: string | null;
+        os: string | null;
+        deviceName: string | null;
+    } {
+        if (!userAgent) return { browser: null, os: null, deviceName: null };
+
+        // Simple User-Agent parsing
+        let browser: string | null = null;
+        let os: string | null = null;
+        let deviceName: string | null = null;
+
+        // Parse browser
+        if (userAgent.includes('Chrome') && !userAgent.includes('Edg')) {
+            const match = userAgent.match(/Chrome\/(\d+)/);
+            browser = match ? `Chrome ${match[1]}` : 'Chrome';
+        } else if (
+            userAgent.includes('Safari') &&
+            !userAgent.includes('Chrome')
+        ) {
+            const match = userAgent.match(/Version\/(\d+)/);
+            browser = match ? `Safari ${match[1]}` : 'Safari';
+        } else if (userAgent.includes('Firefox')) {
+            const match = userAgent.match(/Firefox\/(\d+)/);
+            browser = match ? `Firefox ${match[1]}` : 'Firefox';
+        } else if (userAgent.includes('Edg')) {
+            const match = userAgent.match(/Edg\/(\d+)/);
+            browser = match ? `Edge ${match[1]}` : 'Edge';
+        }
+
+        // Parse OS
+        if (userAgent.includes('Windows NT 10')) {
+            os = 'Windows 10/11';
+        } else if (userAgent.includes('Windows')) {
+            os = 'Windows';
+        } else if (userAgent.includes('Mac OS X')) {
+            const match = userAgent.match(/Mac OS X (\d+[._]\d+)/);
+            os = match ? `macOS ${match[1].replace('_', '.')}` : 'macOS';
+        } else if (userAgent.includes('Linux')) {
+            os = 'Linux';
+        } else if (userAgent.includes('Android')) {
+            const match = userAgent.match(/Android (\d+)/);
+            os = match ? `Android ${match[1]}` : 'Android';
+        } else if (userAgent.includes('iPhone') || userAgent.includes('iPad')) {
+            const match = userAgent.match(/OS (\d+)/);
+            os = match ? `iOS ${match[1]}` : 'iOS';
+        }
+
+        // Device name based on OS
+        if (userAgent.includes('iPhone')) {
+            deviceName = 'iPhone';
+        } else if (userAgent.includes('iPad')) {
+            deviceName = 'iPad';
+        } else if (userAgent.includes('Android')) {
+            deviceName = 'Android Device';
+        } else if (userAgent.includes('Macintosh')) {
+            deviceName = 'Mac';
+        } else if (userAgent.includes('Windows')) {
+            deviceName = 'PC';
+        } else if (userAgent.includes('Linux')) {
+            deviceName = 'Linux PC';
+        }
+
+        return { browser, os, deviceName };
     }
 }

@@ -179,10 +179,14 @@ export class WalletTransactionRepository extends BaseRepository<WalletTransactio
      * Invalidate all cache for a wallet
      */
     async invalidateWalletCache(walletId: string): Promise<void> {
-        // Clear stats and usage breakdown cache
+        // Clear stats, usage breakdown, and pagination cache
         await Promise.all([
             this.redis.del(this.getCacheKey(`stats:${walletId}`)),
             this.redis.del(this.getCacheKey(`usage_breakdown:${walletId}`)),
+            // Clear all pagination cache for this wallet
+            this.redis.delPattern(
+                this.getCacheKey(`wallet:${walletId}:page:*`)
+            ),
         ]);
     }
 }

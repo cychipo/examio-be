@@ -1,11 +1,5 @@
-import {
-    Injectable,
-    NotFoundException,
-    ConflictException,
-    Logger,
-} from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { User } from '@prisma/client';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import {
     SUBSCRIPTION_TIER,
@@ -13,7 +7,6 @@ import {
     SUBSCRIPTION_BENEFITS,
 } from '../../types/subscription';
 import { WalletRepository } from '../wallet/wallet.repository';
-import { WalletTransactionRepository } from '../wallet/wallettransaction.repository';
 import { WALLET_TRANSACTION_TYPE } from '../wallet/dto/wallet-details-response.dto';
 
 @Injectable()
@@ -23,8 +16,7 @@ export class SubscriptionService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly generateIdService: GenerateIdService,
-        private readonly walletRepository: WalletRepository,
-        private readonly walletTransactionRepository: WalletTransactionRepository
+        private readonly walletRepository: WalletRepository
     ) {}
 
     /**
@@ -109,10 +101,14 @@ export class SubscriptionService {
             },
         });
 
-        // Add monthly credits to wallet
+        // Add credits to wallet based on billing cycle
         const benefits = SUBSCRIPTION_BENEFITS[tier];
         if (benefits.creditsPerMonth > 0) {
-            await this.addSubscriptionCredits(userId, benefits.creditsPerMonth);
+            const creditsToAdd =
+                billingCycle === 'yearly'
+                    ? benefits.creditsPerMonth * 12
+                    : benefits.creditsPerMonth;
+            await this.addSubscriptionCredits(userId, creditsToAdd);
         }
 
         this.logger.log(
@@ -129,35 +125,55 @@ export class SubscriptionService {
         const wallet = await this.walletRepository.findByUserId(userId, false);
 
         if (!wallet) {
-            this.logger.warn(
-                `Wallet not found for user ${userId}, cannot add subscription credits`
-            );
-            return;
+            await this.prisma.$transaction(async (tx) => {
+                const id = this.generateIdService.generateId();
+                await tx.wallet.create({
+                    data: {
+                        id,
+                        userId,
+                        balance: credits,
+                        createdBy: 'SUBSCRIPTION',
+                    },
+                });
+
+                // Create transaction record
+                await tx.walletTransaction.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        walletId: id,
+                        amount: credits,
+                        type: WALLET_TRANSACTION_TYPE.BUY_SUBSCRIPTION,
+                        direction: 'ADD',
+                        description: `Credits hàng tháng từ gói đăng ký (+${credits} credits)`,
+                        createdBy: 'SUBSCRIPTION',
+                    },
+                });
+            });
+        } else {
+            await this.prisma.$transaction(async (tx) => {
+                // Update wallet balance
+                await tx.wallet.update({
+                    where: { id: wallet.id },
+                    data: {
+                        balance: wallet.balance + credits,
+                        updatedBy: 'SUBSCRIPTION',
+                    },
+                });
+
+                // Create transaction record
+                await tx.walletTransaction.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        walletId: wallet.id,
+                        amount: credits,
+                        type: WALLET_TRANSACTION_TYPE.BUY_SUBSCRIPTION,
+                        direction: 'ADD',
+                        description: `Credits hàng tháng từ gói đăng ký (+${credits} credits)`,
+                        createdBy: 'SUBSCRIPTION',
+                    },
+                });
+            });
         }
-
-        await this.prisma.$transaction(async (tx) => {
-            // Update wallet balance
-            await tx.wallet.update({
-                where: { id: wallet.id },
-                data: {
-                    balance: wallet.balance + credits,
-                    updatedBy: 'SUBSCRIPTION',
-                },
-            });
-
-            // Create transaction record
-            await tx.walletTransaction.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    walletId: wallet.id,
-                    amount: credits,
-                    type: WALLET_TRANSACTION_TYPE.BUY_SUBSCRIPTION,
-                    direction: 'ADD',
-                    description: `Credits hàng tháng từ gói đăng ký (+${credits} credits)`,
-                    createdBy: 'SUBSCRIPTION',
-                },
-            });
-        });
 
         // Invalidate wallet cache
         await this.walletRepository.invalidateUserCache(userId);
@@ -223,5 +239,94 @@ export class SubscriptionService {
                 ...SUBSCRIPTION_BENEFITS[SUBSCRIPTION_TIER.VIP],
             },
         ];
+    }
+
+    // ==================== SUBSCRIPTION LIMITS ====================
+
+    /**
+     * Get user's subscription benefits based on their current tier
+     * Returns FREE tier benefits if no active subscription
+     */
+    async getUserSubscriptionBenefits(userId: string) {
+        const subscription = await this.prisma.userSubscription.findUnique({
+            where: { userId },
+        });
+
+        // Check if subscription is active
+        if (
+            !subscription ||
+            !subscription.isActive ||
+            (subscription.nextPaymentDate &&
+                subscription.nextPaymentDate < new Date())
+        ) {
+            return SUBSCRIPTION_BENEFITS[SUBSCRIPTION_TIER.NONE];
+        }
+
+        return (
+            SUBSCRIPTION_BENEFITS[subscription.tier as SUBSCRIPTION_TIER] ||
+            SUBSCRIPTION_BENEFITS[SUBSCRIPTION_TIER.NONE]
+        );
+    }
+
+    /**
+     * Get current month's file upload count for user
+     */
+    async getMonthlyFileUploadCount(userId: string): Promise<number> {
+        const yearMonth = this.getCurrentYearMonth();
+        const record = await this.prisma.userMonthlyFileUpload.findUnique({
+            where: { userId_yearMonth: { userId, yearMonth } },
+        });
+        return record?.count ?? 0;
+    }
+
+    /**
+     * Increment file upload count for current month
+     * Uses upsert to handle both new and existing records
+     */
+    async incrementFileUploadCount(userId: string): Promise<void> {
+        const yearMonth = this.getCurrentYearMonth();
+        await this.prisma.userMonthlyFileUpload.upsert({
+            where: { userId_yearMonth: { userId, yearMonth } },
+            create: {
+                userId,
+                yearMonth,
+                count: 1,
+            },
+            update: {
+                count: { increment: 1 },
+            },
+        });
+    }
+
+    /**
+     * Check if user has exceeded their monthly file upload limit
+     * Throws BadRequestException if limit exceeded
+     * @param userId - User ID to check
+     * @throws BadRequestException if limit exceeded
+     */
+    async checkFileUploadLimit(userId: string): Promise<void> {
+        const benefits = await this.getUserSubscriptionBenefits(userId);
+        const limit = benefits.filesPerMonth;
+
+        // -1 means unlimited
+        if (limit === -1) return;
+
+        const currentCount = await this.getMonthlyFileUploadCount(userId);
+        if (currentCount >= limit) {
+            const subscription = await this.getSubscription(userId);
+            throw new BadRequestException(
+                `Bạn đã đạt giới hạn ${limit} file/tháng của gói ${subscription.tierName}. Vui lòng nâng cấp gói để tải thêm file.`
+            );
+        }
+    }
+
+    /**
+     * Get current year-month string in format "YYYY-MM"
+     */
+    private getCurrentYearMonth(): string {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        return `${year}-${month}`;
     }
 }

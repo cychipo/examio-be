@@ -107,6 +107,7 @@ export class UserRepository extends BaseRepository<User> {
                         balance: true,
                     },
                 },
+                subscription: true,
             },
         });
     }

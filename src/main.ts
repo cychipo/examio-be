@@ -37,6 +37,7 @@ async function bootstrap() {
             'Authorization',
             'Cookie',
             'X-Requested-With',
+            'X-Device-ID',
         ],
         exposedHeaders: ['Set-Cookie'],
     });

@@ -10,6 +10,7 @@ import { VirtualTeacherService } from '../virtual-teacher/virtual-teacher.servic
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { R2Service } from '../r2/r2.service';
 import { AIService } from '../ai/ai.service';
+import { SubscriptionService } from '../finance/modules/sepay/subscription.service';
 import {
     CreateChatDto,
     SendMessageDto,
@@ -42,7 +43,8 @@ export class AIChatService {
         private readonly virtualTeacherService: VirtualTeacherService,
         private readonly generateIdService: GenerateIdService,
         private readonly r2Service: R2Service,
-        private readonly aiService: AIService
+        private readonly aiService: AIService,
+        private readonly subscriptionService: SubscriptionService
     ) {}
 
     /**
@@ -126,13 +128,20 @@ export class AIChatService {
     }
 
     /**
-     * Check if chat has reached message limit
+     * Check if chat has reached message limit based on subscription tier
      */
-    private async checkMessageLimit(chatId: string): Promise<void> {
+    private async checkMessageLimit(
+        chatId: string,
+        userId: string
+    ): Promise<void> {
+        const benefits =
+            await this.subscriptionService.getUserSubscriptionBenefits(userId);
+        const limit = benefits.chatMessagesLimit;
+
         const count = await this.getUserMessageCount(chatId);
-        if (count >= MAX_USER_MESSAGES_PER_CHAT) {
+        if (count >= limit) {
             throw new BadRequestException(
-                `Đoạn chat này đã đạt giới hạn ${MAX_USER_MESSAGES_PER_CHAT} tin nhắn. Vui lòng tạo đoạn chat mới.`
+                `Đoạn chat này đã đạt giới hạn ${limit} tin nhắn. Vui lòng tạo đoạn chat mới hoặc nâng cấp gói.`
             );
         }
     }
@@ -767,12 +776,19 @@ export class AIChatService {
     }
 
     async checkRateLimit(userId: string): Promise<void> {
+        const benefits =
+            await this.subscriptionService.getUserSubscriptionBenefits(userId);
+        const limit = benefits.messagesPerMinute;
+
+        // -1 means unlimited (VIP)
+        if (limit === -1) return;
+
         const key = this.getRateLimitKey(userId);
         const count = await this.redisService.get<number>(key);
 
-        if (count !== null && count >= 5) {
+        if (count !== null && count >= limit) {
             throw new BadRequestException(
-                'Bạn chỉ được gửi tối đa 5 tin nhắn mỗi phút. Vui lòng chờ một chút.'
+                `Bạn chỉ được gửi tối đa ${limit} tin nhắn mỗi phút. Vui lòng chờ một chút.`
             );
         }
 
@@ -801,7 +817,7 @@ export class AIChatService {
 
         // Check rate limit and message limit
         await this.checkRateLimit(userId);
-        await this.checkMessageLimit(chatId);
+        await this.checkMessageLimit(chatId, userId);
 
         const userMessage = await this.prisma.aIChatMessage.create({
             data: {

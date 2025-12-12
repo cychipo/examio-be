@@ -7,7 +7,7 @@ import {
     Get,
     Res,
 } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { AuthService, DeviceInfo } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto, LoginResponse } from './dto/login.dto';
 import {
@@ -34,6 +34,7 @@ import {
     GetUserResponseDto,
 } from './dto/auth-response.dto';
 import { getCookieConfig } from 'src/common/utils/cookie-config';
+import * as crypto from 'crypto';
 
 @ApiTags('Auth')
 @ApiExtraModels(
@@ -77,7 +78,11 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ): Promise<LoginResponse> {
-        const { token, user, success } = await this.authService.login(loginDto);
+        // Extract device info from request
+        const deviceInfo = this.extractDeviceInfo(request);
+
+        const { token, user, success, sessionId, deviceId } =
+            await this.authService.login(loginDto, deviceInfo);
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -85,11 +90,15 @@ export class AuthController {
         });
 
         res.cookie('token', token, cookieConfig);
+        if (sessionId) {
+            res.cookie('session_id', sessionId, cookieConfig);
+        }
 
         return {
             user,
             success,
             token,
+            deviceId,
         };
     }
 
@@ -104,6 +113,7 @@ export class AuthController {
     @ApiCookieAuth('cookie-auth')
     async logout(@Res({ passthrough: true }) response: ExpressResponse) {
         response.clearCookie('token');
+        response.clearCookie('session_id');
         return { success: true };
     }
 
@@ -133,7 +143,7 @@ export class AuthController {
         @Body('code') code: string,
         @Req() req: AuthenticatedRequest
     ) {
-        return this.authService.verifyAccount(code, req.user.id);
+        return this.authService.verifyAccount(req.user.id, code);
     }
 
     @Post('send-code-reset-password')
@@ -272,5 +282,41 @@ export class AuthController {
     })
     async getUser(@Req() req: AuthenticatedRequest) {
         return this.authService.getUser(req.user);
+    }
+
+    private extractDeviceInfo(request: Request): DeviceInfo {
+        // Get device ID from header or generate fallback
+        let deviceId = request.headers['x-device-id'] as string;
+        if (!deviceId) {
+            // Fallback: generate from User-Agent + IP + timestamp
+            const userAgent = request.headers['user-agent'] || '';
+            const ip = this.getClientIp(request);
+            deviceId = crypto
+                .createHash('md5')
+                .update(`${userAgent}-${ip}-${Date.now()}`)
+                .digest('hex');
+        }
+
+        return {
+            deviceId,
+            userAgent: request.headers['user-agent'],
+            ipAddress: this.getClientIp(request),
+        };
+    }
+
+    private getClientIp(request: Request): string | undefined {
+        // Check for proxy headers
+        const forwardedFor = request.headers['x-forwarded-for'];
+        if (forwardedFor) {
+            const ips = (forwardedFor as string).split(',');
+            return ips[0].trim();
+        }
+
+        const realIp = request.headers['x-real-ip'] as string;
+        if (realIp) {
+            return realIp;
+        }
+
+        return request.ip;
     }
 }

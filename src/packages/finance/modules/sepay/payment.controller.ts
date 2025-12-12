@@ -2,6 +2,7 @@ import {
     Controller,
     Post,
     Get,
+    Delete,
     Body,
     Param,
     Query,
@@ -72,6 +73,20 @@ export class PaymentController {
             page || 1,
             size || 10
         );
+    }
+
+    @Delete('cancel/:paymentId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Hủy thanh toán đang chờ' })
+    @ApiResponse({ status: 200, description: 'Thanh toán đã được hủy' })
+    @ApiResponse({ status: 404, description: 'Không tìm thấy thanh toán' })
+    async cancelPayment(
+        @Req() req: AuthenticatedRequest,
+        @Param('paymentId') paymentId: string
+    ) {
+        await this.paymentService.cancelPayment(paymentId, req.user.id);
+        return { success: true, message: 'Thanh toán đã được hủy' };
     }
 
     @Get('subscription')

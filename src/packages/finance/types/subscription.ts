@@ -18,7 +18,7 @@ export const SUBSCRIPTION_BENEFITS = {
         name: 'Free',
         nameVi: 'Miễn phí',
         creditsPerMonth: 0,
-        filesPerMonth: 10,
+        filesPerMonth: 5,
         messagesPerMinute: 5,
         chatMessagesLimit: 30,
         priceMonthly: 0,
@@ -28,7 +28,7 @@ export const SUBSCRIPTION_BENEFITS = {
         name: 'Basic',
         nameVi: 'Cơ bản',
         creditsPerMonth: 50,
-        filesPerMonth: 30,
+        filesPerMonth: 15,
         messagesPerMinute: 10,
         chatMessagesLimit: 70,
         priceMonthly: 60000, // 60k VND
@@ -38,7 +38,7 @@ export const SUBSCRIPTION_BENEFITS = {
         name: 'Advanced',
         nameVi: 'Nâng cao',
         creditsPerMonth: 100,
-        filesPerMonth: 50,
+        filesPerMonth: 30,
         messagesPerMinute: 15,
         chatMessagesLimit: 100, // per user (200 total)
         priceMonthly: 120000, // 120k VND
