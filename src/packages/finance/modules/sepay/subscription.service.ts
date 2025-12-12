@@ -1,11 +1,5 @@
-import {
-    Injectable,
-    NotFoundException,
-    ConflictException,
-    Logger,
-} from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { User } from '@prisma/client';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import {
     SUBSCRIPTION_TIER,
@@ -13,7 +7,6 @@ import {
     SUBSCRIPTION_BENEFITS,
 } from '../../types/subscription';
 import { WalletRepository } from '../wallet/wallet.repository';
-import { WalletTransactionRepository } from '../wallet/wallettransaction.repository';
 import { WALLET_TRANSACTION_TYPE } from '../wallet/dto/wallet-details-response.dto';
 
 @Injectable()
@@ -23,8 +16,7 @@ export class SubscriptionService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly generateIdService: GenerateIdService,
-        private readonly walletRepository: WalletRepository,
-        private readonly walletTransactionRepository: WalletTransactionRepository
+        private readonly walletRepository: WalletRepository
     ) {}
 
     /**
@@ -109,10 +101,14 @@ export class SubscriptionService {
             },
         });
 
-        // Add monthly credits to wallet
+        // Add credits to wallet based on billing cycle
         const benefits = SUBSCRIPTION_BENEFITS[tier];
         if (benefits.creditsPerMonth > 0) {
-            await this.addSubscriptionCredits(userId, benefits.creditsPerMonth);
+            const creditsToAdd =
+                billingCycle === 'yearly'
+                    ? benefits.creditsPerMonth * 12
+                    : benefits.creditsPerMonth;
+            await this.addSubscriptionCredits(userId, creditsToAdd);
         }
 
         this.logger.log(
@@ -129,35 +125,55 @@ export class SubscriptionService {
         const wallet = await this.walletRepository.findByUserId(userId, false);
 
         if (!wallet) {
-            this.logger.warn(
-                `Wallet not found for user ${userId}, cannot add subscription credits`
-            );
-            return;
+            await this.prisma.$transaction(async (tx) => {
+                const id = this.generateIdService.generateId();
+                await tx.wallet.create({
+                    data: {
+                        id,
+                        userId,
+                        balance: credits,
+                        createdBy: 'SUBSCRIPTION',
+                    },
+                });
+
+                // Create transaction record
+                await tx.walletTransaction.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        walletId: id,
+                        amount: credits,
+                        type: WALLET_TRANSACTION_TYPE.BUY_SUBSCRIPTION,
+                        direction: 'ADD',
+                        description: `Credits hàng tháng từ gói đăng ký (+${credits} credits)`,
+                        createdBy: 'SUBSCRIPTION',
+                    },
+                });
+            });
+        } else {
+            await this.prisma.$transaction(async (tx) => {
+                // Update wallet balance
+                await tx.wallet.update({
+                    where: { id: wallet.id },
+                    data: {
+                        balance: wallet.balance + credits,
+                        updatedBy: 'SUBSCRIPTION',
+                    },
+                });
+
+                // Create transaction record
+                await tx.walletTransaction.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        walletId: wallet.id,
+                        amount: credits,
+                        type: WALLET_TRANSACTION_TYPE.BUY_SUBSCRIPTION,
+                        direction: 'ADD',
+                        description: `Credits hàng tháng từ gói đăng ký (+${credits} credits)`,
+                        createdBy: 'SUBSCRIPTION',
+                    },
+                });
+            });
         }
-
-        await this.prisma.$transaction(async (tx) => {
-            // Update wallet balance
-            await tx.wallet.update({
-                where: { id: wallet.id },
-                data: {
-                    balance: wallet.balance + credits,
-                    updatedBy: 'SUBSCRIPTION',
-                },
-            });
-
-            // Create transaction record
-            await tx.walletTransaction.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    walletId: wallet.id,
-                    amount: credits,
-                    type: WALLET_TRANSACTION_TYPE.BUY_SUBSCRIPTION,
-                    direction: 'ADD',
-                    description: `Credits hàng tháng từ gói đăng ký (+${credits} credits)`,
-                    createdBy: 'SUBSCRIPTION',
-                },
-            });
-        });
 
         // Invalidate wallet cache
         await this.walletRepository.invalidateUserCache(userId);

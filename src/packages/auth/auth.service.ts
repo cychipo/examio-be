@@ -68,7 +68,13 @@ export class AuthService {
                 sessionId = await this.createSession(user.id, deviceInfo);
             }
 
-            return { token, user: sanitizeUser(user), success: true, sessionId, deviceId: deviceInfo?.deviceId };
+            return {
+                token,
+                user: sanitizeUser(user),
+                success: true,
+                sessionId,
+                deviceId: deviceInfo?.deviceId,
+            };
         } catch (error) {
             if (
                 error instanceof NotFoundException ||
@@ -486,9 +492,14 @@ export class AuthService {
     }
 
     // Session management
-    async createSession(userId: string, deviceInfo: DeviceInfo): Promise<string> {
+    async createSession(
+        userId: string,
+        deviceInfo: DeviceInfo
+    ): Promise<string> {
         const sessionId = this.generateIdService.generateId();
-        const { browser, os, deviceName } = this.parseUserAgent(deviceInfo.userAgent || '');
+        const { browser, os, deviceName } = this.parseUserAgent(
+            deviceInfo.userAgent || ''
+        );
 
         await this.userSessionRepository.create({
             id: this.generateIdService.generateId(),
@@ -523,7 +534,10 @@ export class AuthService {
         if (userAgent.includes('Chrome') && !userAgent.includes('Edg')) {
             const match = userAgent.match(/Chrome\/(\d+)/);
             browser = match ? `Chrome ${match[1]}` : 'Chrome';
-        } else if (userAgent.includes('Safari') && !userAgent.includes('Chrome')) {
+        } else if (
+            userAgent.includes('Safari') &&
+            !userAgent.includes('Chrome')
+        ) {
             const match = userAgent.match(/Version\/(\d+)/);
             browser = match ? `Safari ${match[1]}` : 'Safari';
         } else if (userAgent.includes('Firefox')) {
