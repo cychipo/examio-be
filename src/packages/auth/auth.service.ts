@@ -375,6 +375,128 @@ export class AuthService {
         }
     }
 
+    /**
+     * Send verification code to change password (for authenticated users)
+     */
+    async sendCodeToChangePassword(user: User) {
+        try {
+            const code = generateCode(6);
+
+            const existingCode = await this.prisma.resetPasswordCode.findUnique(
+                {
+                    where: { userId: user.id },
+                }
+            );
+
+            if (existingCode) {
+                await this.prisma.resetPasswordCode.update({
+                    where: { userId: user.id },
+                    data: {
+                        code,
+                        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                    },
+                });
+            } else {
+                await this.prisma.resetPasswordCode.create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: user.id,
+                        code,
+                        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                    },
+                });
+            }
+
+            // Send change password email
+            this.mailService.sendMail(
+                user.email,
+                'Xác minh đổi mật khẩu',
+                'change-password.template',
+                {
+                    username: user.username,
+                    changeCode: code,
+                }
+            );
+
+            return { message: 'Mã xác minh đã được gửi đến email của bạn' };
+        } catch (error) {
+            console.log(error);
+            throw new InternalServerErrorException(
+                'Gửi mã xác minh không thành công'
+            );
+        }
+    }
+
+    /**
+     * Change password with verification code (for authenticated users)
+     */
+    async changePassword(
+        user: User,
+        code: string,
+        currentPassword: string,
+        newPassword: string
+    ) {
+        try {
+            // Verify current password first
+            if (user.password) {
+                const isPasswordValid =
+                    await this.passwordService.comparePasswords(
+                        currentPassword,
+                        user.password
+                    );
+                if (!isPasswordValid) {
+                    throw new BadRequestException(
+                        'Mật khẩu hiện tại không đúng'
+                    );
+                }
+            }
+
+            // Check verification code
+            const resetCode = await this.prisma.resetPasswordCode.findUnique({
+                where: { userId: user.id },
+            });
+
+            if (!resetCode) {
+                throw new NotFoundException('Mã xác minh không hợp lệ');
+            }
+
+            if (resetCode.code !== code) {
+                throw new BadRequestException('Mã xác minh không chính xác');
+            }
+
+            if (new Date() > resetCode.expiresAt) {
+                throw new BadRequestException('Mã xác minh đã hết hạn');
+            }
+
+            // Update password
+            await this.userRepository.update(
+                user.id,
+                {
+                    password:
+                        await this.passwordService.hashPassword(newPassword),
+                },
+                user.id
+            );
+
+            // Clean up code
+            await this.prisma.resetPasswordCode.delete({
+                where: { userId: user.id },
+            });
+
+            return { message: 'Mật khẩu đã được đổi thành công' };
+        } catch (error) {
+            if (
+                error instanceof NotFoundException ||
+                error instanceof BadRequestException
+            ) {
+                throw error;
+            }
+            throw new InternalServerErrorException(
+                'Đổi mật khẩu không thành công'
+            );
+        }
+    }
+
     private async handleOAuthLogin(
         email: string,
         username: string,

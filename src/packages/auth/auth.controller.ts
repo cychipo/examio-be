@@ -172,6 +172,42 @@ export class AuthController {
         return this.authService.resetPassword(email, code, newPassword);
     }
 
+    @Post('send-code-change-password')
+    @ApiOperation({ summary: 'Send code to change password (authenticated)' })
+    @ApiResponse({
+        status: 200,
+        description: 'Code sent successfully',
+        type: AuthMessageResponseDto,
+    })
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    async sendCodeChangePassword(@Req() req: AuthenticatedRequest) {
+        return this.authService.sendCodeToChangePassword(req.user);
+    }
+
+    @Post('change-password')
+    @ApiOperation({ summary: 'Change user password (authenticated)' })
+    @ApiResponse({
+        status: 200,
+        description: 'Password changed successfully',
+        type: AuthMessageResponseDto,
+    })
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    async changePassword(
+        @Body('code') code: string,
+        @Body('currentPassword') currentPassword: string,
+        @Body('newPassword') newPassword: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.authService.changePassword(
+            req.user,
+            code,
+            currentPassword,
+            newPassword
+        );
+    }
+
     @Get('google')
     @UseGuards(GoogleAuthGuard)
     @ApiOperation({ summary: 'Đăng nhập Google OAuth' })
