@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import {
@@ -239,5 +239,94 @@ export class SubscriptionService {
                 ...SUBSCRIPTION_BENEFITS[SUBSCRIPTION_TIER.VIP],
             },
         ];
+    }
+
+    // ==================== SUBSCRIPTION LIMITS ====================
+
+    /**
+     * Get user's subscription benefits based on their current tier
+     * Returns FREE tier benefits if no active subscription
+     */
+    async getUserSubscriptionBenefits(userId: string) {
+        const subscription = await this.prisma.userSubscription.findUnique({
+            where: { userId },
+        });
+
+        // Check if subscription is active
+        if (
+            !subscription ||
+            !subscription.isActive ||
+            (subscription.nextPaymentDate &&
+                subscription.nextPaymentDate < new Date())
+        ) {
+            return SUBSCRIPTION_BENEFITS[SUBSCRIPTION_TIER.NONE];
+        }
+
+        return (
+            SUBSCRIPTION_BENEFITS[subscription.tier as SUBSCRIPTION_TIER] ||
+            SUBSCRIPTION_BENEFITS[SUBSCRIPTION_TIER.NONE]
+        );
+    }
+
+    /**
+     * Get current month's file upload count for user
+     */
+    async getMonthlyFileUploadCount(userId: string): Promise<number> {
+        const yearMonth = this.getCurrentYearMonth();
+        const record = await this.prisma.userMonthlyFileUpload.findUnique({
+            where: { userId_yearMonth: { userId, yearMonth } },
+        });
+        return record?.count ?? 0;
+    }
+
+    /**
+     * Increment file upload count for current month
+     * Uses upsert to handle both new and existing records
+     */
+    async incrementFileUploadCount(userId: string): Promise<void> {
+        const yearMonth = this.getCurrentYearMonth();
+        await this.prisma.userMonthlyFileUpload.upsert({
+            where: { userId_yearMonth: { userId, yearMonth } },
+            create: {
+                userId,
+                yearMonth,
+                count: 1,
+            },
+            update: {
+                count: { increment: 1 },
+            },
+        });
+    }
+
+    /**
+     * Check if user has exceeded their monthly file upload limit
+     * Throws BadRequestException if limit exceeded
+     * @param userId - User ID to check
+     * @throws BadRequestException if limit exceeded
+     */
+    async checkFileUploadLimit(userId: string): Promise<void> {
+        const benefits = await this.getUserSubscriptionBenefits(userId);
+        const limit = benefits.filesPerMonth;
+
+        // -1 means unlimited
+        if (limit === -1) return;
+
+        const currentCount = await this.getMonthlyFileUploadCount(userId);
+        if (currentCount >= limit) {
+            const subscription = await this.getSubscription(userId);
+            throw new BadRequestException(
+                `Bạn đã đạt giới hạn ${limit} file/tháng của gói ${subscription.tierName}. Vui lòng nâng cấp gói để tải thêm file.`
+            );
+        }
+    }
+
+    /**
+     * Get current year-month string in format "YYYY-MM"
+     */
+    private getCurrentYearMonth(): string {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        return `${year}-${month}`;
     }
 }

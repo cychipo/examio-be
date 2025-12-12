@@ -8,6 +8,7 @@ import { VirtualTeacherModule } from '../virtual-teacher/virtual-teacher.module'
 import { GenerateIdService } from 'src/common/services/generate-id.service';
 import { R2Module } from '../r2/r2.module';
 import { AIModule } from '../ai/ai.module';
+import { SePayModule } from '../finance/modules/sepay/sepay.module';
 
 @Module({
     controllers: [AIChatController],
@@ -19,6 +20,7 @@ import { AIModule } from '../ai/ai.module';
         VirtualTeacherModule,
         R2Module,
         AIModule,
+        SePayModule,
     ],
 })
 export class AIChatModule {}

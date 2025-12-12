@@ -20,6 +20,7 @@ import {
     CACHE_MODULES,
 } from 'src/common/constants/cache-keys';
 import { RedisService } from 'src/packages/redis/redis.service';
+import { SubscriptionService } from '../finance/modules/sepay/subscription.service';
 
 @Injectable()
 export class AIService {
@@ -159,7 +160,8 @@ export class AIService {
         private readonly generateIdService: GenerateIdService,
         private readonly r2Service: R2Service,
         private readonly pdfService: PdfService,
-        private readonly redisService: RedisService
+        private readonly redisService: RedisService,
+        private readonly subscriptionService: SubscriptionService
     ) {
         this.apiKeys =
             process.env.GEMINI_API_KEYS?.split(',').map((key) => key.trim()) ||
@@ -1053,6 +1055,9 @@ export class AIService {
         isNarrowSearch?: boolean,
         keyword?: string
     ): Promise<string> {
+        // Check file upload limit based on subscription tier
+        await this.subscriptionService.checkFileUploadLimit(user.id);
+
         // Check credits before creating job
         const cost = Math.max(2, Math.ceil(file.size / (1024 * 1024))); // 2 credit per MB
         const wallet = await this.prisma.wallet.findUnique({
@@ -1062,6 +1067,9 @@ export class AIService {
         if (!wallet || wallet.balance < cost) {
             throw new BadRequestException('Không đủ tín dụng');
         }
+
+        // Increment file upload count for current month
+        await this.subscriptionService.incrementFileUploadCount(user.id);
 
         const jobId = this.generateIdService.generateId();
         const job: Job = {

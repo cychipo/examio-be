@@ -29,6 +29,7 @@ model User {
     aiChats                   AIChat[]
     subscription              UserSubscription?
     sessions                  UserSession[]
+    monthlyFileUploads        UserMonthlyFileUpload[]
 }
 
 // Subscription tiers: 0=none, 1=basic, 2=advanced, 3=vip
@@ -68,4 +69,19 @@ model ResetPasswordCode {
     updatedAt DateTime @default(now()) @updatedAt
 
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Track monthly file uploads for subscription limits
+model UserMonthlyFileUpload {
+    id        String   @id @default(cuid())
+    userId    String
+    yearMonth String // Format: "2024-12" for efficient monthly grouping
+    count     Int      @default(0)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, yearMonth])
+    @@index([userId, yearMonth])
 }

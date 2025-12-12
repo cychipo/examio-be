@@ -8,6 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { RedisModule } from '../redis/redis.module';
 import { PdfService } from 'src/common/services/pdf.service';
 import { ImagePreprocessingService } from 'src/common/services/image-preprocessing.service';
+import { SePayModule } from '../finance/modules/sepay/sepay.module';
 
 @Module({
     providers: [
@@ -20,6 +21,6 @@ import { ImagePreprocessingService } from 'src/common/services/image-preprocessi
     ],
     controllers: [AIController],
     exports: [AIService],
-    imports: [AuthModule, RedisModule],
+    imports: [AuthModule, RedisModule, SePayModule],
 })
 export class AIModule {}
