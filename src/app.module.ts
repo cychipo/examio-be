@@ -10,10 +10,24 @@ import { VirtualTeacherModule } from './packages/virtual-teacher/virtual-teacher
 import { AIChatModule } from './packages/ai-chat/ai-chat.module';
 import { ProfileModule } from './packages/auth/profile/profile.module';
 import { DevicesModule } from './packages/devices/devices.module';
+import { ThrottlerModule, ThrottlerGuard, minutes } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 
 @Module({
-    providers: [PrismaService],
+    providers: [
+        PrismaService,
+        {
+            provide: APP_GUARD,
+            useClass: ThrottlerGuard,
+        },
+    ],
     imports: [
+        ThrottlerModule.forRoot([
+            {
+                ttl: minutes(1),
+                limit: 50,
+            },
+        ]),
         AuthModule,
         AIModule,
         FinanceModule,
