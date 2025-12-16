@@ -16,6 +16,9 @@ const whitelist = [
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+    // Enable trust proxy for secure cookies behind reverse proxy
+    app.set('trust proxy', 1);
+
     // Enable global logging interceptor
     app.useGlobalInterceptors(new LoggingInterceptor());
 
