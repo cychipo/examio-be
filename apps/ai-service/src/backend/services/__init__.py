@@ -1,5 +1,5 @@
 """Backend services package"""
 
-from .file_service import file_service, FileService, FileMetadata, DocumentChunk
+from .ocr_service import ocr_service, OCRProcessingService, FileInfo, DocumentChunk
 
-__all__ = ['file_service', 'FileService', 'FileMetadata', 'DocumentChunk']
+__all__ = ['ocr_service', 'OCRProcessingService', 'FileInfo', 'DocumentChunk']

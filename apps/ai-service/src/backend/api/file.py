@@ -1,21 +1,21 @@
 """
-API endpoints for file upload and queries with PostgreSQL storage
+AI Processing API - OCR và Vector Search
 
-This module provides API endpoints for uploading files, querying files,
-and getting information about uploaded files. Files are stored in PostgreSQL
-with OCR caching to avoid re-processing.
+API này CHỈ xử lý AI tasks:
+- OCR files đã upload bởi NestJS
+- Vector similarity search
+- Query files với context
+
+KHÔNG xử lý: Upload file, tạo UserStorage (NestJS làm)
 """
 import logging
 import os
 import sys
-import tempfile
-import hashlib
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from datetime import datetime
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Body, Query, Depends
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 # Add the parent directory to sys.path
@@ -24,380 +24,231 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from rag.retriever import extract_text_from_file, create_in_memory_retriever
 from rag.simple_chat_agent import SimpleChatAgent
 from rag.vector_store_pg import get_pg_vector_store
-from backend.services.file_service import file_service, FileMetadata, DocumentChunk
+from backend.services.ocr_service import ocr_service
 from backend.auth.dependencies import require_auth
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create router
 router = APIRouter()
 
-# In-memory cache for retrievers (temporary, will be replaced with retriever from DB)
+# Cache retrievers in memory for faster queries
 _retriever_cache: Dict[str, Any] = {}
 
 
-class QueryRequest(BaseModel):
-    """Request model for querying a file"""
-    file_id: str = Field(..., description="ID of the uploaded file to query")
-    query: str = Field(..., description="The query to run against the file")
+# ==================== Request Models ====================
+
+class ProcessFileRequest(BaseModel):
+    """Request từ NestJS để OCR file đã upload"""
+    user_storage_id: str = Field(..., description="ID của UserStorage (NestJS đã tạo)")
+
+
+class QueryFileRequest(BaseModel):
+    """Request để query file"""
+    user_storage_id: str = Field(..., description="ID của UserStorage")
+    query: str = Field(..., description="Câu hỏi về nội dung file")
 
 
 class MultiQueryRequest(BaseModel):
-    """Request model for querying a file with multiple questions"""
-    file_id: str = Field(..., description="ID of the uploaded file to query")
-    queries: List[str] = Field(..., description="List of queries to run against the file")
+    """Request để query nhiều câu hỏi"""
+    user_storage_id: str = Field(..., description="ID của UserStorage")
+    queries: List[str] = Field(..., description="Danh sách câu hỏi")
 
 
-def compute_file_hash(content: bytes) -> str:
-    """Compute SHA256 hash of file content"""
-    return hashlib.sha256(content).hexdigest()
+# ==================== Helper Functions ====================
 
-
-async def get_or_create_retriever(file_id: str, chunks: List[DocumentChunk]):
+async def get_or_create_retriever(user_storage_id: str):
     """Get retriever from cache or create from DB chunks"""
-    if file_id in _retriever_cache:
-        return _retriever_cache[file_id]
+    if user_storage_id in _retriever_cache:
+        return _retriever_cache[user_storage_id]
 
-    # Create retriever from document chunks
+    chunks = await ocr_service.get_document_chunks(user_storage_id)
     if not chunks:
         return None
 
     combined_content = "\n\n".join([c.content for c in chunks])
     retriever, _ = create_in_memory_retriever(combined_content)
-    _retriever_cache[file_id] = retriever
+    _retriever_cache[user_storage_id] = retriever
     return retriever
 
 
-@router.post("/upload-file", response_model=Dict[str, Any])
-async def upload_file(
-    file: UploadFile = File(...),
-    current_user = Depends(require_auth)
-):
+# ==================== API Endpoints ====================
+
+@router.post("/process-file", response_model=Dict[str, Any])
+async def process_file(request: ProcessFileRequest):
     """
-    Upload a file with OCR caching - avoids re-processing same files
+    OCR và tạo embeddings cho file đã upload bởi NestJS
 
     Flow:
-    1. Compute file hash
-    2. Check if already processed in DB
-    3. If yes → return existing data (skip OCR)
-    4. If no → OCR, store embeddings, mark as COMPLETED
+    1. NestJS upload file lên R2, tạo UserStorage với status=PENDING
+    2. NestJS gọi API này với userStorageId
+    3. Python download từ R2, OCR, lưu embeddings
+    4. Update status = COMPLETED
     """
     try:
-        # Get user ID
-        user_id = str(current_user.get("_id") or current_user.get("id"))
-        if not user_id:
-            raise HTTPException(status_code=401, detail="User ID not found")
+        user_storage_id = request.user_storage_id
+        logger.info(f"Processing file: {user_storage_id}")
 
-        logger.info(f"Uploading file: {file.filename} for user: {user_id}")
+        # Get file info from DB (created by NestJS)
+        file_info = await ocr_service.get_file_info(user_storage_id)
+        if not file_info:
+            raise HTTPException(status_code=404, detail="File not found in UserStorage")
 
-        # Read file content
-        content = await file.read()
-        if len(content) == 0:
-            raise HTTPException(status_code=400, detail="Empty file uploaded")
-
-        # Compute hash for deduplication
-        file_hash = compute_file_hash(content)
-
-        # Check if file already processed
-        existing_file = await file_service.check_file_exists(user_id, file_hash)
-
-        if existing_file and existing_file.processing_status == "COMPLETED":
-            # File already processed - return cached data
-            logger.info(f"File already processed: {existing_file.id}, skipping OCR")
-
-            # Get cached document chunks
-            chunks = await file_service.get_file_documents(existing_file.id)
-
+        # Check if already processed
+        if file_info.processing_status == "COMPLETED":
+            chunks = await ocr_service.get_document_chunks(user_storage_id)
+            logger.info(f"File already processed: {user_storage_id}, {len(chunks)} chunks")
             return {
                 "success": True,
                 "cached": True,
-                "message": "File đã được xử lý trước đó, bỏ qua OCR",
-                "fileInfo": {
-                    "id": existing_file.id,
-                    "filename": existing_file.filename,
-                    "size": existing_file.size,
-                    "chunks": len(chunks),
-                    "content_type": existing_file.mimetype,
-                    "processing_status": existing_file.processing_status
-                }
+                "message": "File đã được OCR trước đó",
+                "chunks_count": len(chunks),
+                "user_storage_id": user_storage_id
             }
 
-        # New file - process it
-        file_id = str(uuid.uuid4())
-
-        # Create file record with PROCESSING status
-        # Note: In production, file should be uploaded to R2 first
-        file_url = f"local://{file_hash[:32]}/{file.filename}"
-
-        await file_service.create_file_record(
-            file_id=file_id,
-            user_id=user_id,
-            filename=file.filename,
-            url=file_url,
-            mimetype=file.content_type or "application/octet-stream",
-            size=len(content),
-            key_r2=file_hash,
-            processing_status="PROCESSING"
-        )
-
-        # Extract text (OCR)
-        suffix = os.path.splitext(file.filename)[1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-            temp_file.write(content)
-            temp_path = temp_file.name
+        # Update status to PROCESSING
+        await ocr_service.update_processing_status(user_storage_id, "PROCESSING")
 
         try:
-            file_content = extract_text_from_file(temp_path, file.content_type)
-        finally:
-            os.unlink(temp_path)
+            # Download file from R2
+            logger.info(f"Downloading file from R2: {file_info.url}")
+            _, temp_path = await ocr_service.download_file_from_r2(file_info.url)
 
-        if file_content.startswith("Error") or file_content.startswith("Unsupported"):
-            await file_service.update_processing_status(file_id, "FAILED")
-            raise HTTPException(status_code=400, detail=file_content)
+            # OCR file
+            file_content = extract_text_from_file(temp_path, file_info.mimetype)
 
-        # Create chunks and store embeddings
-        retriever, chunks = create_in_memory_retriever(file_content)
+            # Cleanup temp file
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
 
-        # Store each chunk with embedding in PostgreSQL
-        pg_store = get_pg_vector_store()
-        stored_count = 0
+            if file_content.startswith("Error") or file_content.startswith("Unsupported"):
+                await ocr_service.update_processing_status(user_storage_id, "FAILED")
+                raise HTTPException(status_code=400, detail=file_content)
 
-        for i, chunk in enumerate(chunks):
-            chunk_id = f"{file_id}_chunk_{i}"
-            page_range = getattr(chunk, 'metadata', {}).get('page', str(i + 1))
+            # Create chunks
+            retriever, chunks = create_in_memory_retriever(file_content)
 
-            success = await pg_store.store_document(
-                doc_id=chunk_id,
-                user_storage_id=file_id,
-                content=chunk.page_content,
-                page_range=str(page_range),
-                title=file.filename
-            )
-            if success:
-                stored_count += 1
+            # Store each chunk with embeddings
+            pg_store = get_pg_vector_store()
+            stored_count = 0
 
-        # Mark as COMPLETED
-        await file_service.update_processing_status(file_id, "COMPLETED", credit_charged=True)
+            for i, chunk in enumerate(chunks):
+                chunk_id = f"{user_storage_id}_chunk_{i}"
+                page = getattr(chunk, 'metadata', {}).get('page', str(i + 1))
 
-        # Cache retriever
-        _retriever_cache[file_id] = retriever
+                success = await pg_store.store_document(
+                    doc_id=chunk_id,
+                    user_storage_id=user_storage_id,
+                    content=chunk.page_content,
+                    page_range=str(page),
+                    title=file_info.filename
+                )
+                if success:
+                    stored_count += 1
 
-        logger.info(f"File processed: {file.filename}, ID: {file_id}, Chunks: {stored_count}")
+            # Update status to COMPLETED
+            await ocr_service.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
 
-        return {
-            "success": True,
-            "cached": False,
-            "message": "File đã được OCR và lưu embeddings thành công",
-            "fileInfo": {
-                "id": file_id,
-                "filename": file.filename,
-                "size": len(content),
-                "chunks": stored_count,
-                "content_type": file.content_type,
-                "processing_status": "COMPLETED"
+            # Cache retriever
+            _retriever_cache[user_storage_id] = retriever
+
+            logger.info(f"File processed successfully: {user_storage_id}, {stored_count} chunks")
+
+            return {
+                "success": True,
+                "cached": False,
+                "message": "OCR và lưu embeddings thành công",
+                "chunks_count": stored_count,
+                "user_storage_id": user_storage_id
             }
-        }
+
+        except Exception as e:
+            await ocr_service.update_processing_status(user_storage_id, "FAILED")
+            raise e
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing file upload: {str(e)}")
+        logger.error(f"Error processing file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
 
 @router.post("/query-file", response_model=Dict[str, Any])
-async def query_file(
-    request: QueryRequest,
-    current_user = Depends(require_auth)
-):
-    """
-    Query a file using vector similarity search from PostgreSQL
-    """
+async def query_file(request: QueryFileRequest):
+    """Query file content using vector search"""
     try:
-        file_id = request.file_id
+        user_storage_id = request.user_storage_id
         query = request.query
 
-        logger.info(f"Querying file ID: {file_id}, Query: {query}")
+        logger.info(f"Querying file: {user_storage_id}")
 
-        # Get file from DB
-        file_meta = await file_service.get_file_by_id(file_id)
-        if not file_meta:
+        # Check file exists and processed
+        file_info = await ocr_service.get_file_info(user_storage_id)
+        if not file_info:
             raise HTTPException(status_code=404, detail="File not found")
 
-        if file_meta.processing_status != "COMPLETED":
-            raise HTTPException(status_code=400, detail=f"File is {file_meta.processing_status}")
+        if file_info.processing_status != "COMPLETED":
+            raise HTTPException(status_code=400, detail=f"File chưa được xử lý: {file_info.processing_status}")
 
-        # Vector search using PgVectorStore
+        # Vector search
         pg_store = get_pg_vector_store()
-        combined_content = await pg_store.search_and_combine(
-            user_storage_ids=[file_id],
-            query=query,
-            top_k=5
-        )
+        similar_docs = await pg_store.search_similar([user_storage_id], query, top_k=5)
 
-        if not combined_content:
+        if not similar_docs:
             return {
                 "success": True,
                 "answer": "Không tìm thấy nội dung liên quan trong file.",
                 "sources": [],
-                "file": {"id": file_id, "filename": file_meta.filename}
+                "user_storage_id": user_storage_id
             }
 
-        # Get document chunks for retriever
-        chunks = await file_service.get_file_documents(file_id)
-        retriever = await get_or_create_retriever(file_id, chunks)
-
+        # Get retriever for agent
+        retriever = await get_or_create_retriever(user_storage_id)
         if not retriever:
-            raise HTTPException(status_code=500, detail="Could not create retriever")
+            raise HTTPException(status_code=500, detail="Không thể tạo retriever")
 
         # Use agent to answer
         agent = SimpleChatAgent(custom_retriever=retriever)
         answer = agent.chat(query)
 
-        # Get similar chunks as sources
-        similar_docs = await pg_store.search_similar([file_id], query, top_k=3)
-        sources = [doc.content[:500] for doc in similar_docs]
+        sources = [{"content": doc.content[:500], "page": doc.page_range, "score": doc.similarity_score}
+                   for doc in similar_docs[:3]]
 
         return {
             "success": True,
             "answer": answer,
             "sources": sources,
-            "file": {
-                "id": file_id,
-                "filename": file_meta.filename,
-                "total_chunks": len(chunks)
-            },
-            "timestamp": str(datetime.now())
+            "user_storage_id": user_storage_id,
+            "filename": file_info.filename
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing file query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+        logger.error(f"Error querying file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
-@router.get("/file-info/{file_id}", response_model=Dict[str, Any])
-async def get_file_info(
-    file_id: str,
-    current_user = Depends(require_auth)
-):
-    """Get information about an uploaded file from PostgreSQL"""
-    file_meta = await file_service.get_file_by_id(file_id)
-
-    if not file_meta:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    chunks = await file_service.get_file_documents(file_id)
-
-    # Preview from first chunks
-    preview_text = ""
-    for chunk in chunks[:3]:
-        preview_text += chunk.content[:200] + "\n"
-    preview_text = preview_text[:500] + "..." if len(preview_text) > 500 else preview_text
-
-    return {
-        "success": True,
-        "fileInfo": {
-            "id": file_id,
-            "filename": file_meta.filename,
-            "size": file_meta.size,
-            "chunks": len(chunks),
-            "content_type": file_meta.mimetype,
-            "upload_time": file_meta.created_at.isoformat(),
-            "processing_status": file_meta.processing_status,
-            "preview": preview_text
-        }
-    }
-
-
-@router.get("/list-files", response_model=Dict[str, Any])
-async def list_files(
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    current_user = Depends(require_auth)
-):
-    """List all uploaded files for current user from PostgreSQL"""
-    user_id = str(current_user.get("_id") or current_user.get("id"))
-    if not user_id:
-        raise HTTPException(status_code=401, detail="User ID not found")
-
-    files = await file_service.get_user_files(user_id, limit, offset)
-
-    file_list = []
-    for f in files:
-        file_list.append({
-            "id": f.id,
-            "filename": f.filename,
-            "size": f.size,
-            "content_type": f.mimetype,
-            "upload_time": f.created_at.isoformat(),
-            "processing_status": f.processing_status
-        })
-
-    return {
-        "success": True,
-        "files": file_list,
-        "count": len(file_list)
-    }
-
-
-@router.delete("/delete-file/{file_id}", response_model=Dict[str, Any])
-async def delete_file(
-    file_id: str,
-    current_user = Depends(require_auth)
-):
-    """Delete a file and its documents from PostgreSQL"""
-    file_meta = await file_service.get_file_by_id(file_id)
-
-    if not file_meta:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    # Delete documents first
-    await file_service.delete_file_documents(file_id)
-
-    # Remove from retriever cache
-    if file_id in _retriever_cache:
-        del _retriever_cache[file_id]
-
-    logger.info(f"File deleted: {file_meta.filename}, ID: {file_id}")
-
-    return {
-        "success": True,
-        "message": f"File '{file_meta.filename}' deleted successfully",
-        "file_id": file_id
-    }
-
-
-@router.post("/multi-query-file", response_model=Dict[str, Any])
-async def multi_query_file(
-    request: MultiQueryRequest,
-    current_user = Depends(require_auth)
-):
-    """Run multiple queries against a single file using PostgreSQL vector search"""
+@router.post("/multi-query", response_model=Dict[str, Any])
+async def multi_query_file(request: MultiQueryRequest):
+    """Query file với nhiều câu hỏi"""
     try:
-        file_id = request.file_id
+        user_storage_id = request.user_storage_id
         queries = request.queries
 
         if not queries:
-            raise HTTPException(status_code=400, detail="No queries provided")
+            raise HTTPException(status_code=400, detail="Không có câu hỏi")
 
-        # Get file
-        file_meta = await file_service.get_file_by_id(file_id)
-        if not file_meta:
+        file_info = await ocr_service.get_file_info(user_storage_id)
+        if not file_info:
             raise HTTPException(status_code=404, detail="File not found")
 
-        if file_meta.processing_status != "COMPLETED":
-            raise HTTPException(status_code=400, detail=f"File is {file_meta.processing_status}")
+        if file_info.processing_status != "COMPLETED":
+            raise HTTPException(status_code=400, detail=f"File chưa được xử lý")
 
-        # Get chunks and retriever
-        chunks = await file_service.get_file_documents(file_id)
-        retriever = await get_or_create_retriever(file_id, chunks)
-
+        retriever = await get_or_create_retriever(user_storage_id)
         if not retriever:
-            raise HTTPException(status_code=500, detail="Could not create retriever")
+            raise HTTPException(status_code=500, detail="Không thể tạo retriever")
 
         agent = SimpleChatAgent(custom_retriever=retriever)
         pg_store = get_pg_vector_store()
@@ -405,27 +256,51 @@ async def multi_query_file(
         results = []
         for query in queries:
             answer = agent.chat(query)
-            similar_docs = await pg_store.search_similar([file_id], query, top_k=2)
-            sources = [doc.content[:300] for doc in similar_docs]
+            similar_docs = await pg_store.search_similar([user_storage_id], query, top_k=2)
 
             results.append({
                 "query": query,
                 "answer": answer,
-                "sources": sources
+                "sources": [doc.content[:300] for doc in similar_docs]
             })
 
         return {
             "success": True,
             "results": results,
-            "file": {
-                "id": file_id,
-                "filename": file_meta.filename,
-            },
-            "timestamp": str(datetime.now())
+            "user_storage_id": user_storage_id,
+            "filename": file_info.filename
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing multi-file query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing queries: {str(e)}")
+        logger.error(f"Error in multi-query: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/file-status/{user_storage_id}", response_model=Dict[str, Any])
+async def get_file_status(user_storage_id: str):
+    """Get file processing status"""
+    file_info = await ocr_service.get_file_info(user_storage_id)
+
+    if not file_info:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    chunks = await ocr_service.get_document_chunks(user_storage_id)
+
+    return {
+        "success": True,
+        "user_storage_id": user_storage_id,
+        "filename": file_info.filename,
+        "processing_status": file_info.processing_status,
+        "chunks_count": len(chunks)
+    }
+
+
+@router.delete("/clear-cache/{user_storage_id}")
+async def clear_retriever_cache(user_storage_id: str):
+    """Clear retriever cache for a file"""
+    if user_storage_id in _retriever_cache:
+        del _retriever_cache[user_storage_id]
+        return {"success": True, "message": "Cache cleared"}
+    return {"success": True, "message": "No cache to clear"}
