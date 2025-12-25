@@ -1,0 +1,703 @@
+import {
+    Controller,
+    Get,
+    Post,
+    Delete,
+    Param,
+    Body,
+    Query,
+    Req,
+} from '@nestjs/common';
+import {
+    ApiTags,
+    ApiOperation,
+    ApiBearerAuth,
+    ApiQuery,
+} from '@nestjs/swagger';
+import { Request } from 'express';
+import { ProxyService } from '../services/proxy.service';
+
+// ==================== AI ====================
+
+@ApiTags('AI')
+@Controller('ai')
+@ApiBearerAuth('access-token')
+export class AIProxyController {
+    constructor(private readonly proxyService: ProxyService) {}
+
+    @Get('recent-uploads')
+    @ApiOperation({ summary: 'Lấy danh sách file đã upload' })
+    async getRecentUploads(@Req() req: Request, @Query() query: any) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/recent-uploads',
+                query,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('upload/:uploadId')
+    @ApiOperation({ summary: 'Lấy chi tiết file đã upload' })
+    async getUploadDetail(
+        @Param('uploadId') uploadId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/upload/${uploadId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete('upload/:uploadId')
+    @ApiOperation({ summary: 'Xóa file upload' })
+    async deleteUpload(
+        @Param('uploadId') uploadId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/ai/upload/${uploadId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('regenerate/:uploadId')
+    @ApiOperation({ summary: 'Tạo lại quiz/flashcard từ file' })
+    async regenerate(
+        @Param('uploadId') uploadId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai/regenerate/${uploadId}`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('job/:jobId')
+    @ApiOperation({ summary: 'Lấy trạng thái job' })
+    async getJobStatus(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/job/${jobId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete('job/:jobId')
+    @ApiOperation({ summary: 'Hủy job' })
+    async cancelJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/ai/job/${jobId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('upload-image')
+    @ApiOperation({ summary: 'Upload image cho AI chat' })
+    async uploadImage(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai/upload-image',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    private h(req: Request) {
+        return { 'user-agent': req.headers['user-agent'] || '' };
+    }
+    private t(req: Request) {
+        const a = req.headers.authorization;
+        return a?.startsWith('Bearer ')
+            ? a.substring(7)
+            : req.cookies?.accessToken || '';
+    }
+}
+
+// ==================== AI CHAT ====================
+
+@ApiTags('AI Chat')
+@Controller('ai-chat')
+@ApiBearerAuth('access-token')
+export class AIChatProxyController {
+    constructor(private readonly proxyService: ProxyService) {}
+
+    @Get()
+    @ApiOperation({ summary: 'Lấy danh sách chats' })
+    async getChats(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'GET', path: '/api/v1/ai-chat', headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Post()
+    @ApiOperation({ summary: 'Tạo chat mới' })
+    async createChat(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai-chat',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get(':chatId/messages')
+    @ApiOperation({ summary: 'Lấy messages của chat' })
+    async getMessages(@Param('chatId') chatId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai-chat/${chatId}/messages`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':chatId/message')
+    @ApiOperation({ summary: 'Gửi message' })
+    async sendMessage(
+        @Param('chatId') chatId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai-chat/${chatId}/message`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get(':chatId/exists')
+    @ApiOperation({ summary: 'Check chat exists' })
+    async chatExists(@Param('chatId') chatId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai-chat/${chatId}/exists`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete(':chatId')
+    @ApiOperation({ summary: 'Xóa chat' })
+    async deleteChat(@Param('chatId') chatId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/ai-chat/${chatId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    // Documents
+    @Get(':chatId/documents')
+    @ApiOperation({ summary: 'Lấy documents của chat' })
+    async getDocuments(@Param('chatId') chatId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai-chat/${chatId}/documents`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':chatId/documents')
+    @ApiOperation({ summary: 'Thêm document vào chat' })
+    async addDocument(
+        @Param('chatId') chatId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai-chat/${chatId}/documents`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete(':chatId/documents/:documentId')
+    @ApiOperation({ summary: 'Xóa document khỏi chat' })
+    async removeDocument(
+        @Param('chatId') chatId: string,
+        @Param('documentId') documentId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/ai-chat/${chatId}/documents/${documentId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    // Messages
+    @Delete('message/:messageId')
+    @ApiOperation({ summary: 'Xóa message' })
+    async deleteMessage(
+        @Param('messageId') messageId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/ai-chat/message/${messageId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('message/:messageId/regenerate')
+    @ApiOperation({ summary: 'Regenerate response' })
+    async regenerateMessage(
+        @Param('messageId') messageId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai-chat/message/${messageId}/regenerate`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    private h(req: Request) {
+        return { 'user-agent': req.headers['user-agent'] || '' };
+    }
+    private t(req: Request) {
+        const a = req.headers.authorization;
+        return a?.startsWith('Bearer ')
+            ? a.substring(7)
+            : req.cookies?.accessToken || '';
+    }
+}
+
+// ==================== FLASHCARD STUDY ====================
+
+@ApiTags('Flashcard Study')
+@Controller('flashcard-study')
+@ApiBearerAuth('access-token')
+export class FlashcardStudyProxyController {
+    constructor(private readonly proxyService: ProxyService) {}
+
+    @Post('session')
+    @ApiOperation({ summary: 'Get or create study session' })
+    async getOrCreateSession(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/flashcard-study/session',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('session/:sessionId')
+    @ApiOperation({ summary: 'Update study session' })
+    async updateSession(
+        @Param('sessionId') sessionId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'PUT',
+                path: `/api/v1/flashcard-study/session/${sessionId}`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('session/:sessionId/complete')
+    @ApiOperation({ summary: 'Complete study session' })
+    async completeSession(
+        @Param('sessionId') sessionId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/flashcard-study/session/${sessionId}/complete`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('session/:sessionId/review')
+    @ApiOperation({ summary: 'Review card' })
+    async reviewCard(
+        @Param('sessionId') sessionId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/flashcard-study/session/${sessionId}/review`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('cards/:flashCardSetId')
+    @ApiOperation({ summary: 'Get cards for study' })
+    async getCards(
+        @Param('flashCardSetId') flashCardSetId: string,
+        @Req() req: Request,
+        @Query() query: any
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/flashcard-study/cards/${flashCardSetId}`,
+                query,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('history/:flashCardSetId')
+    @ApiOperation({ summary: 'Get study history' })
+    async getHistory(
+        @Param('flashCardSetId') flashCardSetId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/flashcard-study/history/${flashCardSetId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('progress/:flashCardSetId')
+    @ApiOperation({ summary: 'Get progress' })
+    async getProgress(
+        @Param('flashCardSetId') flashCardSetId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/flashcard-study/progress/${flashCardSetId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    private h(req: Request) {
+        return { 'user-agent': req.headers['user-agent'] || '' };
+    }
+    private t(req: Request) {
+        const a = req.headers.authorization;
+        return a?.startsWith('Bearer ')
+            ? a.substring(7)
+            : req.cookies?.accessToken || '';
+    }
+}
+
+// ==================== QUIZ PRACTICE ====================
+
+@ApiTags('Quiz Practice')
+@Controller('quiz-practice-attempts')
+@ApiBearerAuth('access-token')
+export class QuizPracticeProxyController {
+    constructor(private readonly proxyService: ProxyService) {}
+
+    @Post()
+    @ApiOperation({ summary: 'Get or create practice attempt' })
+    async getOrCreate(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/quiz-practice-attempts',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('by-quizset/:quizSetId')
+    @ApiOperation({ summary: 'Get attempt by quiz set' })
+    async getByQuizSet(
+        @Param('quizSetId') quizSetId: string,
+        @Req() req: Request,
+        @Query() query: any
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/quiz-practice-attempts/by-quizset/${quizSetId}`,
+                query,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('stats/completion-rate')
+    @ApiOperation({ summary: 'Get completion rate' })
+    async getCompletionRate(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/quiz-practice-attempts/stats/completion-rate',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get(':attemptId')
+    @ApiOperation({ summary: 'Get attempt by ID' })
+    async getById(@Param('attemptId') attemptId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/quiz-practice-attempts/${attemptId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':attemptId')
+    @ApiOperation({ summary: 'Update attempt' })
+    async update(
+        @Param('attemptId') attemptId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'PUT',
+                path: `/api/v1/quiz-practice-attempts/${attemptId}`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':attemptId/submit')
+    @ApiOperation({ summary: 'Submit attempt' })
+    async submit(@Param('attemptId') attemptId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/quiz-practice-attempts/${attemptId}/submit`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':attemptId/reset')
+    @ApiOperation({ summary: 'Reset attempt' })
+    async reset(
+        @Param('attemptId') attemptId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/quiz-practice-attempts/${attemptId}/reset`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    private h(req: Request) {
+        return { 'user-agent': req.headers['user-agent'] || '' };
+    }
+    private t(req: Request) {
+        const a = req.headers.authorization;
+        return a?.startsWith('Bearer ')
+            ? a.substring(7)
+            : req.cookies?.accessToken || '';
+    }
+}
+
+// ==================== CHEATING LOG ====================
+
+@ApiTags('Cheating Logs')
+@Controller('cheatinglogs')
+@ApiBearerAuth('access-token')
+export class CheatingLogProxyController {
+    constructor(private readonly proxyService: ProxyService) {}
+
+    @Post()
+    @ApiOperation({ summary: 'Log violation' })
+    async logViolation(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/cheatinglogs',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('attempt/:attemptId')
+    @ApiOperation({ summary: 'Get logs for attempt (host)' })
+    async getByAttempt(
+        @Param('attemptId') attemptId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/cheatinglogs/attempt/${attemptId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('session/:sessionId/stats')
+    @ApiOperation({ summary: 'Get session stats (host)' })
+    async getSessionStats(
+        @Param('sessionId') sessionId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/cheatinglogs/session/${sessionId}/stats`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('session/:sessionId/user/:userId')
+    @ApiOperation({ summary: 'Get user attempts with logs (host)' })
+    async getUserAttempts(
+        @Param('sessionId') sessionId: string,
+        @Param('userId') userId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/cheatinglogs/session/${sessionId}/user/${userId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    private h(req: Request) {
+        return { 'user-agent': req.headers['user-agent'] || '' };
+    }
+    private t(req: Request) {
+        const a = req.headers.authorization;
+        return a?.startsWith('Bearer ')
+            ? a.substring(7)
+            : req.cookies?.accessToken || '';
+    }
+}

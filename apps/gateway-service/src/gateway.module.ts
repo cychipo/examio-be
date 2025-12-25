@@ -5,10 +5,34 @@ import { HttpModule } from '@nestjs/axios';
 
 import { GatewayController } from './gateway.controller';
 import { ProxyMiddleware } from './middleware/proxy.middleware';
-import { AuthProxyController } from './controllers/auth-proxy.controller';
-import { ExamProxyController } from './controllers/exam-proxy.controller';
-import { FinanceProxyController } from './controllers/finance-proxy.controller';
 import { ProxyService } from './services/proxy.service';
+
+// Auth
+import { AuthProxyController } from './controllers/auth-proxy.controller';
+
+// Exam Service
+import { QuizsetProxyController } from './controllers/quizset-proxy.controller';
+import { FlashcardsetProxyController } from './controllers/flashcardset-proxy.controller';
+import { ExamRoomProxyController } from './controllers/examroom-proxy.controller';
+import { ExamSessionProxyController } from './controllers/examsession-proxy.controller';
+import { ExamAttemptProxyController } from './controllers/examattempt-proxy.controller';
+
+// Finance & Profile
+import {
+    WalletProxyController,
+    PaymentProxyController,
+    ProfileProxyController,
+    DevicesProxyController,
+} from './controllers/wallet-profile-proxy.controller';
+
+// AI & Study
+import {
+    AIProxyController,
+    AIChatProxyController,
+    FlashcardStudyProxyController,
+    QuizPracticeProxyController,
+    CheatingLogProxyController,
+} from './controllers/ai-study-proxy.controller';
 
 @Module({
     imports: [
@@ -26,9 +50,25 @@ import { ProxyService } from './services/proxy.service';
     ],
     controllers: [
         GatewayController,
+        // Auth
         AuthProxyController,
-        ExamProxyController,
-        FinanceProxyController,
+        // Exam
+        QuizsetProxyController,
+        FlashcardsetProxyController,
+        ExamRoomProxyController,
+        ExamSessionProxyController,
+        ExamAttemptProxyController,
+        // Finance & Profile
+        WalletProxyController,
+        PaymentProxyController,
+        ProfileProxyController,
+        DevicesProxyController,
+        // AI & Study
+        AIProxyController,
+        AIChatProxyController,
+        FlashcardStudyProxyController,
+        QuizPracticeProxyController,
+        CheatingLogProxyController,
     ],
     providers: [
         {
@@ -40,7 +80,6 @@ import { ProxyService } from './services/proxy.service';
 })
 export class GatewayModule implements NestModule {
     configure(consumer: MiddlewareConsumer) {
-        // Apply proxy middleware to specific routes if needed
-        // consumer.apply(ProxyMiddleware).forRoutes('*');
+        consumer.apply(ProxyMiddleware).forRoutes('*');
     }
 }
