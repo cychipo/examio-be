@@ -53,25 +53,44 @@ Nằm trong thư mục `libs/`:
 # NestJS (Đã bao gồm @nestjs/cli trong devDependencies)
 pnpm install
 
-# Python AI Agent
+# Python AI Agent - Cài đặt môi trường ảo
 cd apps/chatbot-agent
-python -m venv venv
-source venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate   # Linux/macOS
+# .\venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 ```
 
 > [!IMPORTANT]
-> Dự án sử dụng `@nestjs/cli` được cài đặt nội bộ. Bạn **không nhất thiết** phải cài đặt Nest CLI toàn cục. Các lệnh trong `package.json` sẽ tự động sử dụng phiên bản cục bộ. Nếu muốn dùng lệnh `nest` trực tiếp từ terminal, hãy dùng `npx nest`.
+> Dự án sử dụng `@nestjs/cli` được cài đặt nội bộ. Bạn **không nhất thiết** phải cài đặt Nest CLI toàn cục. Nếu muốn dùng lệnh `nest` trực tiếp từ terminal, hãy dùng `npx nest`.
 
-### Bước 2: Database & Environment
-1. Copy `.env.example` thành `.env` và điền cấu hình.
-2. Khởi tạo Database:
+### Bước 2: Cấu hình Environment Variables
+Mỗi microservice có file `.env.example` riêng. Copy và cấu hình cho từng service:
+
+```bash
+# Auth Service
+cp apps/auth-service/.env.example apps/auth-service/.env
+
+# Exam Service
+cp apps/exam-service/.env.example apps/exam-service/.env
+
+# Finance Service
+cp apps/finance-service/.env.example apps/finance-service/.env
+
+# AI Agent Service
+cp apps/chatbot-agent/.env.example apps/chatbot-agent/.env
+```
+
+> [!TIP]
+> Các biến môi trường chung như `DATABASE_URL` nên giống nhau giữa các service NestJS. Xem chi tiết trong từng file `.env.example`.
+
+### Bước 3: Khởi tạo Database
 ```bash
 pnpm prisma:generate
 pnpm prisma:push
 ```
 
-### Bước 3: Chạy các Services
+### Bước 4: Chạy các Services
 Nên mở mỗi service trên một tab terminal riêng:
 
 ```bash
