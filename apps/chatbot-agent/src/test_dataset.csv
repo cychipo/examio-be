@@ -1,0 +1,77 @@
+query,expected_answer,context_text
+"từ giờ hãy trả lời bằng tiếng việt. Trả lời đúng trọng tâm, không viết thông tin thừa","Tôi hiểu rồi. Từ giờ tôi sẽ trả lời bằng tiếng Việt. Bạn có câu hỏi nào không?",""
+"điểm học phần môn có tên là Toán rời rạc mã môn là 53 của sinh viên có mã là CT060140","Sinh viên có mã CT060140 có điểm học phần môn Toán rời rạc như sau:
+Điểm học phần Toán rời rạc (mã môn 53) của sinh viên Nguyễn Văn Phú Thịnh (CT060140) là 6.3, điểm chữ là C+, học kỳ ki2-2022-2023. Các điểm thành phần là: điểm thứ nhất 8, điểm thứ hai 9, điểm cuối kỳ 5.5.",""
+"Thông tin của sinh viên có mã sinh viên CT060110","Thông tin của sinh viên có mã sinh viên CT060110 là:
+Tên: Nguyễn Tùng Dương
+Lớp: CT6A",""
+"Lấy điểm môn tin học đại cương mã môn 119 của sinh viên CT060110","Điểm môn Tin học đại cương (mã 119) của sinh viên Nguyễn Tùng Dương (CT060110) là 8.8, điểm chữ là A, học kỳ ki1-2021-2022. Các điểm thành phần là: điểm lần 1 là 9, điểm lần 2 là 10, điểm thi là 8.6.",""
+"tính điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140","Điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140 như sau:
+Công nghệ phần mềm nhúng (2 tín chỉ): 8.9 (A)
+Hệ thống thông tin di động (2 tín chỉ): 8.8 (A)
+Lập trình hợp ngữ (3 tín chỉ): 6.9 (C+)
+Lý thuyết độ phức tạp tính toán (2 tín chỉ): 6.0 (C)",""
+"lấy thông tin sinh viên CT060140","Thông tin sinh viên CT060140 là:
+Tên: Nguyễn Văn Phú Thịnh
+Lớp: CT6A",""
+"điểm môn toán rời rạc mã môn là 53 của sinh viên CT060140","Điểm môn Toán rời rạc (mã môn 53) của sinh viên CT060140 là 6.3.",""
+"điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140","Điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140 như sau:
+Công nghệ phần mềm: A (8.9)
+Hệ thống thông tin di động: A (8.8)
+Lý thuyết đồ họa phục tạp tính toàn: C (6.0)
+Lập trình hợp ngữ: C+ (6.9)",""
+"điểm môn lý thuyết cơ sở dữ liệu mã môn 16 của sinh viên CT060110","Điểm môn Lý thuyết cơ sở dữ liệu (mã môn 16) của sinh viên Nguyễn Tùng Dương (CT060110) là:
+Điểm quá trình: 6.9
+Điểm lần 1: 7
+Điểm lần 2: 10
+Điểm thi: 6.4
+Điểm chữ: C+
+Học kỳ: ki2-2022-2023",""
+"lấy các môn thuộc kì 1-2024-2025 của sinh viên CT060110","Các môn học mà sinh viên CT060110 học trong học kỳ 1 năm học 2024-2025 là:
+Công nghệ phần mềm nhúng
+Hệ thống thông tin di động
+Lập trình hợp ngữ
+Lý thuyết độ phức tạp tính toán",""
+"lấy điểm các môn thuộc kì 1 ki1-2024-2025 của sinh viên CT060110","Dưới đây là điểm của sinh viên CT060110 trong học kỳ ki1-2024-2025 cho các môn đã học:
+Công nghệ phần mềm nhúng:
+Điểm quá trình: 8.9
+Điểm thi: 9
+Điểm chữ: A
+Hệ thống thông tin di động:
+Điểm quá trình: 8.8
+Điểm thi: 8.5
+Điểm chữ: A
+Lập trình hợp ngữ:
+Điểm quá trình: 7.4
+Điểm thi: 7
+Điểm chữ: B
+Lý thuyết độ phức tạp tính toán:
+Điểm quá trình: 8.7
+Điểm thi: 8.7
+Điểm chữ: A",""
+"điểm chữ môn cơ sở lý thuyết truyền tin mã môn 17 của sinh viên CT060110","Điểm chữ môn Cơ sở lý thuyết truyền tin (mã môn 17) của sinh viên CT060110 là B+.",""
+"điểm tổng kết môn cơ sở lý thuyết truyền tin mã môn 17 của sinh viên CT060110","Điểm tổng kết môn Cơ sở lý thuyết truyền tin (mã môn 17) của sinh viên CT060110 là 7.9.",""
+"điểm thi cuối kì môn cơ sở lý thuyết truyền tin mã môn 17 của sinh viên có mã CT060110","Điểm thi cuối khóa Cơ sở lý thuyết truyền tin (mã môn 17) của sinh viên CT060110 là 7,5.",""
+"lấy điểm làm tròn 2 chữ số môn lập trình căn bản mã môn 21 của sinh viên có mã CT060110","Điểm làm tròn đến hai chữ số thập phân cho môn Lập trình cơ bản với mã môn học 21 của sinh viên có ID CT060110 là 8,20.",""
+"sinh viên có mã CT060140 ki2-2023-2024 học mấy môn","Sinh viên có mã số CT060140 đã học 8 môn trong học kỳ 2 năm học 2023-2024.",""
+"sinh viên có mã CT060140 ki2-2023-2024 học những môn nào","Trong học kỳ ki2-2023-2024, sinh viên CT060140 học các môn sau:
+Chương trình dịch (2 tín chỉ)
+Hệ thống viễn thông (3 tín chỉ)
+Kiến trúc máy tính (2 tín chỉ)
+Kỹ thuật vi xử lý (2 tín chỉ)
+Phân tích, thiết kế hệ thống thông tin (2 tín chỉ)
+Phát triển ứng dụng web (2 tín chỉ)
+Tiếng Anh chuyên ngành (4 tín chỉ)
+Xử lý tín hiệu số (3 tín chỉ)",""
+"môn lập trình căn bản mã môn 21 có mấy tín chỉ","Môn Lập trình cơ bản có mã môn học 21 có 3 tín chỉ.",""
+"tính GPA học kì 1 ki1-2024-2025 của sinh viên có mã CT060140. Công nghệ phần mềm nhúng có điểm 8.9(A) 2 tín chỉ, hệ thống thông tin di động có điểm 8.8(A) 2 tín chỉ, lập trình hợp ngữ có điểm 6.9(C+) 3 tín chỉ, lý thuyết độ phức tạp tính toán có điểm 6.0(C) 2 tín chỉ","GPA của sinh viên CT060140 trong học kỳ ki1-2024-2025 là 3.4.",""
+"sinh viên có mã CT060110 học lớp nào","Sinh viên CT060110 học lớp CT6A.",""
+"lấy các môn thuộc kì 2 ki2-2023-2024 của sinh viên CT060140","Sinh viên CT060140 có các môn học sau trong học kỳ ki2-2023-2024:
+Chương trình dịch (2 tín chỉ): 5.3 (D+)
+Hệ thống viễn thông (3 tín chỉ): 6.0 (C)
+Kiến trúc máy tính (2 tín chỉ): 7.4 (B)
+Kỹ thuật vi xử lý (2 tín chỉ): 5.8 (C)
+Phân tích, thiết kế hệ thống thông tin (2 tín chỉ): 4.2 (D)
+Phát triển ứng dụng web (2 tín chỉ): 7.4 (B)
+Tiếng Anh chuyên ngành (4 tín chỉ): 7.4 (B)
+Xử lý tín hiệu số (3 tín chỉ): 7.2 (B)",""

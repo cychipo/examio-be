@@ -17,3 +17,13 @@ docker-compose.yml
 docker-compose.*.yml
 !docker-compose.example.yml
 
+# Python virtual environments
+venv/
+.venv/
+env/
+python-venv/
+**/venv/
+**/.venv/
+**/env/
+
+#python

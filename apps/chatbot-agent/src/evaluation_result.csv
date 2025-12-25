@@ -1,0 +1,131 @@
+query,expected,predicted,precision,recall,f1_score,cosine_similarity,latency_sec,match
+"từ giờ hãy trả lời bằng tiếng việt. Trả lời đúng trọng tâm, không viết thông tin thừa",Tôi hiểu rồi. Từ giờ tôi sẽ trả lời bằng tiếng Việt. Bạn có câu hỏi nào không?,Tôi đã hiểu.,0.8431,0.7405,0.7885,0.2106,1.02,True
+điểm học phần môn có tên là Toán rời rạc mã môn là 53 của sinh viên có mã là CT060140,"Sinh viên có mã CT060140 có điểm học phần môn Toán rời rạc như sau:
+Điểm học phần Toán rời rạc (mã môn 53) của sinh viên Nguyễn Văn Phú Thịnh (CT060140) là 6.3, điểm chữ là C+, học kỳ ki2-2022-2023. Các điểm thành phần là: điểm thứ nhất 8, điểm thứ hai 9, điểm cuối kỳ 5.5.","Điểm học phần Toán rời rạc (mã môn 53) của sinh viên Nguyễn Văn Phú Thịnh (CT060140) là 6.3, điểm chữ là C+, học kỳ ki2-2022-2023. Các điểm thành phần là: điểm lần 1 là 8, điểm lần 2 là 9, điểm thi là 5.5.",0.9001,0.8774,0.8886,0.9269,4.11,True
+Thông tin của sinh viên có mã sinh viên CT060110,"Thông tin của sinh viên có mã sinh viên CT060110 là:
+Tên: Nguyễn Tùng Dương
+Lớp: CT6A","Thông tin của sinh viên có mã sinh viên CT060110 là:
+- Mã sinh viên: CT060110
+- Tên: Nguyễn Tùng Dương
+- Lớp: CT6A",0.9062,0.9525,0.9288,0.9728,2.76,True
+Lấy điểm môn tin học đại cương mã môn 119 của sinh viên CT060110,"Điểm môn Tin học đại cương (mã 119) của sinh viên Nguyễn Tùng Dương (CT060110) là 8.8, điểm chữ là A, học kỳ ki1-2021-2022. Các điểm thành phần là: điểm lần 1 là 9, điểm lần 2 là 10, điểm thi là 8.6.","Điểm môn Tin học đại cương (mã môn 119) của sinh viên CT060110 là:
+- Điểm quá trình: 8.8
+- Điểm lần 1: 9
+- Điểm lần 2: 10
+- Điểm thi: 8.6
+- Điểm chữ: A
+- Học kỳ: ki1-2021-2022",0.8206,0.824,0.8223,0.8557,2.93,True
+tính điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140,"Điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140 như sau:
+Công nghệ phần mềm nhúng (2 tín chỉ): 8.9 (A)
+Hệ thống thông tin di động (2 tín chỉ): 8.8 (A)
+Lập trình hợp ngữ (3 tín chỉ): 6.9 (C+)
+Lý thuyết độ phức tạp tính toán (2 tín chỉ): 6.0 (C)","Điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140 như sau:
+- Công nghệ phần mềm nhúng (2 tín chỉ): 8.9 (A)
+- Hệ thống thông tin di động (2 tín chỉ): 8.8 (A)
+- Lập trình hợp ngữ (3 tín chỉ): 6.9 (C+)
+- Lý thuyết độ phức tạp tính toán (2 tín chỉ): 6.0 (C)",0.9672,0.9751,0.9711,0.9937,3.16,True
+lấy thông tin sinh viên CT060140,"Thông tin sinh viên CT060140 là:
+Tên: Nguyễn Văn Phú Thịnh
+Lớp: CT6A","Thông tin sinh viên có mã CT060140 là:
+- Tên: Nguyễn Văn Phú Thịnh
+- Lớp: CT6A",0.9245,0.9553,0.9396,0.9376,2.75,True
+điểm môn toán rời rạc mã môn là 53 của sinh viên CT060140,Điểm môn Toán rời rạc (mã môn 53) của sinh viên CT060140 là 6.3.,"Điểm môn Toán rời rạc (mã môn 53) của sinh viên CT060140 là:
+- Điểm quá trình: 6.3
+- Điểm lần 1: 8
+- Điểm lần 2: 9
+- Điểm thi: 5.5
+- Điểm chữ: C+
+- Học kỳ: kì 2 năm học 2022-2023",0.7196,0.8944,0.7975,0.7921,3.78,True
+điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140,"Điểm học kì 1 ki1-2024-2025 của sinh viên có mã sinh viên là CT060140 như sau:
+Công nghệ phần mềm: A (8.9)
+Hệ thống thông tin di động: A (8.8)
+Lý thuyết đồ họa phục tạp tính toàn: C (6.0)
+Lập trình hợp ngữ: C+ (6.9)","Điểm học kì 1 ki1-2024-2025 của sinh viên CT060140 là:
+- Công nghệ phần mềm nhúng: 8.8999996185302734 (A)
+- Hệ thống thông tin di động: 8.8000001907348633 (A)
+- Lập trình hợp ngữ: 6.9000000953674316 (C+)
+- Lý thuyết độ phức tạp tính toán: 6.0 (C)",0.7853,0.8606,0.8212,0.8928,4.24,True
+điểm môn lý thuyết cơ sở dữ liệu mã môn 16 của sinh viên CT060110,"Điểm môn Lý thuyết cơ sở dữ liệu (mã môn 16) của sinh viên Nguyễn Tùng Dương (CT060110) là:
+Điểm quá trình: 6.9
+Điểm lần 1: 7
+Điểm lần 2: 10
+Điểm thi: 6.4
+Điểm chữ: C+
+Học kỳ: ki2-2022-2023","Điểm môn Lý thuyết cơ sở dữ liệu (mã môn 16) của sinh viên CT060110 là:
+
+*   Điểm quá trình: 6.9
+*   Điểm lần 1: 7
+*   Điểm lần 2: 10
+*   Điểm thi: 6.4
+*   Điểm chữ: C+
+*   Học kỳ: kì 2 năm học 2022-2023",0.9306,0.9351,0.9328,0.9086,3.12,True
+lấy các môn thuộc kì 1-2024-2025 của sinh viên CT060110,"Các môn học mà sinh viên CT060110 học trong học kỳ 1 năm học 2024-2025 là:
+Công nghệ phần mềm nhúng
+Hệ thống thông tin di động
+Lập trình hợp ngữ
+Lý thuyết độ phức tạp tính toán","Các môn học của sinh viên CT060110 trong kì 1-2024-2025 là:
+- Công nghệ phần mềm nhúng
+- Hệ thống thông tin di động
+- Lập trình hợp ngữ
+- Lý thuyết độ phức tạp tính toán",0.913,0.9191,0.9161,0.9597,3.75,True
+lấy điểm các môn thuộc kì 1-2024-2025 của sinh viên CT060110,"
+Dưới đây là điểm của sinh viên CT060110 trong học kỳ ki1-2024-2025 cho các môn đã học:
+Công nghệ phần mềm nhúng:
+Điểm quá trình: 8.9
+Điểm thi: 9
+Điểm chữ: A
+Hệ thống thông tin di động:
+Điểm quá trình: 8.8
+Điểm thi: 8.5
+Điểm chữ: A
+Lập trình hợp ngữ:
+Điểm quá trình: 7.4
+Điểm thi: 7
+Điểm chữ: B
+Lý thuyết độ phức tạp tính toán:
+Điểm quá trình: 8.7
+Điểm thi: 8.7
+Điểm chữ: A
+","Điểm của sinh viên CT060110 trong kì 1-2024-2025 như sau:
+- Công nghệ phần mềm nhúng: 8.9
+- Hệ thống thông tin di động: 8.8
+- Lập trình hợp ngữ: 7.4
+- Lý thuyết độ phức tạp tính toán: 8.7",0.864,0.7134,0.7815,0.8631,3.93,True
+điểm chữ môn cơ sở lý thuyết truyền tin mã môn 17 của sinh viên CT060110,Điểm chữ môn Cơ sở lý thuyết truyền tin (mã môn 17) của sinh viên CT060110 là B+.,Điểm chữ môn Cơ sở lý thuyết truyền tin (mã môn 17) của sinh viên CT060110 là B+.,1.0,1.0,1.0,1.0,2.62,True
+điểm tổng kết môn cơ sở lý thuyết truyền tin mã môn 17 của sinh viên CT060110,"Điểm tổng kết môn Cơ sở lý thuyết truyền tin"" (mã môn 17) của sinh viên CT060110 là 7.9.""",Điểm tổng kết môn Cơ sở lý thuyết truyền tin (mã môn 17) của sinh viên CT060110 là 7.9.,0.9693,0.9517,0.9604,0.9832,2.68,True
+quy định về học lại,"Theo quy định của Học viện Kỹ thuật Mật mã:
+Học phần bị điểm F: Sinh viên phải đăng ký học lại học phần đó cho đến khi đạt điểm đạt (A, A+, B, B+, C, C+, D, D+).
+Học phần tự chọn bị điểm F: Sinh viên có thể đăng ký học lại học phần đó hoặc chọn học một học phần thay thế.
+Thi lại:
+Nếu thi chính không đạt, phải đóng lệ phí và thi lại ngay kỳ thi phụ.
+Vắng thi chính có lý do chính đáng, được thi kỳ thi phụ ngay sau đó (không cần đóng lệ phí).
+Nếu vẫn không đạt sau kỳ thi phụ (hoặc vắng thi phụ có lý do), có thể thi trả nợ trong các kỳ thi của khóa sau (cần làm đơn trước 10 ngày).
+Nếu không đạt ở kỳ thi phụ, coi như đã thi phụ và nhận điểm 0.
+Cải thiện điểm: Sinh viên tuyển sinh từ 2021 trở đi, nếu có học phần bị điểm D, D+ (4.0 - 5.4) có thể đăng ký học lại để cải thiện điểm trung bình chung tích lũy. Điểm tích lũy cuối cùng sẽ là điểm cao nhất trong các lần học.
+","Dưới đây là các quy định về học lại tại Học viện Kỹ thuật Mật mã:
+
+1. **Học phần bị điểm F:** Sinh viên có học phần bị điểm F phải đăng ký học lại học phần đó ở một trong các học kỳ tiếp theo hoặc học kỳ phụ cho đến khi đạt điểm A, A+, B, B+, C, C+, D, D+.
+2. **Học phần tự chọn bị điểm F:** Sinh viên có học phần tự chọn bị điểm F phải đăng ký học lại học phần đó hoặc có thể chọn học một học phần thay thế theo quy định trong chương trình đào tạo.
+3. **Thi lại:**
+    * Học viên sinh viên (HVSV) tham dự kỳ thi chính có kết quả không đạt phải đóng lệ phí thi lại và tham dự kỳ thi phụ ngay sau đó.
+    * HVSV đủ điều kiện tham dự kỳ thi chính nhưng vắng thi có lý do chính đáng thì phải tham gia kỳ thi phụ ngay sau đó, không cần đóng lệ phí thi lại, kết quả thi được tính là thi lần 1.
+    * HVSV đủ điều kiện tham dự kỳ thi phụ nhưng vắng thi có lý do chính đáng hoặc HVSV có kết quả không đạt ở kỳ thi phụ nhưng chưa sử dụng hết 2 lần thi thì có thể tham gia thi trả nợ trong các kỳ thi được tổ chức cho các khóa học sau. Trong trường hợp này, HVSV cần làm đơn dự thi, nộp về cho đơn vị quản lý HVSV chậm nhất 10 ngày trước ngày thi.
+    * HVSV theo quy định tại các điểm c và d có kết quả không đạt ở kỳ thi phụ thì coi như đã tham dự kỳ thi phụ và phải nhận điểm 0.
+4. **Cải thiện điểm:** Đối với các sinh viên tuyển sinh từ 2021 trở đi, nếu có các học phần bị D, D+ (thang điểm 10 là từ 4.0 đến 5.4) được xem xét đăng ký học lại các học phần đó để cải thiện điểm trung bình chung tích lũy. Điểm tích lũy cuối cùng của các học phần này sẽ là điểm cao nhất trong các lần học.",0.7537,0.8329,0.7913,0.9356,11.66,True
+Cách tính điểm tổng kết học phần,"Theo thông tin tôi tìm được, điểm tổng hợp đánh giá học phần được tính dựa trên điểm đánh giá quá trình và điểm thi kết thúc học phần. Công thức tính điểm học phần (ĐHP) là tổng các điểm thành phần nhân với trọng số tương ứng, được quy định trong đề cương chi tiết của mỗi học phần.
+
+Nếu đề cương chi tiết chưa quy định, điểm học phần được tính theo công thức:
+
+ĐHP = 0,7 x TP2 + 0,3 x TP1
+
+Trong đó:
+
+TP1 là điểm thành phần 1, bao gồm điểm kiểm tra thường xuyên (ĐKTTX) và điểm đánh giá ý thức (ĐĐGYT), được tính theo công thức: ĐTP1 = 0,7 x ĐKTTX + 0,3 x ĐĐGYT
+TP2 là điểm thi kết thúc học phần.
+","Điểm tổng hợp đánh giá học phần được tính căn cứ vào điểm đánh giá quá trình và điểm thi kết thúc học phần. Điểm học phần (ĐHP) được tính từ tổng các điểm thành phần nhân với trọng số tương ứng. Trọng số của mỗi điểm thành phần được quy định trong đề cương chi tiết của mỗi học phần. Nếu trong đề cương chi tiết học phần chưa quy định thì được tính theo công thức sau:
+ĐHP = 0,7 x TP2 + 0,3 x TP1
+Trong đó:
+* TP2 là điểm thi kết thúc học phần.
+* TP1 là điểm kiểm tra học phần, được tính theo công thức: ĐTP1 = 0,7 x ĐKTTX + 0,3 x ĐĐGYT
+    * ĐKTTX là điểm kiểm tra thường xuyên.
+    * ĐĐGYT là điểm đánh giá ý thức.",0.902,0.8976,0.8998,0.9659,5.99,True

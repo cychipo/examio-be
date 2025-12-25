@@ -1,0 +1,82 @@
+{
+  "folder_mappings": {
+    "phongdaotao": {
+      "department": "phongdaotao",
+      "department_vn": "Phòng Đào Tạo",
+      "source_type": "education",
+      "subfolders": {
+        "daihoc": {
+          "education_level": "daihoc",
+          "education_level_vn": "đại học"
+        },
+        "thacsi": {
+          "education_level": "thacsi",
+          "education_level_vn": "thạc sĩ"
+        },
+        "tiensi": {
+          "education_level": "tiensi",
+          "education_level_vn": "tiến sĩ"
+        },
+        "giangvien": {
+          "education_level": "giangvien",
+          "education_level_vn": "giảng viên"
+        }
+      }
+    },
+    "vanphong": {
+      "department": "vanphong",
+      "department_vn": "Văn Phòng", 
+      "source_type": "administration"
+    },
+    "phongkhcn": {
+      "department": "phongkhcn",
+      "department_vn": "Phòng KHCN",
+      "source_type": "research",
+      "subfolders": {
+        "detai": {
+          "research_type": "project",
+          "research_type_vn": "đề tài"
+        },
+        "baibao": {
+          "research_type": "publication", 
+          "research_type_vn": "bài báo"
+        }
+      }
+    },
+    "phongtccb": {
+      "department": "phongtccb",
+      "department_vn": "Phòng TCCB",
+      "source_type": "hr"
+    }
+  },
+  "default_metadata": {
+    "department": "general",
+    "department_vn": "Chung",
+    "source_type": "regulation"
+  },
+  "query_keywords": {
+    "education_levels": {
+      "daihoc": ["đại học", "sinh viên", "cử nhân", "đh", "university"],
+      "thacsi": ["thạc sĩ", "cao học", "ths", "master"],
+      "tiensi": ["tiến sĩ", "nghiên cứu sinh", "ts", "phd", "doctor"],
+      "giangvien": ["giảng viên", "giáo viên", "gv", "teacher", "lecturer"]
+    },
+    "departments": {
+      "phongdaotao": ["phòng đào tạo", "đào tạo", "pdt", "education"],
+      "vanphong": ["văn phòng", "hành chính", "vp", "office"],
+      "phongkhcn": ["phòng khcn", "khoa học công nghệ", "nghiên cứu", "research"],
+      "phongtccb": ["phòng tccb", "tổ chức cán bộ", "nhân sự", "hr"]
+    },
+    "research_types": {
+      "project": ["đề tài", "dự án", "project"],
+      "publication": ["bài báo", "publication", "paper"]
+    }
+  },
+  "chunk_settings": {
+    "chunk_size": 800,
+    "chunk_overlap": 200,
+    "separators": ["\n\n", "\n", ". ", " ", ""],
+    "keep_separator": true,
+    "k_documents": 8
+  }
+}

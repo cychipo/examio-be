@@ -1,0 +1,16 @@
+# RAGAS Evaluation Requirements
+ragas>=0.1.0
+datasets>=2.14.0
+pandas>=1.5.0
+numpy>=1.24.0
+openai>=1.0.0
+langchain>=0.1.0
+langchain-openai>=0.0.8
+langchain-google-genai>=1.0.0
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+tiktoken>=0.5.0
+faiss-cpu>=1.7.0
+python-dotenv>=1.0.0
+asyncio
+requests

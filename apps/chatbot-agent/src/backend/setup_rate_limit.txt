@@ -1,0 +1,60 @@
+# Thêm vào file main.py để đăng ký route cho rate limit
+from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from .api import user, auth, chat, file, rate_limit  # Thêm rate_limit vào import
+
+app = FastAPI()
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Cho phép tất cả origin trong môi trường phát triển
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Đăng ký các router
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(user.router, prefix="/users", tags=["Users"])
+app.include_router(chat.router, prefix="/chat", tags=["Chat"])
+app.include_router(file.router, prefix="/file", tags=["File"])
+app.include_router(rate_limit.router, prefix="/settings", tags=["Settings"])  # Thêm router mới
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+# Thêm middleware kiểm tra rate limit vào file chat.py
+
+# Ví dụ thêm vào send_message:
+@router.post("/messages", response_model=BaseResponse[MessageResponse])
+async def send_message(
+    message: MessageCreate,
+    current_user = Depends(require_auth)
+):
+    """Send a message to the conversation and get a response"""
+    # Lấy user_id từ current_user
+    if isinstance(current_user, dict):
+        user_id = current_user.get("_id") or current_user.get("user_id")
+    else:
+        user_id = current_user._id
+    
+    # Kiểm tra rate limit
+    from backend.api.rate_limit import check_rate_limit
+    allowed, error_message = await check_rate_limit(user_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=error_message
+        )
+    
+    # Tiếp tục xử lý tin nhắn
+    # ...
+    
+    # Cập nhật token count sau khi có phản hồi
+    token_count = len(response_content.split()) * 2  # Ước tính đơn giản
+    await check_rate_limit(user_id, token_count)
+    
+    # Trả về kết quả
+    # ...
