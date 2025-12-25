@@ -15,8 +15,7 @@ import {
 } from '@nestjs/swagger';
 import { CheatingLogService } from './cheatinglog.service';
 import { CreateCheatingLogDto } from './dto/create-cheatinglog.dto';
-import { AuthGuard } from 'src/common/guard/auth.guard';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import { AuthGuard, AuthenticatedRequest } from '@examio/common';
 
 @ApiTags('Cheating Logs')
 @Controller('cheatinglogs')

@@ -18,9 +18,9 @@ import {
     ApiConsumes,
     ApiBody,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
+import { AuthGuard } from '@examio/common';
 import { ProfileService } from './profile.service';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import { AuthenticatedRequest } from '../dto/request-with-auth.dto';
 import { UpdateProfileDto, ProfileResponseDto } from './dto/profile.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 
@@ -84,11 +84,7 @@ export class ProfileController {
         if (!file) {
             throw new BadRequestException('Chưa chọn file');
         }
-        return this.profileService.uploadProfileImage(
-            req.user,
-            file,
-            'avatar'
-        );
+        return this.profileService.uploadProfileImage(req.user, file, 'avatar');
     }
 
     @Post('upload-banner')

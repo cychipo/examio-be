@@ -2,21 +2,57 @@ import {
     Injectable,
     NotFoundException,
     BadRequestException,
+    Inject,
+    OnModuleInit,
 } from '@nestjs/common';
+import { ClientGrpc } from '@nestjs/microservices';
 import { User } from '@prisma/client';
+import {
+    GenerateIdService,
+    sanitizeFilename,
+    R2_SERVICE,
+} from '@examio/common';
 import { UserRepository } from '../repositories/user.repository';
 import { UpdateProfileDto, ProfileResponseDto } from './dto/profile.dto';
-import { R2Service } from 'src/packages/r2/r2.service';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
-import { sanitizeFilename } from 'src/common/utils/sanitize-filename';
+
+// gRPC R2 Service interface
+interface R2GrpcService {
+    uploadFile(data: {
+        user_id: string;
+        filename: string;
+        mimetype: string;
+        content: Buffer;
+        folder?: string;
+    }): Promise<{
+        success: boolean;
+        file_id: string;
+        url: string;
+        key_r2: string;
+        message: string;
+    }>;
+    getFileUrl(data: {
+        key_r2: string;
+        expires_in_seconds?: number;
+    }): Promise<{ url: string; expires_at: number }>;
+    deleteFile(data: {
+        key_r2: string;
+    }): Promise<{ success: boolean; message: string }>;
+}
 
 @Injectable()
-export class ProfileService {
+export class ProfileService implements OnModuleInit {
+    private r2GrpcService: R2GrpcService;
+
     constructor(
         private readonly userRepository: UserRepository,
-        private readonly r2Service: R2Service,
-        private readonly generateIdService: GenerateIdService
+        private readonly generateIdService: GenerateIdService,
+        @Inject(R2_SERVICE) private readonly r2Client: ClientGrpc
     ) {}
+
+    onModuleInit() {
+        this.r2GrpcService =
+            this.r2Client.getService<R2GrpcService>('R2Service');
+    }
 
     /**
      * Get user profile - O(1) with cache
@@ -57,7 +93,7 @@ export class ProfileService {
             updateData.banner = dto.banner;
         }
 
-        const updatedUser = await this.userRepository.updateUser(
+        const updatedUser = await this.userRepository.update(
             user.id,
             updateData,
             user.id
@@ -67,7 +103,7 @@ export class ProfileService {
     }
 
     /**
-     * Upload profile image (avatar or banner) to R2
+     * Upload profile image (avatar or banner) via gRPC to R2 Service
      */
     async uploadProfileImage(
         user: User,
@@ -109,29 +145,41 @@ export class ProfileService {
         const filename = `${this.generateIdService.generateId()}-${sanitizedName}`;
         const directory = type === 'avatar' ? 'avatars' : 'banners';
 
-        // Upload to R2
-        const r2Key = await this.r2Service.uploadFile(
+        // Upload via gRPC to R2 Service
+        const uploadResult = await this.r2GrpcService.uploadFile({
+            user_id: user.id,
             filename,
-            file.buffer,
-            file.mimetype,
-            directory
-        );
+            mimetype: file.mimetype,
+            content: file.buffer,
+            folder: directory,
+        });
 
-        const url = this.r2Service.getPublicUrl(r2Key);
+        if (!uploadResult.success) {
+            throw new BadRequestException(
+                `Upload failed: ${uploadResult.message}`
+            );
+        }
+
+        const url = uploadResult.url;
 
         // Update user profile with new URL
         const updateData: Partial<User> =
             type === 'avatar' ? { avatar: url } : { banner: url };
 
-        await this.userRepository.updateUser(user.id, updateData, user.id);
+        await this.userRepository.update(user.id, updateData, user.id);
 
         // Delete old image from R2 if it exists
         if (oldImageUrl) {
             const oldKey = this.extractR2Key(oldImageUrl);
             if (oldKey) {
-                await this.r2Service.deleteFile(oldKey).catch((err) => {
-                    console.warn(`Failed to delete old ${type} from R2:`, err);
-                });
+                await this.r2GrpcService
+                    .deleteFile({ key_r2: oldKey })
+                    .catch((err) => {
+                        console.warn(
+                            `Failed to delete old ${type} from R2:`,
+                            err
+                        );
+                    });
             }
         }
 

@@ -1,13 +1,14 @@
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import {
     Injectable,
     ConflictException,
+    Inject,
     NotFoundException,
     InternalServerErrorException,
     BadRequestException,
     ForbiddenException,
 } from '@nestjs/common';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { GenerateIdService } from '@examio/common';
 import { User } from '@prisma/client';
 import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
 import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
@@ -16,7 +17,7 @@ import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcards
 import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
 import { FlashcardSetUpdateSharingSettingsDto } from './dto/sharing.dto';
 import { FlashCardSetRepository } from './flashcardset.repository';
-import { R2Service } from 'src/packages/r2/r2.service';
+import { R2ClientService } from '@examio/common';
 
 @Injectable()
 export class FlashcardsetService {
@@ -24,7 +25,7 @@ export class FlashcardsetService {
         private readonly prisma: PrismaService,
         private readonly flashcardSetRepository: FlashCardSetRepository,
         private readonly generateIdService: GenerateIdService,
-        private readonly r2Service: R2Service
+        private readonly r2Service: R2ClientService
     ) {}
 
     async createFlashcardSet(

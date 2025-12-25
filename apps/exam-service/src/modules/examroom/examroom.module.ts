@@ -1,17 +1,16 @@
 import { Module } from '@nestjs/common';
 import { ExamRoomService } from './examroom.service';
 import { ExamRoomController } from './examroom.controller';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
-import { AuthModule } from 'src/packages/auth/auth.module';
-import { AuthGuard } from 'src/common/guard/auth.guard';
+import { PrismaService } from '@examio/database';
+import { GenerateIdService, AuthGuard } from '@examio/common';
+import { RedisService } from '@examio/redis';
 import { ExamRoomRepository } from './examroom.repository';
 import { QuizSetRepository } from '../quizset/quizset.repository';
 
 @Module({
-    imports: [AuthModule],
     providers: [
         PrismaService,
+        RedisService,
         ExamRoomService,
         GenerateIdService,
         AuthGuard,

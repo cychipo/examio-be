@@ -1,18 +1,21 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { QuizsetService } from './quizset.service';
 import { QuizsetController } from './quizset.controller';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
-import { AuthModule } from 'src/packages/auth/auth.module';
-import { AuthGuard } from 'src/common/guard/auth.guard';
+import { PrismaService } from '@examio/database';
+import {
+    GenerateIdService,
+    AuthGuard,
+    GrpcClientsModule,
+} from '@examio/common';
+import { RedisService } from '@examio/redis';
 import { QuizSetRepository } from './quizset.repository';
-import { R2Module } from 'src/packages/r2/r2.module';
 import { QuizPracticeAttemptRepository } from '../quizpracticeattempt/quiz-practice-attempt.repository';
 
 @Module({
-    imports: [AuthModule, R2Module],
+    imports: [GrpcClientsModule.registerR2Client()],
     providers: [
         PrismaService,
+        RedisService,
         QuizsetService,
         GenerateIdService,
         AuthGuard,

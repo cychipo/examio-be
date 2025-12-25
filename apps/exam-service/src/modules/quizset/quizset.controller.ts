@@ -22,8 +22,7 @@ import {
     ApiCookieAuth,
     ApiParam,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import { AuthGuard, AuthenticatedRequest } from '@examio/common';
 import { QuizsetService } from './quizset.service';
 import { CreateQuizsetDto } from './dto/create-quizset.dto';
 import { UpdateQuizSetDto } from './dto/update-quizset.dto';

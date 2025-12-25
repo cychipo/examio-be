@@ -1,18 +1,25 @@
 import { Injectable } from '@nestjs/common';
-import { BaseRepository } from 'src/common/repositories/base.repository';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { RedisService } from 'src/packages/redis/redis.service';
 import { User } from '@prisma/client';
-import { EXPIRED_TIME } from 'src/constants/redis';
+import { PrismaService } from '@examio/database';
+import { RedisService, EXPIRED_TIME } from '@examio/redis';
 
 @Injectable()
-export class UserRepository extends BaseRepository<User> {
+export class UserRepository {
     protected modelName = 'user';
     protected cachePrefix = 'user';
     protected defaultCacheTTL = EXPIRED_TIME.FIVE_MINUTES;
 
-    constructor(prisma: PrismaService, redis: RedisService) {
-        super(prisma, redis);
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly redis: RedisService
+    ) {}
+
+    private get model() {
+        return this.prisma.user;
+    }
+
+    private getCacheKey(suffix: string): string {
+        return `${this.cachePrefix}:${suffix}`;
     }
 
     /**
@@ -24,7 +31,7 @@ export class UserRepository extends BaseRepository<User> {
         cacheTTL = this.defaultCacheTTL
     ): Promise<User | null> {
         const normalizedEmail = email.toLowerCase();
-        const cacheKey = `${this.cachePrefix}:email:${normalizedEmail}`;
+        const cacheKey = this.getCacheKey(`email:${normalizedEmail}`);
 
         if (cache) {
             const cached = await this.redis.get<User>(cacheKey);
@@ -36,12 +43,6 @@ export class UserRepository extends BaseRepository<User> {
 
             if (user) {
                 await this.redis.set(cacheKey, user, cacheTTL);
-                // Also cache by user ID for future lookups
-                await this.redis.set(
-                    this.getUserScopedCacheKey(user.id),
-                    user,
-                    cacheTTL
-                );
             }
             return user;
         }
@@ -60,7 +61,7 @@ export class UserRepository extends BaseRepository<User> {
         cacheTTL = this.defaultCacheTTL
     ): Promise<User | null> {
         const normalizedUsername = username.toLowerCase();
-        const cacheKey = `${this.cachePrefix}:username:${normalizedUsername}`;
+        const cacheKey = this.getCacheKey(`username:${normalizedUsername}`);
 
         if (cache) {
             const cached = await this.redis.get<User>(cacheKey);
@@ -72,12 +73,6 @@ export class UserRepository extends BaseRepository<User> {
 
             if (user) {
                 await this.redis.set(cacheKey, user, cacheTTL);
-                // Also cache by user ID for future lookups
-                await this.redis.set(
-                    this.getUserScopedCacheKey(user.id),
-                    user,
-                    cacheTTL
-                );
             }
             return user;
         }
@@ -90,10 +85,7 @@ export class UserRepository extends BaseRepository<User> {
     /**
      * Tìm user theo email hoặc username (cho login)
      */
-    async findByCredential(
-        credential: string,
-        cache = false // Không cache cho login để đảm bảo thông tin mới nhất
-    ): Promise<User | null> {
+    async findByCredential(credential: string): Promise<User | null> {
         return this.model.findFirst({
             where: {
                 OR: [
@@ -134,7 +126,7 @@ export class UserRepository extends BaseRepository<User> {
             relations.length > 0
                 ? `:relations:${relations.sort().join(',')}`
                 : '';
-        const cacheKey = this.getUserScopedCacheKey(id) + relationKey;
+        const cacheKey = this.getCacheKey(`id:${id}${relationKey}`);
 
         if (cache) {
             const cached = await this.redis.get<User>(cacheKey);
@@ -158,22 +150,29 @@ export class UserRepository extends BaseRepository<User> {
     }
 
     /**
-     * Update user và invalidate các cache liên quan
+     * Create user
      */
-    async updateUser(id: string, data: any, userId?: string): Promise<User> {
-        // BaseRepository.update() handles user-scoped cache invalidation
-        const result = await this.update(id, data, userId || id);
+    async create(data: any): Promise<User> {
+        const user = await this.model.create({ data });
+        return user;
+    }
 
-        // Invalidate ALL user cache variants using pattern match
-        // This clears user:user:{userId}:* including :relations:wallet, etc.
-        await this.invalidateUserCache(id);
+    /**
+     * Update user và invalidate cache
+     */
+    async update(id: string, data: any, userId?: string): Promise<User> {
+        const result = await this.model.update({
+            where: { id },
+            data,
+        });
 
-        // Also invalidate email and username lookup caches (special case for User)
+        // Invalidate caches
+        await this.redis.delPattern(`${this.cachePrefix}:*${id}*`);
         await this.redis.del(
-            `${this.cachePrefix}:email:${result.email.toLowerCase()}`
+            this.getCacheKey(`email:${result.email.toLowerCase()}`)
         );
         await this.redis.del(
-            `${this.cachePrefix}:username:${result.username.toLowerCase()}`
+            this.getCacheKey(`username:${result.username.toLowerCase()}`)
         );
 
         return result;

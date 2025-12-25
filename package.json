@@ -9,8 +9,9 @@
         "dev:auth": "nest start auth-service --watch",
         "dev:exam": "nest start exam-service --watch",
         "dev:finance": "nest start finance-service --watch",
+        "dev:r2": "nest start r2-service --watch",
         "dev:ai": "cd apps/chatbot-agent && ./venv/bin/uvicorn src.backend.main:app --reload --port 8000",
-        "dev:all": "concurrently \"pnpm dev:auth\" \"pnpm dev:exam\" \"pnpm dev:finance\" \"pnpm dev:ai\"",
+        "dev:all": "concurrently \"pnpm dev:auth\" \"pnpm dev:exam\" \"pnpm dev:finance\" \"pnpm dev:r2\" \"pnpm dev:ai\"",
         "prisma:merge": "prisma-merge -b libs/database/src/base.prisma -s 'libs/database/src/models/*.prisma' -o libs/database/src/schema.prisma",
         "prisma:generate": "prisma generate --schema=libs/database/src/schema.prisma",
         "prisma:migrate": "pnpm prisma:merge && prisma migrate dev --schema=libs/database/src/schema.prisma",
@@ -83,6 +84,7 @@
         "concurrently": "^9.2.1",
         "prettier": "^3.6.2",
         "prisma-merge": "^0.2.0",
+        "ts-loader": "^9.5.4",
         "typescript": "^5.8.3"
     }
 }

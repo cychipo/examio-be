@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { RedisService } from 'src/packages/redis/redis.service';
-import { EXPIRED_TIME } from 'src/constants/redis';
+import { PrismaService } from '@examio/database';
+import { RedisService, EXPIRED_TIME } from '@examio/redis';
 import {
     PaginationParams,
     PaginationResult,

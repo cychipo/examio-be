@@ -27,11 +27,17 @@
       "@examio/common/*": [
         "libs/common/src/*"
       ],
-      "examio/database": [
+      "@examio/database": [
         "libs/database/src"
       ],
-      "examio/database/*": [
+      "@examio/database/*": [
         "libs/database/src/*"
+      ],
+      "@examio/redis": [
+        "libs/redis/src"
+      ],
+      "@examio/redis/*": [
+        "libs/redis/src/*"
       ]
     },
     "skipLibCheck": true,

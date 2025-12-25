@@ -18,8 +18,7 @@ import {
     ApiParam,
     ApiQuery,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import { AuthGuard, AuthenticatedRequest } from '@examio/common';
 import { QuizPracticeAttemptService } from './quiz-practice-attempt.service';
 import {
     CreateQuizPracticeAttemptDto,

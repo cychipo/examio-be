@@ -18,9 +18,11 @@ import {
     ApiCookieAuth,
     ApiParam,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
-import { OptionalAuthGuard } from 'src/common/guard/optional-auth.guard';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import {
+    AuthGuard,
+    OptionalAuthGuard,
+    AuthenticatedRequest,
+} from '@examio/common';
 import { ExamSessionService } from './examsession.service';
 import { CreateExamSessionDto } from './dto/create-examsession.dto';
 import { UpdateExamSessionDto } from './dto/update-examsession.dto';

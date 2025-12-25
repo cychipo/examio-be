@@ -5,13 +5,13 @@ import {
     ForbiddenException,
     Logger,
 } from '@nestjs/common';
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import { SepayWebhook } from '../../types/webhook';
 import { getPaymentIdFromWebhook } from '../../utils/handleWebhook';
 import { PAYMENT_STATUS } from '../../types/payment';
 import { WalletRepository } from '../wallet/wallet.repository';
 import { WalletTransactionRepository } from '../wallet/wallettransaction.repository';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { GenerateIdService } from '@examio/common';
 import { WALLET_TRANSACTION_TYPE } from '../wallet/dto/wallet-details-response.dto';
 import { SubscriptionService } from './subscription.service';
 import {

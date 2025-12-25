@@ -16,8 +16,7 @@ import {
     ApiCookieAuth,
     ApiQuery,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import { AuthGuard, AuthenticatedRequest } from '@examio/common';
 import { PaymentService, CreatePaymentDto } from './payment.service';
 import { SubscriptionService } from './subscription.service';
 

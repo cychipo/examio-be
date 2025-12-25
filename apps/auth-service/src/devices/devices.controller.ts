@@ -8,7 +8,7 @@ import {
     UseGuards,
 } from '@nestjs/common';
 import { DevicesService } from './devices.service';
-import { AuthGuard } from 'src/common/guard/auth.guard';
+import { AuthGuard } from '@examio/common';
 import { Request } from 'express';
 import * as cookie from 'cookie';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';

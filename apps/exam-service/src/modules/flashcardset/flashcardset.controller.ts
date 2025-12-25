@@ -23,8 +23,11 @@ import {
     ApiParam,
     ApiHeader,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import {
+    AuthGuard,
+    OptionalAuthGuard,
+    AuthenticatedRequest,
+} from '@examio/common';
 import { FlashcardsetService } from './flashcardset.service';
 import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
 import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
@@ -54,7 +57,6 @@ import {
     UpdateFlashcardResponseDto,
     DeleteFlashcardResponseDto,
 } from './dto/flashcard.dto';
-import { OptionalAuthGuard } from 'src/common/guard/optional-auth.guard';
 
 @ApiTags('Flashcardsets')
 @ApiExtraModels(

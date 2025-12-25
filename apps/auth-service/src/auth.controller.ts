@@ -17,15 +17,18 @@ import {
     ApiExtraModels,
     ApiCookieAuth,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
+import {
+    AuthGuard,
+    GoogleAuthGuard,
+    FacebookAuthGuard,
+    GithubAuthGuard,
+    getCookieConfig,
+} from '@examio/common';
 import {
     AuthenticatedRequest,
     AuthenticatedOauthRequest,
 } from './dto/request-with-auth.dto';
-import { GoogleAuthGuard } from 'src/common/guard/google-auth.guard';
 import { Response as ExpressResponse, Request } from 'express';
-import { FacebookAuthGuard } from '../../common/guard/facebook-auth.guard';
-import { GithubAuthGuard } from 'src/common/guard/github-auth.guard';
 import {
     LoginResponseDto,
     RegisterResponseDto,
@@ -33,7 +36,6 @@ import {
     AuthMessageResponseDto,
     GetUserResponseDto,
 } from './dto/auth-response.dto';
-import { getCookieConfig } from 'src/common/utils/cookie-config';
 import * as crypto from 'crypto';
 
 @ApiTags('Auth')

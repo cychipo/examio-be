@@ -72,6 +72,24 @@
       "compilerOptions": {
         "tsConfigPath": "apps/finance-service/tsconfig.app.json"
       }
+    },
+    "r2-service": {
+      "type": "application",
+      "root": "apps/r2-service",
+      "entryFile": "main",
+      "sourceRoot": "apps/r2-service/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/r2-service/tsconfig.app.json"
+      }
+    },
+    "redis": {
+      "type": "library",
+      "root": "libs/redis",
+      "entryFile": "index",
+      "sourceRoot": "libs/redis/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/redis/tsconfig.lib.json"
+      }
     }
   }
 }

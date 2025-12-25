@@ -1,9 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { BaseRepository } from 'src/common/repositories/base.repository';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { RedisService } from 'src/packages/redis/redis.service';
+import { PrismaService } from '@examio/database';
+import { RedisService, EXPIRED_TIME } from '@examio/redis';
+import { BaseRepository } from '@examio/common';
 import { QuizSet } from '@prisma/client';
-import { EXPIRED_TIME } from 'src/constants/redis';
 
 @Injectable()
 export class QuizSetRepository extends BaseRepository<QuizSet> {
@@ -15,46 +14,50 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
         super(prisma, redis);
     }
 
+    // ==================== CUSTOM METHODS ====================
+
     /**
-     * Tìm quiz set theo user ID với cache
+     * Tìm quiz set theo user ID
      */
-    async findByUserId(
-        userId: string,
-        cache = true,
-        cacheTTL = this.defaultCacheTTL
-    ): Promise<QuizSet[]> {
+    async findByUserId(userId: string, cache = true): Promise<QuizSet[]> {
+        const cacheKey = this.getCacheKey(`user:${userId}:list`);
+
         if (cache) {
-            const cacheKey = this.getUserScopedCacheKey(userId) + ':list';
             const cached = await this.redis.get<QuizSet[]>(cacheKey);
             if (cached) return cached;
-
-            const data = await this.model.findMany({
-                where: { userId },
-                orderBy: { createdAt: 'desc' },
-            });
-            await this.redis.set(cacheKey, data, cacheTTL);
-            return data;
         }
 
-        return this.model.findMany({
+        const data = await this.model.findMany({
             where: { userId },
             orderBy: { createdAt: 'desc' },
         });
+
+        if (cache) {
+            await this.redis.set(cacheKey, data, this.defaultCacheTTL);
+        }
+        return data;
     }
 
     /**
      * Tìm public quiz sets
      */
-    async findPublic(
-        cache = true,
-        cacheTTL = EXPIRED_TIME.TEN_MINUTES
-    ): Promise<QuizSet[]> {
-        return this.findAll({
+    async findPublic(cache = true): Promise<QuizSet[]> {
+        const cacheKey = this.getCacheKey('public:list');
+
+        if (cache) {
+            const cached = await this.redis.get<QuizSet[]>(cacheKey);
+            if (cached) return cached;
+        }
+
+        const data = await this.model.findMany({
             where: { isPublic: true },
             orderBy: { createdAt: 'desc' },
-            cache,
-            cacheTTL,
         });
+
+        if (cache) {
+            await this.redis.set(cacheKey, data, EXPIRED_TIME.TEN_MINUTES);
+        }
+        return data;
     }
 
     /**
@@ -63,12 +66,9 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
     async findByIdWithQuestions(
         id: string,
         userId?: string,
-        cache = true,
-        cacheTTL = this.defaultCacheTTL
+        cache = true
     ): Promise<any> {
-        const cacheKey = userId
-            ? this.getItemScopedCacheKey(userId, id, 'questions')
-            : this.getPublicScopedCacheKey(id, 'questions');
+        const cacheKey = this.getCacheKey(`id:${id}:questions`);
 
         if (cache) {
             const cached = await this.redis.get<any>(cacheKey);
@@ -76,9 +76,7 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
         }
 
         const where: any = { id };
-        if (userId) {
-            where.userId = userId;
-        }
+        if (userId) where.userId = userId;
 
         const quizSet = await this.model.findUnique({
             where,
@@ -92,22 +90,18 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
         });
 
         if (quizSet && cache) {
-            await this.redis.set(cacheKey, quizSet, cacheTTL);
+            await this.redis.set(cacheKey, quizSet, this.defaultCacheTTL);
         }
-
         return quizSet;
     }
 
     /**
      * Tìm public quiz set by id
      */
-    async findPublicById(
-        id: string,
-        cache = true,
-        cacheTTL = EXPIRED_TIME.TEN_MINUTES
-    ): Promise<any> {
+    async findPublicById(id: string, cache = true): Promise<any> {
+        const cacheKey = this.getCacheKey(`public:${id}`);
+
         if (cache) {
-            const cacheKey = this.getCacheKey(`public:${id}`);
             const cached = await this.redis.get<any>(cacheKey);
             if (cached) return cached;
         }
@@ -124,22 +118,18 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
         });
 
         if (quizSet && cache) {
-            const cacheKey = this.getCacheKey(`public:${id}`);
-            await this.redis.set(cacheKey, quizSet, cacheTTL);
+            await this.redis.set(cacheKey, quizSet, EXPIRED_TIME.TEN_MINUTES);
         }
-
         return quizSet;
     }
 
     /**
-     * Search quiz sets by title or tags
+     * Search quiz sets
      */
     async search(
         query: string,
         userId?: string,
-        onlyPublic = false,
-        cache = true,
-        cacheTTL = this.defaultCacheTTL
+        onlyPublic = false
     ): Promise<QuizSet[]> {
         const where: any = {
             OR: [
@@ -148,19 +138,12 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
             ],
         };
 
-        if (userId) {
-            where.userId = userId;
-        }
+        if (userId) where.userId = userId;
+        if (onlyPublic) where.isPublic = true;
 
-        if (onlyPublic) {
-            where.isPublic = true;
-        }
-
-        return this.findAll({
+        return this.model.findMany({
             where,
             orderBy: { createdAt: 'desc' },
-            cache,
-            cacheTTL,
         });
     }
 
@@ -168,20 +151,9 @@ export class QuizSetRepository extends BaseRepository<QuizSet> {
      * Toggle pin status
      */
     async togglePin(id: string, userId: string): Promise<QuizSet> {
-        const quizSet = await this.findOne({ where: { id, userId } });
-        if (!quizSet) {
-            throw new Error('Quiz set not found');
-        }
+        const quizSet = await this.model.findUnique({ where: { id, userId } });
+        if (!quizSet) throw new Error('Quiz set not found');
 
-        // BaseRepository.update() handles cache invalidation automatically
         return this.update(id, { isPinned: !quizSet.isPinned }, userId);
-    }
-
-    /**
-     * Delete quiz set by user
-     */
-    async deleteByUser(id: string, userId: string): Promise<{ count: number }> {
-        // BaseRepository.deleteMany() handles cache invalidation automatically
-        return this.deleteMany({ id, userId }, userId);
     }
 }

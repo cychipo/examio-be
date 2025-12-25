@@ -4,20 +4,40 @@ import {
     NotFoundException,
     InternalServerErrorException,
     BadRequestException,
+    Inject,
+    OnModuleInit,
 } from '@nestjs/common';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { LoginDto } from './dto/login.dto';
+import { ClientGrpc } from '@nestjs/microservices';
 import { JwtService } from '@nestjs/jwt';
-import { MailService } from 'src/common/services/mail.service';
-import { PasswordService } from 'src/common/services/password.service';
-import { RegisterDto } from './dto/register.dto';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
-import { sanitizeUser } from 'src/common/utils/sanitize-user';
 import { User } from '@prisma/client';
-import { generateCode } from 'src/common/utils/generate-code';
-import { WalletService } from 'src/packages/finance/modules/wallet/wallet.service';
+
+// Shared libs imports
+import { PrismaService } from '@examio/database';
+import {
+    MailService,
+    PasswordService,
+    GenerateIdService,
+    sanitizeUser,
+    generateCode,
+    WALLET_SERVICE,
+} from '@examio/common';
+
+// Local imports
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 import { UserRepository } from './repositories/user.repository';
-import { UserSessionRepository } from '../devices/repositories/user-session.repository';
+import { UserSessionRepository } from './devices/repositories/user-session.repository';
+
+// gRPC Wallet Service interface
+interface WalletGrpcService {
+    createWallet(data: {
+        user_id: string;
+        initial_balance: number;
+    }): Promise<{ success: boolean; wallet_id: string; message: string }>;
+    getWallet(data: {
+        user_id: string;
+    }): Promise<{ wallet_id: string; user_id: string; balance: number }>;
+}
 
 export interface DeviceInfo {
     deviceId: string;
@@ -26,7 +46,9 @@ export interface DeviceInfo {
 }
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
+    private walletGrpcService: WalletGrpcService;
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly userRepository: UserRepository,
@@ -35,8 +57,13 @@ export class AuthService {
         private readonly mailService: MailService,
         private readonly passwordService: PasswordService,
         private readonly generateIdService: GenerateIdService,
-        private readonly walletService: WalletService
+        @Inject(WALLET_SERVICE) private readonly walletClient: ClientGrpc
     ) {}
+
+    onModuleInit() {
+        this.walletGrpcService =
+            this.walletClient.getService<WalletGrpcService>('WalletService');
+    }
 
     async login(loginDto: LoginDto, deviceInfo?: DeviceInfo) {
         const { credential, password } = loginDto;
@@ -44,12 +71,10 @@ export class AuthService {
             throw new BadRequestException('Thông tin đăng nhập không hợp lệ');
         }
         try {
-            // Validate user credentials using repository
             const user = await this.userRepository.findByCredential(credential);
             if (!user) {
                 throw new NotFoundException('Không tìm thấy người dùng');
             }
-            // Check password
             const isPasswordValid = await this.passwordService.comparePasswords(
                 password,
                 user.password || ''
@@ -59,10 +84,8 @@ export class AuthService {
                     'Thông tin đăng nhập không hợp lệ'
                 );
             }
-            // Generate JWT token
             const token = this.jwtService.sign({ userId: user.id });
 
-            // Create session if deviceInfo provided
             let sessionId: string | undefined;
             if (deviceInfo) {
                 sessionId = await this.createSession(user.id, deviceInfo);
@@ -95,7 +118,6 @@ export class AuthService {
         }
 
         try {
-            // check valid email and username using repository
             const [emailExists, usernameExists] = await Promise.all([
                 this.userRepository.emailExists(email),
                 this.userRepository.usernameExists(username),
@@ -109,35 +131,25 @@ export class AuthService {
                 throw new ConflictException('Username đã được sử dụng');
             }
 
-            // Hash the password
             const hashedPassword =
                 await this.passwordService.hashPassword(password);
 
-            // Create new user and wallet using transaction
             const newUser = await this.prisma.$transaction(async (tx) => {
-                // Create user using repository
-                const user = await this.userRepository.create({
-                    id: this.generateIdService.generateId(),
-                    username,
-                    email,
-                    password: hashedPassword,
-                });
-
-                // Create wallet
-                await tx.wallet.create({
+                const user = await tx.user.create({
                     data: {
                         id: this.generateIdService.generateId(),
-                        userId: user.id,
-                        balance: 20,
+                        username,
+                        email,
+                        password: hashedPassword,
                     },
                 });
 
-                // Create default subscription (tier NONE)
+                // Create default subscription
                 await tx.userSubscription.create({
                     data: {
                         id: this.generateIdService.generateId(),
                         userId: user.id,
-                        tier: 0, // NONE
+                        tier: 0,
                         billingCycle: 'monthly',
                         isActive: false,
                     },
@@ -146,10 +158,21 @@ export class AuthService {
                 return user;
             });
 
+            // Create wallet via gRPC call to Finance Service
+            try {
+                await this.walletGrpcService.createWallet({
+                    user_id: newUser.id,
+                    initial_balance: 20,
+                });
+            } catch (grpcError) {
+                console.error('Failed to create wallet via gRPC:', grpcError);
+                // Non-blocking - wallet can be created later
+            }
+
             // Send welcome email
             this.mailService.sendMail(
                 email,
-                'Chào mừng bạn đến với CodeCraft',
+                'Chào mừng bạn đến với ExamIO',
                 'welcome.template',
                 {
                     username: newUser.username,
@@ -174,29 +197,26 @@ export class AuthService {
 
     async sendVerificationEmail(user: User) {
         try {
-            // Check if user is already verified
             if (user.isVerified) {
                 return { message: 'Tài khoản đã được xác minh' };
             }
 
             const code = generateCode(6);
 
-            // Use upsert to handle existing verification code
             await this.prisma.verifyAccountCode.upsert({
                 where: { userId: user.id },
                 update: {
                     code,
-                    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
                 },
                 create: {
                     id: this.generateIdService.generateId(),
                     userId: user.id,
                     code,
-                    expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
                 },
             });
 
-            // Send verification email
             this.mailService.sendMail(
                 user.email,
                 'Xác minh tài khoản của bạn',
@@ -222,10 +242,6 @@ export class AuthService {
                 await this.prisma.verifyAccountCode.findUnique({
                     where: { userId },
                 });
-            console.log(
-                '🚀 ~ AuthService ~ verifyAccount ~ verificationCode:',
-                verificationCode
-            );
 
             if (!verificationCode) {
                 throw new NotFoundException('Mã xác minh không hợp lệ');
@@ -239,14 +255,12 @@ export class AuthService {
                 throw new BadRequestException('Mã xác minh đã hết hạn');
             }
 
-            // Mark user as verified using repository - pass userId for proper cache invalidation
             await this.userRepository.update(
                 userId,
                 { isVerified: true },
                 userId
             );
 
-            // Clean up verification code
             await this.prisma.verifyAccountCode.delete({
                 where: { userId },
             });
@@ -275,32 +289,20 @@ export class AuthService {
 
             const code = generateCode(6);
 
-            const existingCode = await this.prisma.resetPasswordCode.findUnique(
-                {
-                    where: { userId: user.id },
-                }
-            );
+            await this.prisma.resetPasswordCode.upsert({
+                where: { userId: user.id },
+                update: {
+                    code,
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+                },
+                create: {
+                    id: this.generateIdService.generateId(),
+                    userId: user.id,
+                    code,
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+                },
+            });
 
-            if (existingCode) {
-                await this.prisma.resetPasswordCode.update({
-                    where: { userId: user.id },
-                    data: {
-                        code,
-                        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-                    },
-                });
-            } else {
-                await this.prisma.resetPasswordCode.create({
-                    data: {
-                        id: this.generateIdService.generateId(),
-                        userId: user.id,
-                        code,
-                        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-                    },
-                });
-            }
-
-            // Send reset password email
             this.mailService.sendMail(
                 user.email,
                 'Yêu cầu đặt lại mật khẩu',
@@ -346,7 +348,6 @@ export class AuthService {
                 throw new BadRequestException('Mã đặt lại mật khẩu đã hết hạn');
             }
 
-            // Update user password using repository - pass userId for proper cache invalidation
             await this.userRepository.update(
                 user.id,
                 {
@@ -356,7 +357,6 @@ export class AuthService {
                 user.id
             );
 
-            // Clean up reset code
             await this.prisma.resetPasswordCode.delete({
                 where: { userId: user.id },
             });
@@ -375,39 +375,24 @@ export class AuthService {
         }
     }
 
-    /**
-     * Send verification code to change password (for authenticated users)
-     */
     async sendCodeToChangePassword(user: User) {
         try {
             const code = generateCode(6);
 
-            const existingCode = await this.prisma.resetPasswordCode.findUnique(
-                {
-                    where: { userId: user.id },
-                }
-            );
+            await this.prisma.resetPasswordCode.upsert({
+                where: { userId: user.id },
+                update: {
+                    code,
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+                },
+                create: {
+                    id: this.generateIdService.generateId(),
+                    userId: user.id,
+                    code,
+                    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+                },
+            });
 
-            if (existingCode) {
-                await this.prisma.resetPasswordCode.update({
-                    where: { userId: user.id },
-                    data: {
-                        code,
-                        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-                    },
-                });
-            } else {
-                await this.prisma.resetPasswordCode.create({
-                    data: {
-                        id: this.generateIdService.generateId(),
-                        userId: user.id,
-                        code,
-                        expiresAt: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-                    },
-                });
-            }
-
-            // Send change password email
             this.mailService.sendMail(
                 user.email,
                 'Xác minh đổi mật khẩu',
@@ -427,9 +412,6 @@ export class AuthService {
         }
     }
 
-    /**
-     * Change password with verification code (for authenticated users)
-     */
     async changePassword(
         user: User,
         code: string,
@@ -437,7 +419,6 @@ export class AuthService {
         newPassword: string
     ) {
         try {
-            // Verify current password first
             if (user.password) {
                 const isPasswordValid =
                     await this.passwordService.comparePasswords(
@@ -451,7 +432,6 @@ export class AuthService {
                 }
             }
 
-            // Check verification code
             const resetCode = await this.prisma.resetPasswordCode.findUnique({
                 where: { userId: user.id },
             });
@@ -468,7 +448,6 @@ export class AuthService {
                 throw new BadRequestException('Mã xác minh đã hết hạn');
             }
 
-            // Update password
             await this.userRepository.update(
                 user.id,
                 {
@@ -478,7 +457,6 @@ export class AuthService {
                 user.id
             );
 
-            // Clean up code
             await this.prisma.resetPasswordCode.delete({
                 where: { userId: user.id },
             });
@@ -506,31 +484,23 @@ export class AuthService {
         let existingUser = await this.userRepository.findByEmail(email, false);
 
         if (!existingUser) {
-            // Create new user and wallet
             existingUser = await this.prisma.$transaction(async (tx) => {
-                const user = await this.userRepository.create({
-                    id: this.generateIdService.generateId(),
-                    email,
-                    username,
-                    avatar,
-                    isVerified: true,
-                    password: null,
-                });
-
-                await tx.wallet.create({
+                const user = await tx.user.create({
                     data: {
                         id: this.generateIdService.generateId(),
-                        userId: user.id,
-                        balance: 20,
+                        email,
+                        username,
+                        avatar,
+                        isVerified: true,
+                        password: null,
                     },
                 });
 
-                // Create default subscription (tier NONE)
                 await tx.userSubscription.create({
                     data: {
                         id: this.generateIdService.generateId(),
                         userId: user.id,
-                        tier: 0, // NONE
+                        tier: 0,
                         billingCycle: 'monthly',
                         isActive: false,
                     },
@@ -538,20 +508,20 @@ export class AuthService {
 
                 return user;
             });
-        } else {
-            // Check if wallet exists for existing user
-            const walletExists = await this.prisma.wallet.findUnique({
-                where: { userId: existingUser.id },
-            });
 
-            if (!walletExists) {
-                await this.walletService.createWallet(existingUser);
+            // Create wallet via gRPC
+            try {
+                await this.walletGrpcService.createWallet({
+                    user_id: existingUser.id,
+                    initial_balance: 20,
+                });
+            } catch (grpcError) {
+                console.error('Failed to create wallet via gRPC:', grpcError);
             }
         }
 
         const token = this.jwtService.sign({ userId: existingUser.id });
 
-        // Create session if deviceInfo provided
         let sessionId: string | undefined;
         if (deviceInfo) {
             sessionId = await this.createSession(existingUser.id, deviceInfo);
@@ -569,19 +539,16 @@ export class AuthService {
     async googleLogin(user: any, deviceInfo?: DeviceInfo) {
         const { email, picture } = user;
         const username = email.split('@')[0];
-
         return this.handleOAuthLogin(email, username, picture, deviceInfo);
     }
 
     async facebookLogin(user: any, deviceInfo?: DeviceInfo) {
         const { email, picture, username } = user;
-
         if (!email) {
             throw new BadRequestException(
                 'Tài khoản của bạn cần được liên kết với email để có thể hoàn tất đăng nhập.'
             );
         }
-
         return this.handleOAuthLogin(
             email,
             username || email.split('@')[0],
@@ -592,7 +559,6 @@ export class AuthService {
 
     async githubLogin(user: any, deviceInfo?: DeviceInfo) {
         const { email, avatar, username } = user;
-
         return this.handleOAuthLogin(
             email,
             username || email.split('@')[0],
@@ -613,7 +579,6 @@ export class AuthService {
         return { user: sanitizeUser(foundUser) };
     }
 
-    // Session management
     async createSession(
         userId: string,
         deviceInfo: DeviceInfo
@@ -632,9 +597,9 @@ export class AuthService {
             browser,
             os,
             ipAddress: deviceInfo.ipAddress || null,
-            country: null, // Can be added with IP geolocation later
+            country: null,
             city: null,
-            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         });
 
         return sessionId;
@@ -647,12 +612,10 @@ export class AuthService {
     } {
         if (!userAgent) return { browser: null, os: null, deviceName: null };
 
-        // Simple User-Agent parsing
         let browser: string | null = null;
         let os: string | null = null;
         let deviceName: string | null = null;
 
-        // Parse browser
         if (userAgent.includes('Chrome') && !userAgent.includes('Edg')) {
             const match = userAgent.match(/Chrome\/(\d+)/);
             browser = match ? `Chrome ${match[1]}` : 'Chrome';
@@ -670,7 +633,6 @@ export class AuthService {
             browser = match ? `Edge ${match[1]}` : 'Edge';
         }
 
-        // Parse OS
         if (userAgent.includes('Windows NT 10')) {
             os = 'Windows 10/11';
         } else if (userAgent.includes('Windows')) {
@@ -688,7 +650,6 @@ export class AuthService {
             os = match ? `iOS ${match[1]}` : 'iOS';
         }
 
-        // Device name based on OS
         if (userAgent.includes('iPhone')) {
             deviceName = 'iPhone';
         } else if (userAgent.includes('iPad')) {

@@ -5,9 +5,9 @@ import {
     Logger,
     ForbiddenException,
 } from '@nestjs/common';
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import { User } from '@prisma/client';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { GenerateIdService } from '@examio/common';
 import { SePayService } from './sepay.service';
 import { PAYMENT_STATUS } from '../../types/payment';
 import {

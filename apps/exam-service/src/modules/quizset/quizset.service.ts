@@ -1,12 +1,14 @@
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import {
     BadRequestException,
     ConflictException,
+    Inject,
     Injectable,
     InternalServerErrorException,
     NotFoundException,
 } from '@nestjs/common';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { GenerateIdService } from '@examio/common';
+import { EXPIRED_TIME } from '@examio/redis';
 import { User } from '@prisma/client';
 import { CreateQuizsetDto } from './dto/create-quizset.dto';
 import { GetQuizsetsDto } from './dto/get-quizset.dto';
@@ -14,9 +16,8 @@ import { UpdateQuizSetDto } from './dto/update-quizset.dto';
 import { SetQuizzToQuizsetDto } from './dto/set-quizz-to-quizset.dto';
 import { SaveHistoryToQuizsetDto } from './dto/save-history-to-quizset.dto';
 import { QuizSetRepository } from './quizset.repository';
-import { EXPIRED_TIME } from '../../../../constants/redis';
-import { R2Service } from 'src/packages/r2/r2.service';
 import { QuizPracticeAttemptRepository } from '../quizpracticeattempt/quiz-practice-attempt.repository';
+import { R2ClientService } from '@examio/common';
 
 @Injectable()
 export class QuizsetService {
@@ -24,7 +25,7 @@ export class QuizsetService {
         private readonly prisma: PrismaService,
         private readonly quizSetRepository: QuizSetRepository,
         private readonly generateIdService: GenerateIdService,
-        private readonly r2Service: R2Service,
+        private readonly r2Service: R2ClientService,
         private readonly attemptRepository: QuizPracticeAttemptRepository
     ) {}
 

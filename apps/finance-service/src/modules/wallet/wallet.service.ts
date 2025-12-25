@@ -4,7 +4,7 @@ import {
     NotFoundException,
     ForbiddenException,
 } from '@nestjs/common';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { GenerateIdService } from '@examio/common';
 import { User } from '@prisma/client';
 import { WalletRepository } from './wallet.repository';
 import { WalletTransactionRepository } from './wallettransaction.repository';

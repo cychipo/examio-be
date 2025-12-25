@@ -19,8 +19,7 @@ import {
     ApiParam,
     ApiQuery,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
+import { AuthGuard, AuthenticatedRequest } from '@examio/common';
 import { ExamRoomService } from './examroom.service';
 import { CreateExamRoomDto } from './dto/create-examroom.dto';
 import { UpdateExamRoomDto } from './dto/update-examroom.dto';

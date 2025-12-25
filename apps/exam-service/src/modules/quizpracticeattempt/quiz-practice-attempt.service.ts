@@ -1,10 +1,10 @@
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import {
     Injectable,
     NotFoundException,
     InternalServerErrorException,
 } from '@nestjs/common';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { GenerateIdService } from '@examio/common';
 import { User } from '@prisma/client';
 import { QUIZ_PRACTICE_TYPE } from '../../types';
 import { CreateQuizPracticeAttemptDto } from './dto/create-quiz-practice-attempt.dto';

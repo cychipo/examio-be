@@ -7,9 +7,8 @@ import {
     ApiCookieAuth,
     ApiQuery,
 } from '@nestjs/swagger';
-import { AuthGuard } from 'src/common/guard/auth.guard';
+import { AuthGuard, AuthenticatedRequest } from '@examio/common';
 import { WalletService } from './wallet.service';
-import { AuthenticatedRequest } from 'src/packages/auth/dto/request-with-auth.dto';
 import { WalletDto } from './dto/wallet-response.dto';
 import { WalletDetailsDto } from './dto/wallet-details-response.dto';
 import { GetTransactionsDto } from './dto/get-transactions.dto';

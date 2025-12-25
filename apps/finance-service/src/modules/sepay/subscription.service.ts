@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { PrismaService } from '@examio/database';
+import { GenerateIdService } from '@examio/common';
 import {
     SUBSCRIPTION_TIER,
     BillingCycle,

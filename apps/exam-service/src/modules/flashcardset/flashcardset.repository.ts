@@ -1,9 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { BaseRepository } from 'src/common/repositories/base.repository';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { RedisService } from 'src/packages/redis/redis.service';
+import { BaseRepository } from '@examio/common';
+import { PrismaService } from '@examio/database';
+import { RedisService, EXPIRED_TIME } from '@examio/redis';
 import { FlashCardSet } from '@prisma/client';
-import { EXPIRED_TIME } from 'src/constants/redis';
 
 @Injectable()
 export class FlashCardSetRepository extends BaseRepository<FlashCardSet> {

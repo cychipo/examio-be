@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { mailTransporter } from 'src/config/mail.config';
+import { mailTransporter } from '../config/mail.config';
 import * as ejs from 'ejs';
 import * as path from 'path';
 

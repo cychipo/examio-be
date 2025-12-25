@@ -8,7 +8,7 @@ import {
     CreateCheatingLogDto,
     CHEATING_TYPE,
 } from './dto/create-cheatinglog.dto';
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import { User } from '@prisma/client';
 import { EXAM_ATTEMPT_STATUS } from '../../types';
 

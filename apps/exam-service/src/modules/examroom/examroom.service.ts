@@ -1,4 +1,4 @@
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import {
     Injectable,
     ConflictException,
@@ -6,7 +6,7 @@ import {
     InternalServerErrorException,
     ForbiddenException,
 } from '@nestjs/common';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { GenerateIdService } from '@examio/common';
 import { User } from '@prisma/client';
 import { CreateExamRoomDto } from './dto/create-examroom.dto';
 import { GetExamRoomsDto } from './dto/get-examroom.dto';

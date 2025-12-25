@@ -1,4 +1,4 @@
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import {
     Injectable,
     NotFoundException,
@@ -6,7 +6,7 @@ import {
     ForbiddenException,
     BadRequestException,
 } from '@nestjs/common';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
+import { GenerateIdService } from '@examio/common';
 import { User } from '@prisma/client';
 import { EXAM_SESSION_STATUS, ASSESS_TYPE } from '../../types';
 import { CreateExamSessionDto } from './dto/create-examsession.dto';
