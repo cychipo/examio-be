@@ -10,6 +10,8 @@ import {
     GenerateIdService,
     AuthGuard,
     GrpcClientsModule,
+    EventsModule,
+    EventPublisherService,
 } from '@examio/common';
 import { RedisModule, RedisService } from '@examio/redis';
 
@@ -27,6 +29,7 @@ import { ProfileModule } from './profile/profile.module';
     imports: [
         DatabaseModule,
         RedisModule,
+        EventsModule,
         GrpcClientsModule.registerWalletClient(),
         JwtModule.register({
             secret: process.env.JWT_SECRET,

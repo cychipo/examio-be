@@ -20,6 +20,8 @@ import {
     sanitizeUser,
     generateCode,
     WALLET_SERVICE,
+    EventPublisherService,
+    EventType,
 } from '@examio/common';
 
 // Local imports
@@ -57,6 +59,7 @@ export class AuthService implements OnModuleInit {
         private readonly mailService: MailService,
         private readonly passwordService: PasswordService,
         private readonly generateIdService: GenerateIdService,
+        private readonly eventPublisher: EventPublisherService,
         @Inject(WALLET_SERVICE) private readonly walletClient: ClientGrpc
     ) {}
 
@@ -168,6 +171,13 @@ export class AuthService implements OnModuleInit {
                 console.error('Failed to create wallet via gRPC:', grpcError);
                 // Non-blocking - wallet can be created later
             }
+
+            // Publish USER_CREATED event for other services
+            await this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
+                userId: newUser.id,
+                email: newUser.email,
+                username: newUser.username,
+            });
 
             // Send welcome email
             this.mailService.sendMail(

@@ -21,6 +21,9 @@ export * from './guard/github-auth.guard';
 export * from './grpc/grpc-clients.module';
 export * from './grpc/r2-client.service';
 
+// Events (Pub/Sub)
+export * from './events';
+
 // Utils
 export * from './utils/cookie-config';
 export * from './utils/generate-code';

@@ -83,7 +83,66 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         return (await this.client.exists(key)) === 1;
     }
 
-    /** Dành cho các use case Pub/Sub */
+    // ==================== Pub/Sub Methods ====================
+
+    private subscriber: Redis | null = null;
+    private subscriptions: Map<string, ((message: string) => void)[]> =
+        new Map();
+
+    /** Lấy hoặc tạo subscriber client */
+    private getSubscriber(): Redis {
+        if (!this.subscriber) {
+            this.subscriber = new Redis({
+                host: redisConfig.host,
+                port: redisConfig.port,
+                password: redisConfig.password,
+            });
+
+            this.subscriber.on(
+                'message',
+                (channel: string, message: string) => {
+                    const handlers = this.subscriptions.get(channel) || [];
+                    handlers.forEach((handler) => handler(message));
+                }
+            );
+        }
+        return this.subscriber;
+    }
+
+    /** Publish message tới channel */
+    async publish(channel: string, message: string): Promise<number> {
+        return this.client.publish(channel, message);
+    }
+
+    /** Subscribe tới channel */
+    async subscribe(
+        channel: string,
+        handler: (message: string) => void
+    ): Promise<void> {
+        const subscriber = this.getSubscriber();
+
+        // Lưu handler
+        const handlers = this.subscriptions.get(channel) || [];
+        handlers.push(handler);
+        this.subscriptions.set(channel, handlers);
+
+        // Subscribe nếu là channel mới
+        if (handlers.length === 1) {
+            await subscriber.subscribe(channel);
+            console.log(`[Redis] Subscribed to channel: ${channel}`);
+        }
+    }
+
+    /** Unsubscribe khỏi channel */
+    async unsubscribe(channel: string): Promise<void> {
+        if (this.subscriber && this.subscriptions.has(channel)) {
+            await this.subscriber.unsubscribe(channel);
+            this.subscriptions.delete(channel);
+            console.log(`[Redis] Unsubscribed from channel: ${channel}`);
+        }
+    }
+
+    /** Dành cho các use case khác */
     getClient(): Redis {
         return this.client;
     }

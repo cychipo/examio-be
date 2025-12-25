@@ -4,6 +4,7 @@ import { join } from 'path';
 
 export const WALLET_SERVICE = 'WALLET_SERVICE';
 export const R2_SERVICE = 'R2_SERVICE';
+export const AUTH_SERVICE = 'AUTH_SERVICE';
 
 @Module({})
 export class GrpcClientsModule {
@@ -61,6 +62,30 @@ export class GrpcClientsModule {
     }
 
     /**
+     * Đăng ký gRPC client cho AuthService
+     * Dùng trong Exam/Finance Service để validate JWT
+     */
+    static registerAuthClient(): DynamicModule {
+        return {
+            module: GrpcClientsModule,
+            imports: [
+                ClientsModule.register([
+                    {
+                        name: AUTH_SERVICE,
+                        transport: Transport.GRPC,
+                        options: {
+                            package: 'auth',
+                            protoPath: join(__dirname, '../protos/auth.proto'),
+                            url: process.env.AUTH_GRPC_URL || 'localhost:50051',
+                        },
+                    },
+                ]),
+            ],
+            exports: [ClientsModule],
+        };
+    }
+
+    /**
      * Đăng ký tất cả gRPC clients
      */
     static registerAll(): DynamicModule {
@@ -68,6 +93,15 @@ export class GrpcClientsModule {
             module: GrpcClientsModule,
             imports: [
                 ClientsModule.register([
+                    {
+                        name: AUTH_SERVICE,
+                        transport: Transport.GRPC,
+                        options: {
+                            package: 'auth',
+                            protoPath: join(__dirname, '../protos/auth.proto'),
+                            url: process.env.AUTH_GRPC_URL || 'localhost:50051',
+                        },
+                    },
                     {
                         name: WALLET_SERVICE,
                         transport: Transport.GRPC,
