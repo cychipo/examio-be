@@ -30,17 +30,6 @@ import { RegisterDto } from './dto/register.dto';
 import { UserRepository } from './repositories/user.repository';
 import { UserSessionRepository } from './devices/repositories/user-session.repository';
 
-// gRPC Wallet Service interface
-interface WalletGrpcService {
-    createWallet(data: {
-        user_id: string;
-        initial_balance: number;
-    }): Promise<{ success: boolean; wallet_id: string; message: string }>;
-    getWallet(data: {
-        user_id: string;
-    }): Promise<{ wallet_id: string; user_id: string; balance: number }>;
-}
-
 export interface DeviceInfo {
     deviceId: string;
     userAgent?: string;
@@ -48,9 +37,7 @@ export interface DeviceInfo {
 }
 
 @Injectable()
-export class AuthService implements OnModuleInit {
-    private walletGrpcService: WalletGrpcService;
-
+export class AuthService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly userRepository: UserRepository,
@@ -59,14 +46,8 @@ export class AuthService implements OnModuleInit {
         private readonly mailService: MailService,
         private readonly passwordService: PasswordService,
         private readonly generateIdService: GenerateIdService,
-        private readonly eventPublisher: EventPublisherService,
-        @Inject(WALLET_SERVICE) private readonly walletClient: ClientGrpc
+        private readonly eventPublisher: EventPublisherService
     ) {}
-
-    onModuleInit() {
-        this.walletGrpcService =
-            this.walletClient.getService<WalletGrpcService>('WalletService');
-    }
 
     async login(loginDto: LoginDto, deviceInfo?: DeviceInfo) {
         const { credential, password } = loginDto;
@@ -160,17 +141,6 @@ export class AuthService implements OnModuleInit {
 
                 return user;
             });
-
-            // Create wallet via gRPC call to Finance Service
-            try {
-                await this.walletGrpcService.createWallet({
-                    user_id: newUser.id,
-                    initial_balance: 20,
-                });
-            } catch (grpcError) {
-                console.error('Failed to create wallet via gRPC:', grpcError);
-                // Non-blocking - wallet can be created later
-            }
 
             // Publish USER_CREATED event for other services
             await this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
@@ -519,15 +489,12 @@ export class AuthService implements OnModuleInit {
                 return user;
             });
 
-            // Create wallet via gRPC
-            try {
-                await this.walletGrpcService.createWallet({
-                    user_id: existingUser.id,
-                    initial_balance: 20,
-                });
-            } catch (grpcError) {
-                console.error('Failed to create wallet via gRPC:', grpcError);
-            }
+            // Publish USER_CREATED event for wallet creation and other services
+            await this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
+                userId: existingUser.id,
+                email: existingUser.email,
+                username: existingUser.username,
+            });
         }
 
         const token = this.jwtService.sign({ userId: existingUser.id });

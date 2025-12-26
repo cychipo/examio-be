@@ -77,7 +77,7 @@ class ModelManager:
     def get_gemini_info(self) -> Dict[str, Any]:
         """Lấy cấu hình Gemini."""
         return {
-            "model": self._runtime_gemini_model or os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+            "model": self._runtime_gemini_model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         }
 
     def get_temperature(self) -> float:
@@ -96,6 +96,80 @@ class ModelManager:
     def set_gemini_model(self, gemini_model: str) -> None:
         self._runtime_gemini_model = gemini_model
         self.set_active_model_type(ModelType.GEMINI)
+
+    async def generate_content(self, prompt: str) -> str:
+        """
+        Generate content using the active LLM model.
+
+        Args:
+            prompt: The prompt to send to the model
+
+        Returns:
+            Generated text response
+        """
+        model_type = self.get_model_type()
+
+        if model_type == ModelType.GEMINI:
+            return await self._generate_with_gemini(prompt)
+        else:
+            return await self._generate_with_ollama(prompt)
+
+    async def _generate_with_gemini(self, prompt: str) -> str:
+        """Generate content using Gemini API"""
+        import google.generativeai as genai
+
+        # Get API key(s)
+        api_keys_str = os.getenv("GEMINI_API_KEYS", "")
+        api_keys = [k.strip() for k in api_keys_str.split(",") if k.strip()]
+
+        if not api_keys:
+            single_key = os.getenv("GEMINI_API_KEY", "")
+            if single_key:
+                api_keys = [single_key]
+
+        if not api_keys:
+            raise ValueError("No Gemini API key configured")
+
+        # Get model name
+        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash")
+        model_names = [m.strip() for m in model_names_str.split(",") if m.strip()]
+        model_name = self._runtime_gemini_model or model_names[0]
+
+        # Configure and call
+        genai.configure(api_key=api_keys[0])
+        model = genai.GenerativeModel(model_name)
+
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                temperature=self.get_temperature(),
+                max_output_tokens=self.get_max_tokens(),
+            )
+        )
+
+        return response.text
+
+    async def _generate_with_ollama(self, prompt: str) -> str:
+        """Generate content using Ollama"""
+        import httpx
+
+        ollama_info = self.get_ollama_info()
+        url = f"{ollama_info['url']}/api/generate"
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(url, json={
+                "model": ollama_info["model"],
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": self.get_temperature(),
+                    "num_predict": self.get_max_tokens(),
+                }
+            })
+            response.raise_for_status()
+            data = response.json()
+            return data.get("response", "")
+
 
 # Singleton instance
 model_manager = ModelManager()

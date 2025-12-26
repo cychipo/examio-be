@@ -1,22 +1,36 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { RedisService } from '@examio/redis';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { BaseEvent, EventType, EventChannels } from './event-types';
+import { RabbitMQService } from './rabbitmq.service';
+import { ChannelWrapper } from 'amqp-connection-manager';
 
 /**
- * EventPublisherService - Publish events tới Redis Pub/Sub
+ * EventPublisherService - Publish events tới RabbitMQ
  * Sử dụng trong các service để broadcast events
  */
 @Injectable()
-export class EventPublisherService {
+export class EventPublisherService implements OnModuleInit {
     private readonly logger = new Logger(EventPublisherService.name);
+    private channelWrapper: ChannelWrapper;
 
-    constructor(private readonly redis: RedisService) {}
+    constructor(private readonly rabbitMQService: RabbitMQService) {}
+
+    async onModuleInit() {
+        this.channelWrapper = this.rabbitMQService.createChannel({
+            json: true,
+            setup: (channel: any) => {
+                return channel.assertExchange(EventChannels.EXCHANGE, 'topic', {
+                    durable: true,
+                });
+            },
+        });
+    }
 
     /**
-     * Publish event tới channel tương ứng
+     * Publish event tới RabbitMQ Exchange với routing key tương ứng
+     * Routing key format: service.event_type
      */
     async publish<T>(
-        channel: string,
+        routingKey: string,
         type: EventType,
         payload: T,
         metadata?: { correlationId?: string; sourceService?: string }
@@ -33,9 +47,13 @@ export class EventPublisherService {
         };
 
         try {
-            await this.redis.publish(channel, JSON.stringify(event));
+            await this.channelWrapper.publish(
+                EventChannels.EXCHANGE,
+                routingKey,
+                event
+            );
             this.logger.log(
-                `Published event ${type} to ${channel} [${event.metadata?.correlationId}]`
+                `Published event ${type} with routing key ${routingKey} [${event.metadata?.correlationId}]`
             );
         } catch (error) {
             this.logger.error(
@@ -49,7 +67,7 @@ export class EventPublisherService {
      * Publish Auth event (user.created, user.deleted, etc.)
      */
     async publishAuthEvent<T>(type: EventType, payload: T): Promise<void> {
-        return this.publish(EventChannels.AUTH, type, payload, {
+        return this.publish(`auth.${type}`, type, payload, {
             sourceService: 'auth-service',
         });
     }
@@ -58,7 +76,7 @@ export class EventPublisherService {
      * Publish Finance event (payment.success, wallet.created, etc.)
      */
     async publishFinanceEvent<T>(type: EventType, payload: T): Promise<void> {
-        return this.publish(EventChannels.FINANCE, type, payload, {
+        return this.publish(`finance.${type}`, type, payload, {
             sourceService: 'finance-service',
         });
     }
@@ -67,7 +85,7 @@ export class EventPublisherService {
      * Publish Exam event (exam.created, exam.submitted, etc.)
      */
     async publishExamEvent<T>(type: EventType, payload: T): Promise<void> {
-        return this.publish(EventChannels.EXAM, type, payload, {
+        return this.publish(`exam.${type}`, type, payload, {
             sourceService: 'exam-service',
         });
     }

@@ -73,3 +73,6 @@ requests>=2.32.0,<3.0.0
 typer>=0.15.4,<0.16.0
 pylint>=3.3.7,<4.0.0
 # mcp>=1.9.0,<2.0.0
+
+# Message Queue
+aio-pika>=9.4.0,<10.0.0

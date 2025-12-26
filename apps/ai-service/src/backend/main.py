@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import os
 import uvicorn
+from contextlib import asynccontextmanager
 from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, status
@@ -21,11 +23,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create FastAPI app
+# RabbitMQ consumer task
+_consumer_task = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup/shutdown events"""
+    global _consumer_task
+
+    # Startup: Start RabbitMQ consumer if RABBITMQ_URL is set
+    rabbitmq_url = os.getenv("RABBITMQ_URL")
+    if rabbitmq_url:
+        try:
+            from .rabbitmq_consumer import get_consumer
+            consumer = get_consumer()
+            _consumer_task = asyncio.create_task(consumer.start_consuming())
+            logger.info("RabbitMQ consumer started")
+        except Exception as e:
+            logger.warning(f"Failed to start RabbitMQ consumer: {e}")
+
+    yield
+
+    # Shutdown: Close RabbitMQ consumer
+    if _consumer_task:
+        _consumer_task.cancel()
+        try:
+            await _consumer_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("RabbitMQ consumer stopped")
+
+
+# Create FastAPI app with lifespan
 app = FastAPI(
     title="Examio AI Stateless Node",
     description="Stateless service for OCR, Vector Search, and AI Queries",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS

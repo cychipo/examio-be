@@ -260,6 +260,88 @@ class OCRProcessingService:
 
         return results
 
+    async def update_file_status(self, user_storage_id: str, status: str):
+        """Convenience method to update file status (for RabbitMQ consumer)"""
+        await self.update_processing_status(user_storage_id, status)
+
+    async def process_file(self, user_storage_id: str) -> dict:
+        """
+        Process a file for OCR (for RabbitMQ consumer)
+
+        Returns:
+            dict with success, chunks_count, or error
+        """
+        try:
+            # Get file info
+            file_info = await self.get_file_info(user_storage_id)
+            if not file_info:
+                return {"success": False, "error": "File not found"}
+
+            # Download file
+            _, temp_path = await self.download_file_from_r2(file_info.url)
+
+            # Import here to avoid circular imports
+            from rag.retriever import extract_text_from_file
+            from rag.vector_store_pg import get_pg_vector_store
+
+            # Extract text
+            text = extract_text_from_file(temp_path)
+            if not text or len(text.strip()) < 10:
+                await self.update_processing_status(user_storage_id, "FAILED")
+                return {"success": False, "error": "No text extracted from file"}
+
+            # Chunk text
+            chunks = self._chunk_text(text)
+
+            # Get vector store and save chunks
+            vector_store = await get_pg_vector_store()
+            chunks_saved = 0
+
+            for i, chunk in enumerate(chunks):
+                chunk_id = f"{user_storage_id}_chunk_{i}"
+                page_range = f"{i+1}-{i+1}"
+
+                # Get embedding
+                embedding = await vector_store.get_embedding(chunk)
+
+                # Store chunk
+                await self.store_document_chunk(
+                    chunk_id=chunk_id,
+                    user_storage_id=user_storage_id,
+                    page_range=page_range,
+                    title=f"Chunk {i+1}",
+                    content=chunk,
+                    embeddings=embedding
+                )
+                chunks_saved += 1
+
+            # Update status
+            await self.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
+
+            # Cleanup temp file
+            import os as os_module
+            if os_module.path.exists(temp_path):
+                os_module.unlink(temp_path)
+
+            return {"success": True, "chunks_count": chunks_saved}
+
+        except Exception as e:
+            logger.exception(f"Error processing file {user_storage_id}: {e}")
+            await self.update_processing_status(user_storage_id, "FAILED")
+            return {"success": False, "error": str(e)}
+
+    def _chunk_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+        """Split text into overlapping chunks"""
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = start + chunk_size
+            chunk = text[start:end]
+            if chunk.strip():
+                chunks.append(chunk)
+            start = end - overlap
+        return chunks
+
     async def close(self):
         """Close connection pool"""
         if self._pool:

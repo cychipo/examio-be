@@ -5,6 +5,7 @@ import {
     GenerateIdService,
     CryptoService,
     GrpcClientsModule,
+    EventsModule,
 } from '@examio/common';
 import { ExamServiceController } from './exam-service.controller';
 import { ExamServiceService } from './exam-service.service';
@@ -17,11 +18,13 @@ import { ExamSessionModule } from './modules/examsession/examsession.module';
 import { ExamAttemptModule } from './modules/examattempt/examattempt.module';
 import { CheatingLogModule } from './modules/cheatinglog/cheatinglog.module';
 import { FlashcardSetModule } from './modules/flashcardset/flashcardset.module';
+import { AIModule } from './modules/ai/ai.module';
 
 @Module({
     imports: [
         DatabaseModule,
         RedisModule,
+        EventsModule,
         GrpcClientsModule.registerR2Client(),
         QuizsetModule,
         QuizPracticeAttemptModule,
@@ -30,6 +33,7 @@ import { FlashcardSetModule } from './modules/flashcardset/flashcardset.module';
         ExamAttemptModule,
         CheatingLogModule,
         FlashcardSetModule,
+        AIModule,
     ],
     controllers: [ExamServiceController],
     providers: [

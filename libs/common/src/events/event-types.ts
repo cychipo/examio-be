@@ -21,6 +21,11 @@ export enum EventType {
     EXAM_CREATED = 'exam.created',
     EXAM_STARTED = 'exam.started',
     EXAM_SUBMITTED = 'exam.submitted',
+
+    // AI/OCR Events
+    OCR_REQUESTED = 'ocr.requested',
+    OCR_COMPLETED = 'ocr.completed',
+    OCR_FAILED = 'ocr.failed',
 }
 
 /**
@@ -31,6 +36,7 @@ export const EventChannels = {
     FINANCE: 'examio:events:finance',
     EXAM: 'examio:events:exam',
     ALL: 'examio:events:*',
+    EXCHANGE: 'examio.events',
 } as const;
 
 /**
@@ -76,4 +82,24 @@ export interface SubscriptionActivatedPayload {
     tier: number;
     billingCycle: 'monthly' | 'yearly';
     expiresAt: number;
+}
+
+export interface OcrRequestedPayload {
+    userStorageId: string;
+    userId: string;
+    fileUrl: string;
+    fileName: string;
+    mimeType: string;
+}
+
+export interface OcrCompletedPayload {
+    userStorageId: string;
+    userId: string;
+    chunksCount: number;
+}
+
+export interface OcrFailedPayload {
+    userStorageId: string;
+    userId: string;
+    error: string;
 }

@@ -37,7 +37,7 @@ export class UserEventHandler implements OnModuleInit {
 
     /**
      * Handle USER_CREATED event - tạo wallet cho user mới
-     * Đây là backup mechanism nếu gRPC call thất bại
+     * Event được publish từ auth-service qua RabbitMQ
      */
     private async handleUserCreated(
         event: BaseEvent<UserCreatedPayload>
@@ -45,7 +45,7 @@ export class UserEventHandler implements OnModuleInit {
         const { userId, email } = event.payload;
 
         try {
-            // Check if wallet already exists (from gRPC call)
+            // Idempotency check - wallet might already exist
             const existingWallet = await this.prisma.wallet.findUnique({
                 where: { userId },
             });

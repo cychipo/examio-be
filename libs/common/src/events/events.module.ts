@@ -1,7 +1,8 @@
 import { Module, Global } from '@nestjs/common';
-import { RedisModule } from '@examio/redis';
+import { ConfigModule } from '@nestjs/config';
 import { EventPublisherService } from './event-publisher.service';
 import { EventSubscriberService } from './event-subscriber.service';
+import { RabbitMQService } from './rabbitmq.service';
 
 /**
  * EventsModule - Module cung cấp event publishing/subscribing
@@ -9,8 +10,8 @@ import { EventSubscriberService } from './event-subscriber.service';
  */
 @Global()
 @Module({
-    imports: [RedisModule],
-    providers: [EventPublisherService, EventSubscriberService],
-    exports: [EventPublisherService, EventSubscriberService],
+    imports: [ConfigModule],
+    providers: [RabbitMQService, EventPublisherService, EventSubscriberService],
+    exports: [RabbitMQService, EventPublisherService, EventSubscriberService],
 })
 export class EventsModule {}

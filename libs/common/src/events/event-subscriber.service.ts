@@ -4,84 +4,108 @@ import {
     OnModuleInit,
     OnModuleDestroy,
 } from '@nestjs/common';
-import { RedisService } from '@examio/redis';
+import { ConfigService } from '@nestjs/config';
 import { BaseEvent, EventType, EventChannels } from './event-types';
+import { RabbitMQService } from './rabbitmq.service';
+import { ChannelWrapper } from 'amqp-connection-manager';
 
 export type EventHandler<T = any> = (event: BaseEvent<T>) => Promise<void>;
 
 /**
- * EventSubscriberService - Subscribe và handle events từ Redis Pub/Sub
+ * EventSubscriberService - Subscribe và handle events từ RabbitMQ
  * Sử dụng trong các service để lắng nghe events
  */
 @Injectable()
 export class EventSubscriberService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(EventSubscriberService.name);
     private handlers: Map<EventType, EventHandler[]> = new Map();
-    private subscribedChannels: Set<string> = new Set();
+    private channelWrapper: ChannelWrapper;
+    private queueName: string;
 
-    constructor(private readonly redis: RedisService) {}
+    constructor(
+        private readonly rabbitMQService: RabbitMQService,
+        private readonly configService: ConfigService
+    ) {
+        this.queueName = this.configService.get<string>(
+            'SERVICE_NAME',
+            'common-queue'
+        );
+    }
 
     async onModuleInit() {
-        // Đăng ký sẵn các channels cần thiết
-        // Việc subscribe sẽ được gọi từ service khi cần
+        this.channelWrapper = this.rabbitMQService.createChannel({
+            json: true,
+            setup: async (channel: any) => {
+                // Ensure exchange exists
+                await channel.assertExchange(EventChannels.EXCHANGE, 'topic', {
+                    durable: true,
+                });
+
+                // Ensure queue exists
+                await channel.assertQueue(this.queueName, {
+                    durable: true,
+                });
+
+                // Consume from queue
+                await channel.consume(this.queueName, async (msg: any) => {
+                    if (msg !== null) {
+                        const content = JSON.parse(msg.content.toString());
+                        await this.handleMessage(content);
+                        channel.ack(msg);
+                    }
+                });
+            },
+        });
     }
 
     async onModuleDestroy() {
-        // Cleanup subscriptions
-        for (const channel of this.subscribedChannels) {
-            try {
-                await this.redis.unsubscribe(channel);
-                this.logger.log(`Unsubscribed from channel: ${channel}`);
-            } catch (error) {
-                this.logger.error(
-                    `Failed to unsubscribe from ${channel}: ${error.message}`
-                );
-            }
+        if (this.channelWrapper) {
+            await this.channelWrapper.close();
         }
     }
 
     /**
-     * Subscribe tới một channel và handle messages
+     * Subscribe tới một routing key (binding queue tới exchange)
      */
-    async subscribe(channel: string): Promise<void> {
-        if (this.subscribedChannels.has(channel)) {
-            return;
-        }
-
+    async subscribe(routingKey: string): Promise<void> {
         try {
-            await this.redis.subscribe(channel, async (message: string) => {
-                await this.handleMessage(message);
+            await this.channelWrapper.addSetup(async (channel: any) => {
+                await channel.bindQueue(
+                    this.queueName,
+                    EventChannels.EXCHANGE,
+                    routingKey
+                );
+                this.logger.log(
+                    `Bound queue ${this.queueName} to exchange ${EventChannels.EXCHANGE} with key: ${routingKey}`
+                );
             });
-
-            this.subscribedChannels.add(channel);
-            this.logger.log(`Subscribed to channel: ${channel}`);
         } catch (error) {
             this.logger.error(
-                `Failed to subscribe to ${channel}: ${error.message}`
+                `Failed to bind queue to ${routingKey}: ${error.message}`
             );
             throw error;
         }
     }
 
     /**
-     * Subscribe tới Auth events channel
+     * Subscribe tới Auth events (auth.*)
      */
     async subscribeToAuthEvents(): Promise<void> {
-        return this.subscribe(EventChannels.AUTH);
+        return this.subscribe('auth.#');
     }
 
     /**
-     * Subscribe tới Finance events channel
+     * Subscribe tới Finance events (finance.*)
      */
     async subscribeToFinanceEvents(): Promise<void> {
-        return this.subscribe(EventChannels.FINANCE);
+        return this.subscribe('finance.#');
     }
 
     /**
-     * Subscribe tới Exam events channel
+     * Subscribe tới Exam events (exam.*)
      */
     async subscribeToExamEvents(): Promise<void> {
-        return this.subscribe(EventChannels.EXAM);
+        return this.subscribe('exam.#');
     }
 
     /**
@@ -107,11 +131,10 @@ export class EventSubscriberService implements OnModuleInit, OnModuleDestroy {
     }
 
     /**
-     * Handle incoming message
+     * Handle incoming event
      */
-    private async handleMessage(message: string): Promise<void> {
+    private async handleMessage(event: BaseEvent): Promise<void> {
         try {
-            const event: BaseEvent = JSON.parse(message);
             const handlers = this.handlers.get(event.type) || [];
 
             if (handlers.length === 0) {
@@ -136,9 +159,7 @@ export class EventSubscriberService implements OnModuleInit, OnModuleDestroy {
                 })
             );
         } catch (error) {
-            this.logger.error(
-                `Failed to parse event message: ${error.message}`
-            );
+            this.logger.error(`Failed to process event: ${error.message}`);
         }
     }
 }
