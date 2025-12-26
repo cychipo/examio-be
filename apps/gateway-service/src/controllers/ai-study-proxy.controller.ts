@@ -143,7 +143,7 @@ export class AIProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
 
@@ -335,7 +335,7 @@ export class AIChatProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
 
@@ -479,7 +479,7 @@ export class FlashcardStudyProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
 
@@ -612,7 +612,7 @@ export class QuizPracticeProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
 
@@ -698,6 +698,6 @@ export class CheatingLogProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }

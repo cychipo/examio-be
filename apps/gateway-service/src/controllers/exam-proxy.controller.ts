@@ -159,6 +159,6 @@ export class ExamProxyController {
         if (authHeader?.startsWith('Bearer ')) {
             return authHeader.substring(7);
         }
-        return req.cookies?.accessToken || '';
+        return req.cookies?.token || req.cookies?.accessToken || '';
     }
 }

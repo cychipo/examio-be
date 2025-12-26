@@ -357,6 +357,6 @@ export class FlashcardsetProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }

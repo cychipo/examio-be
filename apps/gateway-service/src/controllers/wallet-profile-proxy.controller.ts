@@ -48,7 +48,7 @@ export class WalletProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
 
@@ -139,7 +139,7 @@ export class PaymentProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
 
@@ -213,7 +213,7 @@ export class ProfileProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
 
@@ -273,6 +273,6 @@ export class DevicesProxyController {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
-            : req.cookies?.accessToken || '';
+            : req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
