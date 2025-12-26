@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaService } from '@examio/database';
-import { GenerateIdService } from '@examio/common';
+import { GenerateIdService, AuthModule } from '@examio/common';
 import { RedisService } from '@examio/redis';
 import { SePayService } from './sepay.service';
 import { WebhookService } from './webhook.service';
@@ -12,7 +12,7 @@ import { PaymentRepository } from './payment.repository';
 import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
-    imports: [WalletModule],
+    imports: [WalletModule, AuthModule],
     providers: [
         PrismaService,
         RedisService,

@@ -1,4 +1,4 @@
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '@examio/database';
 import {
     Injectable,
     NotFoundException,
@@ -6,8 +6,7 @@ import {
     ForbiddenException,
     BadRequestException,
 } from '@nestjs/common';
-import { GenerateIdService } from 'src/common/services/generate-id.service';
-import { CryptoService } from 'src/common/services/crypto.service';
+import { GenerateIdService, CryptoService } from '@examio/common';
 import { User } from '@prisma/client';
 import { EXAM_SESSION_STATUS, EXAM_ATTEMPT_STATUS } from '../../types';
 import { CreateExamAttemptDto } from './dto/create-examattempt.dto';
@@ -15,13 +14,12 @@ import { GetExamAttemptsDto } from './dto/get-examattempt.dto';
 import { UpdateExamAttemptDto } from './dto/update-examattempt.dto';
 import { ExamAttemptRepository } from './examattempt.repository';
 import { ExamSessionRepository } from '../examsession/examsession.repository';
-import { RedisService } from 'src/packages/redis/redis.service';
+import { RedisService, EXPIRED_TIME } from '@examio/redis';
 import {
     getUserCacheKey,
     CACHE_MODULES,
     getListCachePattern,
-} from 'src/common/constants/cache-keys';
-import { EXPIRED_TIME } from 'src/constants/redis';
+} from '@examio/common';
 
 @Injectable()
 export class ExamAttemptService {

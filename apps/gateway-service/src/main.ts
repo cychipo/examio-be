@@ -1,16 +1,30 @@
+import { config } from 'dotenv';
+import { join } from 'path';
+
+// Load .env file from service directory
+config({ path: join(process.cwd(), 'apps', 'gateway-service', '.env') });
+
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { GatewayModule } from './gateway.module';
+import * as cookieParser from 'cookie-parser';
 
 async function bootstrap() {
     const app = await NestFactory.create(GatewayModule);
+
+    // Cookie parser
+    app.use(cookieParser());
 
     // Global prefix
     app.setGlobalPrefix('api/v1');
 
     // CORS
     app.enableCors({
-        origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+        origin: process.env.FRONTEND_URL || [
+            'http://localhost:5173',
+            'http://localhost:3001',
+            'http://127.0.0.1:5173',
+        ],
         credentials: true,
     });
 

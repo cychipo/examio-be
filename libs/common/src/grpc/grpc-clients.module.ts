@@ -6,6 +6,11 @@ export const WALLET_SERVICE = 'WALLET_SERVICE';
 export const R2_SERVICE = 'R2_SERVICE';
 export const AUTH_SERVICE = 'AUTH_SERVICE';
 
+// Use project root + relative path to protos directory
+// This works correctly with webpack bundling
+const getProtoPath = (protoName: string) =>
+    join(process.cwd(), 'libs', 'common', 'src', 'protos', protoName);
+
 @Module({})
 export class GrpcClientsModule {
     /**
@@ -22,10 +27,7 @@ export class GrpcClientsModule {
                         transport: Transport.GRPC,
                         options: {
                             package: 'wallet',
-                            protoPath: join(
-                                __dirname,
-                                '../protos/wallet.proto'
-                            ),
+                            protoPath: getProtoPath('wallet.proto'),
                             url:
                                 process.env.WALLET_GRPC_URL ||
                                 'localhost:50053',
@@ -51,7 +53,7 @@ export class GrpcClientsModule {
                         transport: Transport.GRPC,
                         options: {
                             package: 'r2',
-                            protoPath: join(__dirname, '../protos/r2.proto'),
+                            protoPath: getProtoPath('r2.proto'),
                             url: process.env.R2_GRPC_URL || 'localhost:50054',
                         },
                     },
@@ -75,7 +77,7 @@ export class GrpcClientsModule {
                         transport: Transport.GRPC,
                         options: {
                             package: 'auth',
-                            protoPath: join(__dirname, '../protos/auth.proto'),
+                            protoPath: getProtoPath('auth.proto'),
                             url: process.env.AUTH_GRPC_URL || 'localhost:50051',
                         },
                     },
@@ -98,7 +100,7 @@ export class GrpcClientsModule {
                         transport: Transport.GRPC,
                         options: {
                             package: 'auth',
-                            protoPath: join(__dirname, '../protos/auth.proto'),
+                            protoPath: getProtoPath('auth.proto'),
                             url: process.env.AUTH_GRPC_URL || 'localhost:50051',
                         },
                     },
@@ -107,10 +109,7 @@ export class GrpcClientsModule {
                         transport: Transport.GRPC,
                         options: {
                             package: 'wallet',
-                            protoPath: join(
-                                __dirname,
-                                '../protos/wallet.proto'
-                            ),
+                            protoPath: getProtoPath('wallet.proto'),
                             url:
                                 process.env.WALLET_GRPC_URL ||
                                 'localhost:50053',
@@ -121,7 +120,7 @@ export class GrpcClientsModule {
                         transport: Transport.GRPC,
                         options: {
                             package: 'r2',
-                            protoPath: join(__dirname, '../protos/r2.proto'),
+                            protoPath: getProtoPath('r2.proto'),
                             url: process.env.R2_GRPC_URL || 'localhost:50054',
                         },
                     },

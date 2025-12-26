@@ -3,16 +3,12 @@ import { CheatingLogController } from './cheatinglog.controller';
 import { CheatingLogService } from './cheatinglog.service';
 import { CheatingLogRepository } from './cheatinglog.repository';
 import { PrismaService } from '@examio/database';
-import { AuthGuard } from '@examio/common';
+import { AuthModule } from '@examio/common';
 
 @Module({
+    imports: [AuthModule],
     controllers: [CheatingLogController],
-    providers: [
-        CheatingLogService,
-        CheatingLogRepository,
-        PrismaService,
-        AuthGuard,
-    ],
+    providers: [CheatingLogService, CheatingLogRepository, PrismaService],
     exports: [CheatingLogService, CheatingLogRepository],
 })
 export class CheatingLogModule {}

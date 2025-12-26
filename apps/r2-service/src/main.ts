@@ -1,6 +1,11 @@
+import { config } from 'dotenv';
+import { join } from 'path';
+
+// Load .env file from service directory
+config({ path: join(process.cwd(), 'apps', 'r2-service', '.env') });
+
 import { NestFactory } from '@nestjs/core';
 import { Transport, MicroserviceOptions } from '@nestjs/microservices';
-import { join } from 'path';
 import { R2ServiceModule } from './r2-service.module';
 
 async function bootstrap() {

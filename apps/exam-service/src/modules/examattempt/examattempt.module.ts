@@ -2,20 +2,19 @@ import { Module } from '@nestjs/common';
 import { ExamAttemptService } from './examattempt.service';
 import { ExamAttemptController } from './examattempt.controller';
 import { PrismaService } from '@examio/database';
-import { GenerateIdService, CryptoService, AuthGuard } from '@examio/common';
+import { GenerateIdService, CryptoService, AuthModule } from '@examio/common';
 import { RedisModule, RedisService } from '@examio/redis';
 import { ExamAttemptRepository } from './examattempt.repository';
 import { ExamSessionRepository } from '../examsession/examsession.repository';
 
 @Module({
-    imports: [RedisModule],
+    imports: [AuthModule, RedisModule],
     providers: [
         PrismaService,
         RedisService,
         ExamAttemptService,
         GenerateIdService,
         CryptoService,
-        AuthGuard,
         ExamAttemptRepository,
         ExamSessionRepository,
     ],

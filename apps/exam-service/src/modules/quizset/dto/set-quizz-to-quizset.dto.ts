@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createZodDto } from 'nestjs-zod';
 import { ApiProperty } from '@nestjs/swagger';
-import { Quizz } from 'src/packages/exam/types';
+import { Quizz } from '../../../types';
 
 export const SetQuizzToQuizsetSchema = z.object({
     quizsetIds: z

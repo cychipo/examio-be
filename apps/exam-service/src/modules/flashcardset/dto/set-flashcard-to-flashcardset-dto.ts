@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createZodDto } from 'nestjs-zod';
 import { ApiProperty } from '@nestjs/swagger';
-import { Flashcard } from 'src/packages/exam/types';
+import { Flashcard } from '../../../types';
 
 export const SetFlashcardToFlashcardsetSchema = z.object({
     flashcardsetIds: z

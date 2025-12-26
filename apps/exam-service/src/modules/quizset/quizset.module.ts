@@ -4,21 +4,22 @@ import { QuizsetController } from './quizset.controller';
 import { PrismaService } from '@examio/database';
 import {
     GenerateIdService,
-    AuthGuard,
+    AuthModule,
     GrpcClientsModule,
+    R2ClientService,
 } from '@examio/common';
 import { RedisService } from '@examio/redis';
 import { QuizSetRepository } from './quizset.repository';
 import { QuizPracticeAttemptRepository } from '../quizpracticeattempt/quiz-practice-attempt.repository';
 
 @Module({
-    imports: [GrpcClientsModule.registerR2Client()],
+    imports: [AuthModule, GrpcClientsModule.registerR2Client()],
     providers: [
         PrismaService,
         RedisService,
         QuizsetService,
         GenerateIdService,
-        AuthGuard,
+        R2ClientService,
         QuizSetRepository,
         QuizPracticeAttemptRepository,
     ],

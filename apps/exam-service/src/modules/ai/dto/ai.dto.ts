@@ -1,47 +1,58 @@
-import { IsString, IsOptional, IsNumber } from 'class-validator';
+import { z } from 'zod';
+import { createZodDto } from 'nestjs-zod';
 import { ApiProperty } from '@nestjs/swagger';
 
-export class UploadFileDto {
+export const UploadFileSchema = z.object({
+    filename: z.string(),
+    url: z.string(),
+    mimetype: z.string(),
+    size: z.number(),
+    keyR2: z.string(),
+});
+
+export class UploadFileDto extends createZodDto(UploadFileSchema) {
     @ApiProperty({ description: 'Tên file' })
-    @IsString()
     filename: string;
 
     @ApiProperty({ description: 'URL file trên R2' })
-    @IsString()
     url: string;
 
     @ApiProperty({ description: 'MIME type của file' })
-    @IsString()
     mimetype: string;
 
     @ApiProperty({ description: 'Kích thước file (bytes)' })
-    @IsNumber()
     size: number;
 
     @ApiProperty({ description: 'Key R2 của file' })
-    @IsString()
     keyR2: string;
 }
 
-export class RegenerateDto {
-    @ApiProperty({ description: 'Loại output', enum: ['quiz', 'flashcard'] })
-    @IsString()
-    @IsOptional()
+export const RegenerateSchema = z.object({
+    outputType: z.enum(['quiz', 'flashcard']).optional(),
+    count: z.number().optional(),
+});
+
+export class RegenerateDto extends createZodDto(RegenerateSchema) {
+    @ApiProperty({
+        description: 'Loại output',
+        enum: ['quiz', 'flashcard'],
+        required: false,
+    })
     outputType?: 'quiz' | 'flashcard';
 
     @ApiProperty({ description: 'Số lượng items cần tạo', required: false })
-    @IsNumber()
-    @IsOptional()
     count?: number;
 }
 
-export class UploadImageDto {
+export const UploadImageSchema = z.object({
+    image: z.string(),
+    filename: z.string().optional(),
+});
+
+export class UploadImageDto extends createZodDto(UploadImageSchema) {
     @ApiProperty({ description: 'Base64 encoded image hoặc URL' })
-    @IsString()
     image: string;
 
     @ApiProperty({ description: 'Tên file', required: false })
-    @IsString()
-    @IsOptional()
     filename?: string;
 }

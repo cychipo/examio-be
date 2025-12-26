@@ -4,20 +4,21 @@ import { FlashcardsetController } from './flashcardset.controller';
 import { PrismaService } from '@examio/database';
 import {
     GenerateIdService,
-    AuthGuard,
+    AuthModule,
     GrpcClientsModule,
+    R2ClientService,
 } from '@examio/common';
 import { RedisService } from '@examio/redis';
 import { FlashCardSetRepository } from './flashcardset.repository';
 
 @Module({
-    imports: [GrpcClientsModule.registerR2Client()],
+    imports: [AuthModule, GrpcClientsModule.registerR2Client()],
     providers: [
         PrismaService,
         RedisService,
         FlashcardsetService,
         GenerateIdService,
-        AuthGuard,
+        R2ClientService,
         FlashCardSetRepository,
     ],
     controllers: [FlashcardsetController],

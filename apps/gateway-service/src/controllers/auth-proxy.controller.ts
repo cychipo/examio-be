@@ -94,6 +94,44 @@ export class AuthProxyController {
         return res.redirect(authUrl);
     }
 
+    @Get('google/callback')
+    @ApiOperation({ summary: 'Google OAuth callback' })
+    async googleCallback(@Req() req: Request, @Res() res: Response) {
+        const queryString = req.url.split('?')[1] || '';
+        const authCallbackUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/google/callback?${queryString}`;
+        return res.redirect(authCallbackUrl);
+    }
+
+    @Get('facebook')
+    @ApiOperation({ summary: 'Đăng nhập bằng Facebook' })
+    async facebookAuth(@Res() res: Response) {
+        const authUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/facebook`;
+        return res.redirect(authUrl);
+    }
+
+    @Get('facebook/callback')
+    @ApiOperation({ summary: 'Facebook OAuth callback' })
+    async facebookCallback(@Req() req: Request, @Res() res: Response) {
+        const queryString = req.url.split('?')[1] || '';
+        const authCallbackUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/facebook/callback?${queryString}`;
+        return res.redirect(authCallbackUrl);
+    }
+
+    @Get('github')
+    @ApiOperation({ summary: 'Đăng nhập bằng GitHub' })
+    async githubAuth(@Res() res: Response) {
+        const authUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/github`;
+        return res.redirect(authUrl);
+    }
+
+    @Get('github/callback')
+    @ApiOperation({ summary: 'GitHub OAuth callback' })
+    async githubCallback(@Req() req: Request, @Res() res: Response) {
+        const queryString = req.url.split('?')[1] || '';
+        const authCallbackUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/github/callback?${queryString}`;
+        return res.redirect(authCallbackUrl);
+    }
+
     // ==================== AUTHENTICATED ENDPOINTS ====================
 
     @Get('me')
@@ -203,6 +241,7 @@ export class AuthProxyController {
     private extractToken(req: Request): string {
         const authHeader = req.headers.authorization;
         if (authHeader?.startsWith('Bearer ')) return authHeader.substring(7);
-        return req.cookies?.accessToken || '';
+        // Check both cookie names for compatibility
+        return req.cookies?.token || req.cookies?.accessToken || '';
     }
 }
