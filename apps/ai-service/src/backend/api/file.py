@@ -25,7 +25,6 @@ from rag.retriever import extract_text_from_file, create_in_memory_retriever
 from rag.simple_chat_agent import SimpleChatAgent
 from rag.vector_store_pg import get_pg_vector_store
 from backend.services.ocr_service import ocr_service
-from backend.auth.dependencies import require_auth
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
