@@ -19,6 +19,7 @@ import { ExamAttemptModule } from './modules/examattempt/examattempt.module';
 import { CheatingLogModule } from './modules/cheatinglog/cheatinglog.module';
 import { FlashcardSetModule } from './modules/flashcardset/flashcardset.module';
 import { AIModule } from './modules/ai/ai.module';
+import { AIChatModule } from './modules/ai-chat/ai-chat.module';
 
 @Module({
     imports: [
@@ -34,6 +35,7 @@ import { AIModule } from './modules/ai/ai.module';
         CheatingLogModule,
         FlashcardSetModule,
         AIModule,
+        AIChatModule,
     ],
     controllers: [ExamServiceController],
     providers: [

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 # Add the parent directory to sys.path
@@ -107,6 +108,65 @@ async def query_ai(request: ChatRequest):
 
     except Exception as e:
         logger.error(f"Error in stateless query: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/stream")
+async def stream_ai(request: ChatRequest):
+    """
+    Streaming AI Query Endpoint
+    """
+    try:
+        query = request.query
+        user_storage_id = request.user_storage_id
+
+        logger.info(f"Stream AI: {query[:50]}... (RAG ID: {user_storage_id})")
+
+        retriever = None
+
+        # 1. Setup RAG if ID provided
+        if user_storage_id:
+            chunks = await ocr_service.get_document_chunks(user_storage_id)
+            if chunks:
+                combined_content = "\n\n".join([c.content for c in chunks])
+                retriever, _ = create_in_memory_retriever(combined_content)
+
+        agent = SimpleChatAgent(custom_retriever=retriever)
+
+        # History setup
+        history_dicts = []
+        if request.history:
+            history_dicts = [{"role": m.role, "content": m.content} for m in request.history]
+
+        def iter_response():
+            import json
+            full_answer = ""
+            try:
+                for chunk in agent.chat_stream(query, history=history_dicts):
+                    full_answer += chunk
+                    data = json.dumps({"type": "chunk", "data": chunk})
+                    yield f"data: {data}\n\n"
+
+                # Done event
+                done_data = json.dumps({
+                    "type": "done",
+                    "data": {
+                        "assistantMessage": {
+                            "role": "assistant",
+                            "content": full_answer,
+                            "createdAt": datetime.now().isoformat()
+                        }
+                    }
+                })
+                yield f"data: {done_data}\n\n"
+
+            except Exception as e:
+                err_data = json.dumps({"type": "error", "data": str(e)})
+                yield f"data: {err_data}\n\n"
+
+        return StreamingResponse(iter_response(), media_type="text/event-stream")
+
+    except Exception as e:
+        logger.error(f"Error in streaming query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/health")

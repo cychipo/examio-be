@@ -232,6 +232,25 @@ export class AIChatProxyController {
         );
     }
 
+    @Post(':chatId/stream')
+    @ApiOperation({ summary: 'Gửi message với streaming' })
+    async streamMessage(
+        @Param('chatId') chatId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai-chat/${chatId}/stream`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     @Get(':chatId/exists')
     @ApiOperation({ summary: 'Check chat exists' })
     async chatExists(@Param('chatId') chatId: string, @Req() req: Request) {

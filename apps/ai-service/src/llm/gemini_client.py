@@ -186,19 +186,26 @@ class GeminiClient:
                 is_503 = "503" in error_str or "unavailable" in error_str
 
                 if is_429:
-                    # Mark key failed và rotate
+                    # Model & Key Rotation Strategy
                     try:
-                        current_key = self.api_keys[max(0, self.current_key_index - 1)]
-                        self.mark_key_failed(current_key)
-                    except Exception:
-                        pass
+                        # 1. First try to mark current model as failed
+                        current_model = self.model_names[self.current_model_index % len(self.model_names)] if self.model_names else "default"
+                        should_rotate_key = self.mark_model_failed(current_model)
 
-                    # Reconfigure genai với key mới
-                    try:
-                        new_key = self.get_next_key()
-                        genai.configure(api_key=new_key)
-                    except ValueError as ve:
-                        raise ve  # Tất cả keys đều hết quota
+                        if should_rotate_key:
+                            # 2. If all models failed for this key -> Rotate Key
+                            current_key = self.api_keys[max(0, self.current_key_index - 1)]
+                            self.mark_key_failed(current_key)
+
+                            # Reconfigure genai with new key
+                            new_key = self.get_next_key()
+                            genai.configure(api_key=new_key)
+                    except Exception as rot_e:
+                        print(f"Rotation logic error: {rot_e}")
+                        # Fallback: force key rotation if uncertain
+                        try:
+                            self.get_next_key()
+                        except: pass
 
                     # Delay trước khi retry
                     jitter = random.uniform(0, 0.3)
