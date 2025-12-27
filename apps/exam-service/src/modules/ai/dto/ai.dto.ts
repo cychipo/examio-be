@@ -28,19 +28,47 @@ export class UploadFileDto extends createZodDto(UploadFileSchema) {
 }
 
 export const RegenerateSchema = z.object({
+    // FE sends typeResult: 0 = flashcard, 1 = quiz
+    typeResult: z.number().optional(),
+    quantityQuizz: z.number().optional(),
+    quantityFlashcard: z.number().optional(),
+    isNarrowSearch: z.boolean().optional(),
+    keyword: z.string().optional(),
+    // Legacy fields for backward compatibility
     outputType: z.enum(['quiz', 'flashcard']).optional(),
     count: z.number().optional(),
 });
 
 export class RegenerateDto extends createZodDto(RegenerateSchema) {
     @ApiProperty({
-        description: 'Loại output',
+        description: 'Loại output: 0 = flashcard, 1 = quiz',
+        required: false,
+    })
+    typeResult?: number;
+
+    @ApiProperty({ description: 'Số câu hỏi quiz', required: false })
+    quantityQuizz?: number;
+
+    @ApiProperty({ description: 'Số flashcard', required: false })
+    quantityFlashcard?: number;
+
+    @ApiProperty({ description: 'Tìm kiếm hẹp', required: false })
+    isNarrowSearch?: boolean;
+
+    @ApiProperty({ description: 'Từ khóa tìm kiếm', required: false })
+    keyword?: string;
+
+    @ApiProperty({
+        description: 'Loại output (legacy)',
         enum: ['quiz', 'flashcard'],
         required: false,
     })
     outputType?: 'quiz' | 'flashcard';
 
-    @ApiProperty({ description: 'Số lượng items cần tạo', required: false })
+    @ApiProperty({
+        description: 'Số lượng items cần tạo (legacy)',
+        required: false,
+    })
     count?: number;
 }
 

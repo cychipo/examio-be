@@ -115,8 +115,12 @@ class ModelManager:
             return await self._generate_with_ollama(prompt)
 
     async def _generate_with_gemini(self, prompt: str) -> str:
-        """Generate content using Gemini API"""
+        """Generate content using Gemini API with key/model rotation on quota errors"""
         import google.generativeai as genai
+        from google.api_core.exceptions import ResourceExhausted
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         # Get API key(s)
         api_keys_str = os.getenv("GEMINI_API_KEYS", "")
@@ -130,24 +134,47 @@ class ModelManager:
         if not api_keys:
             raise ValueError("No Gemini API key configured")
 
-        # Get model name
-        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash")
+        # Get model names
+        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash,gemini-2.5-flash-lite,gemini-1.5-flash")
         model_names = [m.strip() for m in model_names_str.split(",") if m.strip()]
-        model_name = self._runtime_gemini_model or model_names[0]
 
-        # Configure and call
-        genai.configure(api_key=api_keys[0])
-        model = genai.GenerativeModel(model_name)
+        # If runtime model is set, use it first
+        if self._runtime_gemini_model and self._runtime_gemini_model not in model_names:
+            model_names.insert(0, self._runtime_gemini_model)
 
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=self.get_temperature(),
-                max_output_tokens=self.get_max_tokens(),
-            )
-        )
+        last_error = None
 
-        return response.text
+        # Try all combinations of API keys and models
+        for key_idx, api_key in enumerate(api_keys):
+            for model_idx, model_name in enumerate(model_names):
+                try:
+                    logger.info(f"Trying key {key_idx + 1}/{len(api_keys)}, model: {model_name}")
+
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel(model_name)
+
+                    response = model.generate_content(
+                        prompt,
+                        generation_config=genai.GenerationConfig(
+                            temperature=self.get_temperature(),
+                            max_output_tokens=self.get_max_tokens(),
+                        )
+                    )
+
+                    logger.info(f"Successfully generated with key {key_idx + 1}, model: {model_name}")
+                    return response.text
+
+                except ResourceExhausted as e:
+                    logger.warning(f"Quota exceeded for key {key_idx + 1}, model {model_name}. Trying next...")
+                    last_error = e
+                    continue
+                except Exception as e:
+                    logger.error(f"Error with key {key_idx + 1}, model {model_name}: {e}")
+                    last_error = e
+                    continue
+
+        # All combinations failed
+        raise last_error or ValueError("All API keys and models exhausted")
 
     async def _generate_with_ollama(self, prompt: str) -> str:
         """Generate content using Ollama"""

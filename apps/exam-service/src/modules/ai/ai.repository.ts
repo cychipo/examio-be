@@ -41,7 +41,7 @@ export class AIRepository {
     async findUserStoragesByUserId(
         userId: string,
         options?: { page?: number; size?: number }
-    ): Promise<{ data: UserStorage[]; total: number }> {
+    ) {
         const page = options?.page || 1;
         const size = options?.size || 10;
         const skip = (page - 1) * size;
@@ -52,13 +52,60 @@ export class AIRepository {
                 orderBy: { createdAt: 'desc' },
                 skip,
                 take: size,
+                include: {
+                    // Include latest quiz history - only metadata, not full quizzes
+                    historyGeneratedQuizz: {
+                        orderBy: { createdAt: 'desc' },
+                        take: 1,
+                        select: {
+                            id: true,
+                            createdAt: true,
+                        },
+                    },
+                    // Include latest flashcard history - only metadata, not full flashcards
+                    historyGeneratedFlashcard: {
+                        orderBy: { createdAt: 'desc' },
+                        take: 1,
+                        select: {
+                            id: true,
+                            createdAt: true,
+                        },
+                    },
+                },
             }),
             this.prisma.userStorage.count({
                 where: { userId },
             }),
         ]);
 
-        return { data, total };
+        // Transform data to match FE expected format - only include IDs, not full data
+        const transformedData = data.map((item) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const {
+                historyGeneratedQuizz,
+                historyGeneratedFlashcard,
+                ...rest
+            } = item;
+            return {
+                ...rest,
+                // FE expects quizHistory (singular) with latest quiz metadata
+                quizHistory: historyGeneratedQuizz?.[0]
+                    ? {
+                          id: historyGeneratedQuizz[0].id,
+                          createdAt: historyGeneratedQuizz[0].createdAt,
+                      }
+                    : null,
+                // FE expects flashcardHistory (singular) with latest flashcard metadata
+                flashcardHistory: historyGeneratedFlashcard?.[0]
+                    ? {
+                          id: historyGeneratedFlashcard[0].id,
+                          createdAt: historyGeneratedFlashcard[0].createdAt,
+                      }
+                    : null,
+            };
+        });
+
+        return { data: transformedData, total };
     }
 
     async updateUserStorageStatus(
@@ -81,6 +128,26 @@ export class AIRepository {
         return this.prisma.userStorage.update({
             where: { id },
             data: { creditCharged: true },
+        });
+    }
+
+    /**
+     * Find the latest quiz history for a userStorage
+     */
+    async findLatestQuizHistory(userStorageId: string) {
+        return this.prisma.historyGeneratedQuizz.findFirst({
+            where: { userStorageId },
+            orderBy: { createdAt: 'desc' },
+        });
+    }
+
+    /**
+     * Find the latest flashcard history for a userStorage
+     */
+    async findLatestFlashcardHistory(userStorageId: string) {
+        return this.prisma.historyGeneratedFlashcard.findFirst({
+            where: { userStorageId },
+            orderBy: { createdAt: 'desc' },
         });
     }
 }

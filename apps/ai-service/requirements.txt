@@ -12,6 +12,7 @@ langchain-ollama>=0.3.0,<0.4.0
 langchain-openai>=0.3.11,<0.4.0
 langchain-experimental>=0.3.4,<0.4.0
 langchain-google-genai>=2.1.4,<3.0.0
+google-generativeai>=0.7.0,<0.9.0
 langgraph-cli[inmem]>=0.2.10,<0.3.0
 # langgraph-supervisor>=0.0.21
 

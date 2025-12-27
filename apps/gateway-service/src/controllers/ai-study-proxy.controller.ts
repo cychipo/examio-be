@@ -74,6 +74,25 @@ export class AIProxyController {
         );
     }
 
+    @Get('upload/:uploadId/history')
+    @ApiOperation({
+        summary: 'Lấy lịch sử quiz và flashcard đã tạo cho một file',
+    })
+    async getUploadHistory(
+        @Param('uploadId') uploadId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/upload/${uploadId}/history`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     @Post('regenerate/:uploadId')
     @ApiOperation({ summary: 'Tạo lại quiz/flashcard từ file' })
     async regenerate(

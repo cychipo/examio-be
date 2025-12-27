@@ -123,6 +123,29 @@ export class AIController {
         @Req() req: AuthenticatedRequest,
         @Param('jobId') jobId: string
     ) {
+        // Validate jobId
+        if (!jobId || jobId === 'undefined' || jobId === 'null') {
+            return {
+                error: 'Invalid job ID',
+                message: 'Job ID không hợp lệ',
+                statusCode: 400,
+            };
+        }
         return this.aiService.getJobStatus(jobId, req.user);
+    }
+
+    @Get('upload/:uploadId/history')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Lấy lịch sử quiz và flashcard đã tạo cho một file',
+    })
+    @ApiParam({ name: 'uploadId', description: 'ID của UserStorage' })
+    @ApiResponse({ status: 200, description: 'Lịch sử quiz và flashcard' })
+    async getUploadHistory(
+        @Req() req: AuthenticatedRequest,
+        @Param('uploadId') uploadId: string
+    ) {
+        return this.aiService.getUploadHistory(uploadId, req.user);
     }
 }

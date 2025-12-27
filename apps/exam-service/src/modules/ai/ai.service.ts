@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
 import { User } from '@prisma/client';
 import {
     GenerateIdService,
@@ -8,19 +9,26 @@ import {
 } from '@examio/common';
 import { AIRepository } from './ai.repository';
 import { UploadFileDto, RegenerateDto } from './dto/ai.dto';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class AIService {
     private readonly logger = new Logger(AIService.name);
+    private readonly aiServiceUrl: string;
 
     constructor(
         private readonly aiRepository: AIRepository,
         private readonly generateIdService: GenerateIdService,
-        private readonly eventPublisher: EventPublisherService
-    ) {}
+        private readonly eventPublisher: EventPublisherService,
+        private readonly httpService: HttpService
+    ) {
+        this.aiServiceUrl =
+            process.env.AI_SERVICE_URL || 'http://localhost:8000/api';
+    }
 
     /**
      * Get recent uploads for a user
+     * Returns array directly for frontend compatibility
      */
     async getRecentUploads(user: User, page = 1, size = 10) {
         const result = await this.aiRepository.findUserStoragesByUserId(
@@ -28,13 +36,8 @@ export class AIService {
             { page, size }
         );
 
-        return {
-            data: result.data,
-            total: result.total,
-            page,
-            size,
-            totalPages: Math.ceil(result.total / size),
-        };
+        // Return array directly for frontend compatibility
+        return result.data;
     }
 
     /**
@@ -110,6 +113,7 @@ export class AIService {
 
     /**
      * Regenerate quiz/flashcard from an existing upload
+     * Calls AI service to actually generate content
      */
     async regenerate(uploadId: string, user: User, dto: RegenerateDto) {
         const upload = await this.getUploadDetail(uploadId, user);
@@ -132,8 +136,8 @@ export class AIService {
             );
 
             return {
-                id: upload.id,
-                status: 'PROCESSING',
+                jobId: upload.id,
+                status: 'processing',
                 message: 'Đang xử lý OCR, vui lòng thử lại sau',
             };
         }
@@ -144,26 +148,183 @@ export class AIService {
             );
         }
 
-        // File is processed, return info for frontend to call AI service
+        // OCR is complete, call AI service to generate content
+        try {
+            // Parse FE request format: typeResult (1=quiz, 2=flashcard)
+            const isFlashcard = dto.typeResult === 2;
+            const outputType = isFlashcard
+                ? 'flashcard'
+                : dto.outputType || 'quiz';
+            const count = isFlashcard
+                ? dto.quantityFlashcard || dto.count || 10
+                : dto.quantityQuizz || dto.count || 10;
+
+            this.logger.log(
+                `Calling AI service to generate ${count} ${outputType} for upload ${upload.id}`
+            );
+
+            if (outputType === 'flashcard') {
+                // Generate flashcards
+                const response = await firstValueFrom(
+                    this.httpService.post(
+                        `${this.aiServiceUrl}/generate/flashcards`,
+                        {
+                            userStorageId: upload.id,
+                            userId: user.id,
+                            numFlashcards: count,
+                        }
+                    )
+                );
+
+                return {
+                    jobId: upload.id,
+                    status: 'completed',
+                    result: {
+                        type: 'flashcard',
+                        flashcards: response.data.flashcards,
+                        historyId: response.data.history_id,
+                        fileInfo: {
+                            id: upload.id,
+                            filename: upload.filename,
+                        },
+                    },
+                };
+            } else {
+                // Generate quiz
+                const response = await firstValueFrom(
+                    this.httpService.post(
+                        `${this.aiServiceUrl}/generate/quiz`,
+                        {
+                            userStorageId: upload.id,
+                            userId: user.id,
+                            numQuestions: count,
+                        }
+                    )
+                );
+
+                return {
+                    jobId: upload.id,
+                    status: 'completed',
+                    result: {
+                        type: 'quiz',
+                        quizzes: response.data.quizzes,
+                        historyId: response.data.history_id,
+                        fileInfo: {
+                            id: upload.id,
+                            filename: upload.filename,
+                        },
+                    },
+                };
+            }
+        } catch (error) {
+            this.logger.error(`Error calling AI service: ${error.message}`);
+            throw new NotFoundException(
+                `Lỗi khi tạo nội dung: ${error.message}`
+            );
+        }
+    }
+
+    /**
+     * Get job status (check processing status and return result if available)
+     * Returns result for FE polling pattern
+     */
+    async getJobStatus(jobId: string, user: User) {
+        const upload = await this.getUploadDetail(jobId, user);
+
+        // Check if quiz or flashcard was generated
+        const [quizHistory, flashcardHistory] = await Promise.all([
+            this.aiRepository.findLatestQuizHistory(upload.id),
+            this.aiRepository.findLatestFlashcardHistory(upload.id),
+        ]);
+
+        // Determine which one is more recent
+        let returnType: 'quiz' | 'flashcard' | null = null;
+
+        if (quizHistory && flashcardHistory) {
+            // Both exist, return the most recent one
+            const quizDate = new Date(quizHistory.createdAt).getTime();
+            const flashcardDate = new Date(
+                flashcardHistory.createdAt
+            ).getTime();
+            returnType = flashcardDate > quizDate ? 'flashcard' : 'quiz';
+        } else if (quizHistory) {
+            returnType = 'quiz';
+        } else if (flashcardHistory) {
+            returnType = 'flashcard';
+        }
+
+        // Return quiz result
+        if (returnType === 'quiz' && quizHistory) {
+            return {
+                jobId: upload.id,
+                status: 'completed',
+                result: {
+                    type: 'quiz',
+                    quizzes: quizHistory.quizzes,
+                    historyId: quizHistory.id,
+                    fileInfo: {
+                        id: upload.id,
+                        filename: upload.filename,
+                    },
+                },
+            };
+        }
+
+        // Return flashcard result
+        if (returnType === 'flashcard' && flashcardHistory) {
+            return {
+                jobId: upload.id,
+                status: 'completed',
+                result: {
+                    type: 'flashcard',
+                    flashcards: flashcardHistory.flashcards,
+                    historyId: flashcardHistory.id,
+                    fileInfo: {
+                        id: upload.id,
+                        filename: upload.filename,
+                    },
+                },
+            };
+        }
+
+        // No result yet, return processing status
         return {
-            id: upload.id,
-            status: upload.processingStatus,
-            outputType: dto.outputType || 'quiz',
-            count: dto.count || 10,
-            message: 'File đã sẵn sàng để tạo nội dung',
+            jobId: upload.id,
+            status: upload.processingStatus?.toLowerCase() || 'pending',
+            filename: upload.filename,
+            createdAt: upload.createdAt,
         };
     }
 
     /**
-     * Get job status (check processing status)
+     * Get full history (quiz and flashcard) for an upload
+     * Used when selecting a recent file to load previous results
      */
-    async getJobStatus(jobId: string, user: User) {
-        const upload = await this.getUploadDetail(jobId, user);
+    async getUploadHistory(uploadId: string, user: User) {
+        const upload = await this.getUploadDetail(uploadId, user);
+
+        const [quizHistory, flashcardHistory] = await Promise.all([
+            this.aiRepository.findLatestQuizHistory(upload.id),
+            this.aiRepository.findLatestFlashcardHistory(upload.id),
+        ]);
+
         return {
-            id: upload.id,
-            status: upload.processingStatus,
+            uploadId: upload.id,
             filename: upload.filename,
-            createdAt: upload.createdAt,
+            quizHistory: quizHistory
+                ? {
+                      id: quizHistory.id,
+                      quizzes: quizHistory.quizzes,
+                      createdAt: quizHistory.createdAt,
+                  }
+                : null,
+            flashcardHistory: flashcardHistory
+                ? {
+                      id: flashcardHistory.id,
+                      flashcards: flashcardHistory.flashcards,
+                      createdAt: flashcardHistory.createdAt,
+                  }
+                : null,
         };
     }
 }

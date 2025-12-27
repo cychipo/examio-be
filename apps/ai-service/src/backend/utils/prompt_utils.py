@@ -37,6 +37,7 @@ Requirements:
 - Note that each answer must have the letter A/B/C/D at the beginning, not missing
 - The correct answer only needs the letter A/B/C/D at the beginning, not the answer content
 - IMPORTANT: Return ONLY the JSON array, no explanation or markdown code blocks
+- If you ask a question based on an example, mathematical operation, code snippet, etc., in the file, you need to return the content of that example as well; you cannot return a question without the content of what you are asking.
 
 Content:
 {content}
