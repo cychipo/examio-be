@@ -3,20 +3,20 @@ import { GrpcMethod } from '@nestjs/microservices';
 import { PrismaService } from '@examio/database';
 import { GenerateIdService } from '@examio/common';
 
-// gRPC DTOs matching wallet.proto
+// gRPC DTOs matching wallet.proto (mapped to camelCase by NestJS)
 interface CreateWalletRequest {
-    user_id: string;
-    initial_balance: number;
+    userId: string;
+    initialBalance: number;
 }
 
 interface GetWalletRequest {
-    user_id: string;
+    userId: string;
 }
 
 interface UpdateBalanceRequest {
-    user_id: string;
+    userId: string;
     amount: number;
-    transaction_type: string;
+    transactionType: string;
     description: string;
 }
 
@@ -33,8 +33,8 @@ export class WalletGrpcController {
             const wallet = await this.prisma.wallet.create({
                 data: {
                     id: this.generateIdService.generateId(),
-                    userId: data.user_id,
-                    balance: data.initial_balance || 20,
+                    userId: data.userId,
+                    balance: data.initialBalance || 20,
                 },
             });
 
@@ -54,13 +54,13 @@ export class WalletGrpcController {
     @GrpcMethod('WalletService', 'GetWallet')
     async getWallet(data: GetWalletRequest) {
         const wallet = await this.prisma.wallet.findUnique({
-            where: { userId: data.user_id },
+            where: { userId: data.userId },
         });
 
         if (!wallet) {
             return {
                 wallet_id: '',
-                user_id: data.user_id,
+                user_id: data.userId,
                 balance: 0,
             };
         }
@@ -76,7 +76,7 @@ export class WalletGrpcController {
     async updateBalance(data: UpdateBalanceRequest) {
         try {
             const wallet = await this.prisma.wallet.findUnique({
-                where: { userId: data.user_id },
+                where: { userId: data.userId },
             });
 
             if (!wallet) {
@@ -88,12 +88,12 @@ export class WalletGrpcController {
             }
 
             const newBalance =
-                data.transaction_type === 'ADD'
+                data.transactionType === 'ADD'
                     ? wallet.balance + data.amount
                     : wallet.balance - data.amount;
 
             await this.prisma.wallet.update({
-                where: { userId: data.user_id },
+                where: { userId: data.userId },
                 data: { balance: newBalance },
             });
 
@@ -103,15 +103,15 @@ export class WalletGrpcController {
                     id: this.generateIdService.generateId(),
                     walletId: wallet.id,
                     amount: data.amount,
-                    type: data.transaction_type === 'ADD' ? 0 : 4,
-                    direction: data.transaction_type,
+                    type: data.transactionType === 'ADD' ? 0 : 4,
+                    direction: data.transactionType,
                     description: data.description,
                 },
             });
 
             return {
                 success: true,
-                new_balance: newBalance,
+                newBalance: newBalance,
                 message: 'Balance updated successfully',
             };
         } catch (error) {

@@ -17,6 +17,7 @@ export class AIRepository {
         size: number;
         keyR2: string;
         processingStatus?: string;
+        creditCharged?: boolean;
     }): Promise<UserStorage> {
         return this.prisma.userStorage.create({
             data: {
@@ -28,6 +29,7 @@ export class AIRepository {
                 size: data.size,
                 keyR2: data.keyR2,
                 processingStatus: data.processingStatus || 'PENDING',
+                creditCharged: data.creditCharged ?? false,
             },
         });
     }

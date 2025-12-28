@@ -96,8 +96,21 @@ export class WalletRepository extends BaseRepository<Wallet> {
             throw new Error('Insufficient balance');
         }
 
-        // BaseRepository.update() handles cache invalidation automatically
-        return this.update(wallet.id, { balance: newBalance }, userId);
+        // BaseRepository.update() handles cache invalidation automatically for ID-based lookups
+        // But we need to explicitly invalidate user-scoped keys used by findByUserId
+        const updated = await this.update(
+            wallet.id,
+            { balance: newBalance },
+            userId
+        );
+
+        const userCacheKey = this.getUserScopedCacheKey(userId);
+        await Promise.all([
+            this.redis.del(userCacheKey),
+            this.redis.del(`${userCacheKey}:transactions`),
+        ]);
+
+        return updated;
     }
 
     /**

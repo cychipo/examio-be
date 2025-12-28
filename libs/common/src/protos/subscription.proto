@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package subscription;
+
+service SubscriptionService {
+    rpc GetUserBenefits (GetUserBenefitsRequest) returns (GetUserBenefitsResponse);
+}
+
+message GetUserBenefitsRequest {
+    string user_id = 1;
+}
+
+message GetUserBenefitsResponse {
+    int32 tier = 1;
+    string tier_name = 2;
+    int32 files_per_month = 3;
+    int32 messages_per_minute = 4; // -1 means unlimited
+    int32 chat_messages_limit = 5; // -1 means unlimited
+}

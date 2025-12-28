@@ -1,19 +1,45 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+    Injectable,
+    Logger,
+    NotFoundException,
+    Inject,
+    OnModuleInit,
+    ForbiddenException,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom, Observable, Subject } from 'rxjs';
+import { ClientGrpc } from '@nestjs/microservices';
 import { AIChatRepository } from './ai-chat.repository';
 import { User } from '@prisma/client';
 
+interface SubscriptionService {
+    getUserBenefits(data: { userId: string }): Observable<{
+        tier: number;
+        tier_name: string;
+        files_per_month: number;
+        messages_per_minute: number;
+        chat_messages_limit: number;
+    }>;
+}
+
 @Injectable()
-export class AIChatService {
+export class AIChatService implements OnModuleInit {
     private readonly logger = new Logger(AIChatService.name);
     private readonly aiServiceUrl =
         process.env.AI_SERVICE_URL || 'http://localhost:8000/api';
+    private subscriptionService: SubscriptionService;
 
     constructor(
         private readonly chatRepository: AIChatRepository,
-        private readonly httpService: HttpService
+        private readonly httpService: HttpService,
+        @Inject('FINANCE_PACKAGE') private client: ClientGrpc
     ) {}
+
+    onModuleInit() {
+        this.subscriptionService = this.client.getService<SubscriptionService>(
+            'SubscriptionService'
+        );
+    }
 
     // ==================== CHAT ====================
 
@@ -154,6 +180,9 @@ export class AIChatService {
         }
     ): Promise<Observable<any>> {
         const chat = await this.getChatByIdAndValidateOwner(chatId, user);
+
+        // Check subscription limits
+        await this.checkLimits(user.id, chatId);
 
         // 1. Save User Message
         const userMessage = await this.chatRepository.createMessage({
@@ -369,5 +398,54 @@ export class AIChatService {
         return (
             Date.now().toString(36) + Math.random().toString(36).substring(2, 9)
         );
+    }
+
+    private async checkLimits(userId: string, chatId: string) {
+        let benefits;
+        try {
+            if (!this.subscriptionService) {
+                this.logger.warn(
+                    'SubscriptionService GRPC client not initialized'
+                );
+                return;
+            }
+            benefits = await firstValueFrom(
+                this.subscriptionService.getUserBenefits({ userId: userId })
+            );
+        } catch (error) {
+            this.logger.error(
+                `Error getting subscription benefits: ${error.message}`
+            );
+            // Fallback to Free defaults
+            benefits = {
+                tier: 0,
+                tier_name: 'Free',
+                files_per_month: 5,
+                messages_per_minute: 5,
+                chat_messages_limit: 30,
+            };
+        }
+
+        // Check Rate Limit (Messages per minute)
+        if (benefits.messages_per_minute !== -1) {
+            const count =
+                await this.chatRepository.countMessagesLastMinute(userId);
+            if (count >= benefits.messages_per_minute) {
+                throw new ForbiddenException(
+                    `Giới hạn tốc độ: ${benefits.messages_per_minute} tin nhắn/phút. Vui lòng chờ giây lát.`
+                );
+            }
+        }
+
+        // Check Chat Message Limit (Context Length)
+        if (benefits.chat_messages_limit !== -1) {
+            const count =
+                await this.chatRepository.countUserMessagesInChat(chatId);
+            if (count >= benefits.chat_messages_limit) {
+                throw new ForbiddenException(
+                    `Giới hạn hội thoại: ${benefits.chat_messages_limit} tin nhắn. Vui lòng tạo đoạn chat mới.`
+                );
+            }
+        }
     }
 }

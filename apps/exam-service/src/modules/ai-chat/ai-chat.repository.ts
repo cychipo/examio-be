@@ -169,4 +169,23 @@ export class AIChatRepository {
         });
         return docs.map((d) => d.documentId);
     }
+
+    // ==================== STATS ====================
+
+    async countMessagesLastMinute(userId: string) {
+        const oneMinuteAgo = new Date(Date.now() - 60000);
+        return this.prisma.aIChatMessage.count({
+            where: {
+                role: 'user',
+                createdAt: { gt: oneMinuteAgo },
+                chat: { userId },
+            },
+        });
+    }
+
+    async countUserMessagesInChat(chatId: string) {
+        return this.prisma.aIChatMessage.count({
+            where: { chatId, role: 'user' },
+        });
+    }
 }

@@ -8,6 +8,7 @@ import { WebhookController } from './webhook.controller';
 import { PaymentService } from './payment.service';
 import { PaymentController } from './payment.controller';
 import { SubscriptionService } from './subscription.service';
+import { SubscriptionGrpcController } from './subscription.grpc.controller';
 import { PaymentRepository } from './payment.repository';
 import { WalletModule } from '../wallet/wallet.module';
 
@@ -23,7 +24,11 @@ import { WalletModule } from '../wallet/wallet.module';
         PaymentRepository,
         GenerateIdService,
     ],
-    controllers: [WebhookController, PaymentController],
+    controllers: [
+        WebhookController,
+        PaymentController,
+        SubscriptionGrpcController,
+    ],
     exports: [
         SePayService,
         WebhookService,

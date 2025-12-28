@@ -10,6 +10,7 @@ import {
 import { AIRepository } from './ai.repository';
 import { UploadFileDto, RegenerateDto } from './dto/ai.dto';
 import { firstValueFrom } from 'rxjs';
+import { FinanceClientService } from '../finance-client/finance-client.service';
 
 @Injectable()
 export class AIService {
@@ -20,7 +21,8 @@ export class AIService {
         private readonly aiRepository: AIRepository,
         private readonly generateIdService: GenerateIdService,
         private readonly eventPublisher: EventPublisherService,
-        private readonly httpService: HttpService
+        private readonly httpService: HttpService,
+        private readonly financeClient: FinanceClientService
     ) {
         this.aiServiceUrl =
             process.env.AI_SERVICE_URL || 'http://localhost:8000/api';
@@ -70,6 +72,25 @@ export class AIService {
      * Create a new upload and trigger OCR processing
      */
     async createUpload(user: User, dto: UploadFileDto) {
+        // Calculate credits: 1 credit per 2MB
+        const sizeMB = dto.size / (1024 * 1024);
+        const credits = Math.ceil(sizeMB / 2);
+
+        let creditCharged = false;
+        let newBalance: number | undefined;
+
+        if (credits > 0) {
+            const deductionResult = await this.financeClient.deductCredits(
+                user.id,
+                credits,
+                `Upload file: ${dto.filename} (${sizeMB.toFixed(2)} MB)`
+            );
+            creditCharged = true;
+            if (deductionResult?.success) {
+                newBalance = deductionResult.newBalance;
+            }
+        }
+
         const id = this.generateIdService.generateId();
 
         // Create UserStorage with PENDING status
@@ -82,6 +103,7 @@ export class AIService {
             size: dto.size,
             keyR2: dto.keyR2,
             processingStatus: 'PENDING',
+            creditCharged,
         });
 
         // Publish OCR_REQUESTED event to RabbitMQ
@@ -107,6 +129,7 @@ export class AIService {
         return {
             id: userStorage.id,
             status: 'PENDING',
+            newBalance,
             message: 'File đã được upload, đang xử lý OCR',
         };
     }
@@ -159,6 +182,21 @@ export class AIService {
                 ? dto.quantityFlashcard || dto.count || 10
                 : dto.quantityQuizz || dto.count || 10;
 
+            // Deduct credits: 1 credit per 10 items
+            const credits = Math.ceil(count / 10);
+            let newBalance: number | undefined;
+
+            if (credits > 0) {
+                const deductionResult = await this.financeClient.deductCredits(
+                    user.id,
+                    credits,
+                    `Generate ${count} ${outputType}s from file ${upload.filename}`
+                );
+                if (deductionResult?.success) {
+                    newBalance = deductionResult.newBalance;
+                }
+            }
+
             this.logger.log(
                 `Calling AI service to generate ${count} ${outputType} for upload ${upload.id}`
             );
@@ -172,6 +210,8 @@ export class AIService {
                             userStorageId: upload.id,
                             userId: user.id,
                             numFlashcards: count,
+                            isNarrowSearch: dto.isNarrowSearch,
+                            keyword: dto.keyword,
                         }
                     )
                 );
@@ -179,6 +219,7 @@ export class AIService {
                 return {
                     jobId: upload.id,
                     status: 'completed',
+                    newBalance,
                     result: {
                         type: 'flashcard',
                         flashcards: response.data.flashcards,
@@ -198,6 +239,8 @@ export class AIService {
                             userStorageId: upload.id,
                             userId: user.id,
                             numQuestions: count,
+                            isNarrowSearch: dto.isNarrowSearch,
+                            keyword: dto.keyword,
                         }
                     )
                 );
@@ -205,6 +248,7 @@ export class AIService {
                 return {
                     jobId: upload.id,
                     status: 'completed',
+                    newBalance,
                     result: {
                         type: 'quiz',
                         quizzes: response.data.quizzes,

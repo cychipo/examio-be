@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from backend.utils.prompt_utils import prompt_utils
 from backend.services.ocr_service import ocr_service, DocumentChunk
 from llm.model_manager import model_manager
+from rag.vector_store_pg import get_pg_vector_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +30,8 @@ class GenerateQuizRequest(BaseModel):
     user_storage_id: str = Field(..., description="ID của UserStorage")
     user_id: str = Field(..., description="ID của user")
     num_questions: int = Field(default=10, ge=1, le=50, description="Số câu hỏi cần tạo")
+    is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
+    keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
 
 
 class GenerateFlashcardRequest(BaseModel):
@@ -36,6 +39,8 @@ class GenerateFlashcardRequest(BaseModel):
     user_storage_id: str = Field(..., description="ID của UserStorage")
     user_id: str = Field(..., description="ID của user")
     num_flashcards: int = Field(default=10, ge=1, le=50, description="Số flashcard cần tạo")
+    is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
+    keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
 
 
 @dataclass
@@ -107,7 +112,27 @@ class ContentGenerationService:
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
             # Get document chunks
-            chunks = await ocr_service.get_document_chunks(request.user_storage_id)
+            chunks = []
+            if request.is_narrow_search and request.keyword:
+                logger.info(f"Generating with Narrow Search for keyword: {request.keyword}")
+                vector_store = get_pg_vector_store()
+                embedding = await vector_store.create_embedding(request.keyword)
+
+                # Search similar chunks (limit 10 for focused context)
+                similar_results = await ocr_service.search_similar_documents(
+                    [request.user_storage_id],
+                    embedding,
+                    limit=10,
+                    similarity_threshold=0.5
+                )
+                chunks = [res[0] for res in similar_results]
+
+                if not chunks:
+                    logger.warning("Narrow search returned no results, falling back to full content")
+                    chunks = await ocr_service.get_document_chunks(request.user_storage_id)
+            else:
+                chunks = await ocr_service.get_document_chunks(request.user_storage_id)
+
             if not chunks:
                 return {"success": False, "error": "No content found in file"}
 
@@ -175,7 +200,27 @@ class ContentGenerationService:
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
             # Get document chunks
-            chunks = await ocr_service.get_document_chunks(request.user_storage_id)
+            chunks = []
+            if request.is_narrow_search and request.keyword:
+                logger.info(f"Generating with Narrow Search for keyword: {request.keyword}")
+                vector_store = get_pg_vector_store()
+                embedding = await vector_store.create_embedding(request.keyword)
+
+                # Search similar chunks (limit 10 for focused context)
+                similar_results = await ocr_service.search_similar_documents(
+                    [request.user_storage_id],
+                    embedding,
+                    limit=10,
+                    similarity_threshold=0.5
+                )
+                chunks = [res[0] for res in similar_results]
+
+                if not chunks:
+                    logger.warning("Narrow search returned no results, falling back to full content")
+                    chunks = await ocr_service.get_document_chunks(request.user_storage_id)
+            else:
+                chunks = await ocr_service.get_document_chunks(request.user_storage_id)
+
             if not chunks:
                 return {"success": False, "error": "No content found in file"}
 

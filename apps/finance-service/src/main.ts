@@ -29,11 +29,14 @@ async function bootstrap() {
     app.connectMicroservice<MicroserviceOptions>({
         transport: Transport.GRPC,
         options: {
-            package: 'wallet',
-            protoPath: join(
-                __dirname,
-                '../../../libs/common/src/protos/wallet.proto'
-            ),
+            package: ['wallet', 'subscription'],
+            protoPath: [
+                join(__dirname, '../../../libs/common/src/protos/wallet.proto'),
+                join(
+                    __dirname,
+                    '../../../libs/common/src/protos/subscription.proto'
+                ),
+            ],
             url: `0.0.0.0:${process.env.GRPC_PORT || 50053}`,
         },
     });

@@ -20,6 +20,7 @@ import { CheatingLogModule } from './modules/cheatinglog/cheatinglog.module';
 import { FlashcardSetModule } from './modules/flashcardset/flashcardset.module';
 import { AIModule } from './modules/ai/ai.module';
 import { AIChatModule } from './modules/ai-chat/ai-chat.module';
+import { FinanceClientModule } from './modules/finance-client/finance-client.module';
 
 @Module({
     imports: [
@@ -27,6 +28,7 @@ import { AIChatModule } from './modules/ai-chat/ai-chat.module';
         RedisModule,
         EventsModule,
         GrpcClientsModule.registerR2Client(),
+        FinanceClientModule,
         QuizsetModule,
         QuizPracticeAttemptModule,
         ExamRoomModule,
