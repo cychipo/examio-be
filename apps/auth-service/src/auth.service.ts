@@ -548,7 +548,7 @@ export class AuthService {
         const foundUser = await this.userRepository.findByIdWithRelations(
             user.id,
             ['wallet', 'subscription'],
-            true
+            false // Always get fresh data - wallet balance may change from other services
         );
         if (!foundUser) {
             throw new NotFoundException('Người dùng không tồn tại');
