@@ -19,8 +19,10 @@ export class AIRepository {
         processingStatus?: string;
         creditCharged?: boolean;
     }): Promise<UserStorage> {
-        return this.prisma.userStorage.create({
-            data: {
+        // Use upsert to handle case where keyR2 already exists (e.g., from failed upload)
+        return this.prisma.userStorage.upsert({
+            where: { keyR2: data.keyR2 },
+            create: {
                 id: data.id,
                 userId: data.userId,
                 filename: data.filename,
@@ -30,6 +32,12 @@ export class AIRepository {
                 keyR2: data.keyR2,
                 processingStatus: data.processingStatus || 'PENDING',
                 creditCharged: data.creditCharged ?? false,
+            },
+            update: {
+                // Reset status for retry
+                processingStatus: data.processingStatus || 'PENDING',
+                creditCharged: data.creditCharged ?? false,
+                updatedAt: new Date(),
             },
         });
     }
@@ -123,6 +131,14 @@ export class AIRepository {
     async deleteUserStorage(id: string): Promise<UserStorage> {
         return this.prisma.userStorage.delete({
             where: { id },
+        });
+    }
+
+    async deleteDocumentsByUserStorageId(
+        userStorageId: string
+    ): Promise<{ count: number }> {
+        return this.prisma.document.deleteMany({
+            where: { userStorageId },
         });
     }
 

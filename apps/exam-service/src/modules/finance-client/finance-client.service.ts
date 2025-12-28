@@ -72,4 +72,37 @@ export class FinanceClientService implements OnModuleInit {
             );
         }
     }
+
+    async addCredits(userId: string, amount: number, description: string) {
+        if (amount <= 0)
+            return {
+                success: true,
+                newBalance: undefined,
+                message: 'No refund needed',
+            };
+
+        try {
+            const result = await firstValueFrom(
+                this.walletService.updateBalance({
+                    userId: userId,
+                    amount: amount,
+                    transactionType: 'ADD',
+                    description: description,
+                })
+            );
+
+            this.logger.log(
+                `Added ${amount} credits to user ${userId}: ${description}`
+            );
+            return result;
+        } catch (error) {
+            this.logger.error(`Failed to add credits: ${error.message}`);
+            // For refunds, we don't block the operation if it fails
+            return {
+                success: false,
+                newBalance: undefined,
+                message: error.message,
+            };
+        }
+    }
 }

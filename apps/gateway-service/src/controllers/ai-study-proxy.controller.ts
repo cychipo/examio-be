@@ -7,15 +7,25 @@ import {
     Body,
     Query,
     Req,
+    UseInterceptors,
+    UploadedFile,
+    Logger,
+    BadRequestException,
+    InternalServerErrorException,
 } from '@nestjs/common';
 import {
     ApiTags,
     ApiOperation,
     ApiBearerAuth,
     ApiQuery,
+    ApiConsumes,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { ProxyService } from '../services/proxy.service';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import * as FormData from 'form-data';
 
 // ==================== AI ====================
 
@@ -23,7 +33,135 @@ import { ProxyService } from '../services/proxy.service';
 @Controller('ai')
 @ApiBearerAuth('access-token')
 export class AIProxyController {
-    constructor(private readonly proxyService: ProxyService) {}
+    private readonly logger = new Logger(AIProxyController.name);
+
+    constructor(
+        private readonly proxyService: ProxyService,
+        private readonly httpService: HttpService
+    ) {}
+
+    @Post('quick-upload')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiOperation({ summary: 'Quick upload file cho AI Teacher' })
+    @ApiConsumes('multipart/form-data')
+    async quickUpload(
+        @Req() req: Request,
+        @UploadedFile() file: Express.Multer.File
+    ) {
+        this.logger.log('--- GATEWAY: QUICK UPLOAD REQUEST ---');
+        this.logger.log(
+            `File received: ${file ? `${file.originalname} (${file.size} bytes)` : 'MISSING'}`
+        );
+
+        if (!file || !file.buffer) {
+            this.logger.error('No file received in gateway');
+            throw new BadRequestException('No file uploaded');
+        }
+
+        // Forward file to exam-service
+        const formData = new FormData();
+        formData.append('file', file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+        });
+
+        const examServiceUrl =
+            process.env.EXAM_SERVICE_URL || 'http://localhost:3002';
+
+        try {
+            // Increase timeout for file upload (120 seconds)
+            const response = await firstValueFrom(
+                this.httpService.post(
+                    `${examServiceUrl}/api/v1/ai/quick-upload`,
+                    formData,
+                    {
+                        headers: {
+                            ...formData.getHeaders(),
+                            Authorization: `Bearer ${this.t(req)}`,
+                        },
+                        timeout: 120000, // 2 minutes for large file uploads
+                    }
+                )
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(
+                `Quick upload failed: ${error.message}`,
+                error.response?.data
+            );
+            // Re-throw with proper error message from exam-service
+            const errorMessage = error.response?.data?.message || error.message;
+            throw new InternalServerErrorException(
+                `Upload failed: ${errorMessage}`
+            );
+        }
+    }
+
+    @Post('generate-from-file')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiOperation({ summary: 'Upload file và tạo quiz/flashcard' })
+    @ApiConsumes('multipart/form-data')
+    async generateFromFile(
+        @Req() req: Request,
+        @UploadedFile() file: Express.Multer.File,
+        @Body() body: any
+    ) {
+        this.logger.log('--- GATEWAY: GENERATE FROM FILE REQUEST ---');
+        this.logger.log(
+            `File received: ${file ? `${file.originalname} (${file.size} bytes)` : 'MISSING'}`
+        );
+
+        if (!file || !file.buffer) {
+            this.logger.error('No file received in gateway');
+            throw new BadRequestException('No file uploaded');
+        }
+
+        // Forward file to exam-service with form data
+        const formData = new FormData();
+        formData.append('file', file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+        });
+        // Append other form fields
+        if (body.typeResult) formData.append('typeResult', body.typeResult);
+        if (body.quantityQuizz)
+            formData.append('quantityQuizz', body.quantityQuizz);
+        if (body.quantityFlashcard)
+            formData.append('quantityFlashcard', body.quantityFlashcard);
+        if (body.isNarrowSearch)
+            formData.append('isNarrowSearch', body.isNarrowSearch);
+        if (body.keyword) formData.append('keyword', body.keyword);
+
+        const examServiceUrl =
+            process.env.EXAM_SERVICE_URL || 'http://localhost:3002';
+
+        try {
+            // Increase timeout for file upload (120 seconds)
+            const response = await firstValueFrom(
+                this.httpService.post(
+                    `${examServiceUrl}/api/v1/ai/generate-from-file`,
+                    formData,
+                    {
+                        headers: {
+                            ...formData.getHeaders(),
+                            Authorization: `Bearer ${this.t(req)}`,
+                        },
+                        timeout: 120000, // 2 minutes for large file uploads
+                    }
+                )
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(
+                `Generate from file failed: ${error.message}`,
+                error.response?.data
+            );
+            const errorMessage = error.response?.data?.message || error.message;
+            throw new InternalServerErrorException(
+                `Generate from file failed: ${errorMessage}`
+            );
+        }
+    }
 
     @Get('recent-uploads')
     @ApiOperation({ summary: 'Lấy danh sách file đã upload' })

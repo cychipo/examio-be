@@ -263,20 +263,104 @@ class GeminiClient:
 
         return await self.retry_with_backoff(_generate)
 
-    async def create_embedding(self, text: str) -> List[float]:
-        """Tạo embedding vector với retry."""
-        async def _embed():
-            api_key = self.get_next_key()
-            genai.configure(api_key=api_key)
+    async def create_embedding(self, text: str, task_type: str = "retrieval_document") -> List[float]:
+        """
+        Tạo embedding vector với key rotation và retry.
 
-            result = genai.embed_content(
-                model="models/embedding-001",
-                content=text,
-                task_type="retrieval_document"
+        Hỗ trợ các embedding models:
+        - models/embedding-001 (768 dims)
+        - models/text-embedding-004 (768 dims)
+
+        Args:
+            text: Text cần tạo embedding
+            task_type: Loại task - "retrieval_document" hoặc "retrieval_query"
+
+        Returns:
+            List[float] embedding vector
+        """
+        # Embedding models để xoay vòng khi bị rate limit
+        embedding_models = [
+            "models/text-embedding-004",  # Mới hơn, performance tốt hơn
+            "models/embedding-001",        # Legacy nhưng ổn định
+        ]
+
+        last_error = None
+
+        for model_idx, embed_model in enumerate(embedding_models):
+            async def _embed():
+                api_key = self.get_next_key()
+                genai.configure(api_key=api_key)
+
+                result = genai.embed_content(
+                    model=embed_model,
+                    content=text,
+                    task_type=task_type
+                )
+                return result['embedding']
+
+            try:
+                return await self.retry_with_backoff(_embed, max_retries=3)
+            except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
+
+                # Nếu là lỗi rate limit/quota, thử model tiếp theo
+                if "429" in error_str or "quota" in error_str or "rate" in error_str:
+                    print(f"⚠️ Embedding model {embed_model} bị rate limit, thử model tiếp theo...")
+                    continue
+                else:
+                    # Lỗi khác thì raise ngay
+                    raise e
+
+        # Đã thử tất cả models mà vẫn fail
+        raise last_error or Exception("Tất cả embedding models đều fail")
+
+    async def create_embeddings_batch(
+        self,
+        texts: List[str],
+        task_type: str = "retrieval_document",
+        batch_size: int = 5,
+        delay_between_batches: float = 0.5
+    ) -> List[List[float]]:
+        """
+        Tạo embeddings cho nhiều texts với batching để tránh rate limit.
+
+        Args:
+            texts: List các texts cần embedding
+            task_type: Loại task
+            batch_size: Số texts mỗi batch
+            delay_between_batches: Delay giữa các batch (giây)
+
+        Returns:
+            List các embedding vectors
+        """
+        embeddings = []
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+
+            # Process batch concurrently
+            batch_embeddings = await asyncio.gather(
+                *[self.create_embedding(text, task_type) for text in batch],
+                return_exceptions=True
             )
-            return result['embedding']
 
-        return await self.retry_with_backoff(_embed)
+            # Check for errors
+            for j, emb in enumerate(batch_embeddings):
+                if isinstance(emb, Exception):
+                    print(f"⚠️ Error embedding text {i+j}: {emb}")
+                    # Retry single text
+                    try:
+                        emb = await self.create_embedding(batch[j], task_type)
+                    except Exception as e:
+                        raise Exception(f"Failed to embed text {i+j}: {e}")
+                embeddings.append(emb)
+
+            # Delay between batches to avoid rate limit
+            if i + batch_size < len(texts):
+                await asyncio.sleep(delay_between_batches)
+
+        return embeddings
 
 
 # Singleton instance

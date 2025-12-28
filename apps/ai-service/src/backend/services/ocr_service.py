@@ -193,8 +193,17 @@ class OCRProcessingService:
         Download file from R2 public URL
         Returns: (file_content, temp_file_path)
         """
+        from urllib.parse import quote, urlparse, urlunparse
+
+        # Encode URL path to handle spaces and special characters
+        parsed = urlparse(url)
+        encoded_path = quote(parsed.path, safe='/')
+        encoded_url = urlunparse(parsed._replace(path=encoded_path))
+
+        logger.info(f"Downloading from encoded URL: {encoded_url}")
+
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(url)
+            response = await client.get(encoded_url)
             response.raise_for_status()
             content = response.content
 

@@ -12,15 +12,23 @@ async function bootstrap() {
     // HTTP server for health checks
     const app = await NestFactory.create(R2ServiceModule);
 
+    // Use absolute path from process.cwd() for proto file
+    const protoPath = join(
+        process.cwd(),
+        'libs',
+        'common',
+        'src',
+        'protos',
+        'r2.proto'
+    );
+    console.log(`📄 Using proto file: ${protoPath}`);
+
     // gRPC microservice
     app.connectMicroservice<MicroserviceOptions>({
         transport: Transport.GRPC,
         options: {
             package: 'r2',
-            protoPath: join(
-                __dirname,
-                '../../../libs/common/src/protos/r2.proto'
-            ),
+            protoPath,
             url: `0.0.0.0:${process.env.GRPC_PORT || 50054}`,
         },
     });

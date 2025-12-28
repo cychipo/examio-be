@@ -1,4 +1,4 @@
-import { Controller } from '@nestjs/common';
+import { Controller, Logger } from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
 import { R2ServiceService } from './r2-service.service';
 
@@ -22,10 +22,16 @@ interface DeleteFileRequest {
 
 @Controller()
 export class R2ServiceController {
+    private readonly logger = new Logger(R2ServiceController.name);
+
     constructor(private readonly r2Service: R2ServiceService) {}
 
     @GrpcMethod('R2Service', 'UploadFile')
     async uploadFile(data: UploadFileRequest) {
+        this.logger.log(
+            `UploadFile request: filename=${data.filename}, mimetype=${data.mimetype}, folder=${data.folder}, contentSize=${data.content?.length || 0}`
+        );
+
         try {
             const key = await this.r2Service.uploadFile(
                 data.filename,
@@ -33,6 +39,8 @@ export class R2ServiceController {
                 data.mimetype,
                 data.folder
             );
+
+            this.logger.log(`UploadFile success: key=${key}`);
 
             return {
                 success: true,
@@ -42,6 +50,10 @@ export class R2ServiceController {
                 message: 'File uploaded successfully',
             };
         } catch (error) {
+            this.logger.error(
+                `UploadFile failed: ${error.message}`,
+                error.stack
+            );
             return {
                 success: false,
                 message: `Upload failed: ${error.message}`,

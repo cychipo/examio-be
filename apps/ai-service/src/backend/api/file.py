@@ -78,11 +78,14 @@ async def process_file(request: ProcessFileRequest):
     """
     OCR và tạo embeddings cho file đã upload bởi NestJS
 
-    Flow:
+    Flow giống be-main:
     1. NestJS upload file lên R2, tạo UserStorage với status=PENDING
     2. NestJS gọi API này với userStorageId
-    3. Python download từ R2, OCR, lưu embeddings
-    4. Update status = COMPLETED
+    3. Python download từ R2
+    4. Split PDF thành chunks (mỗi 10 pages)
+    5. OCR mỗi chunk bằng Tesseract (hoặc extract text nếu PDF có text layer)
+    6. Tạo embedding cho mỗi chunk và lưu vào Document table
+    7. Update status = COMPLETED
     """
     try:
         user_storage_id = request.user_storage_id
@@ -111,47 +114,121 @@ async def process_file(request: ProcessFileRequest):
         try:
             # Download file from R2
             logger.info(f"Downloading file from R2: {file_info.url}")
-            _, temp_path = await ocr_service.download_file_from_r2(file_info.url)
+            file_bytes, temp_path = await ocr_service.download_file_from_r2(file_info.url)
 
-            # OCR file
-            file_content = extract_text_from_file(temp_path, file_info.mimetype)
+            # Import PDF OCR service
+            from backend.services.pdf_ocr_service import pdf_ocr_service
+
+            stored_count = 0
+            pg_store = get_pg_vector_store()
+
+            # Check file type
+            is_pdf = file_info.mimetype == "application/pdf" or file_info.url.lower().endswith('.pdf')
+
+            if is_pdf:
+                # PDF: Split into chunks and process each chunk
+                # Giống extractAndSavePdfChunks trong be-main
+                logger.info("📄 Processing PDF with chunk splitting...")
+
+                try:
+                    # Process PDF with chunks (split + OCR each chunk)
+                    chunk_results = pdf_ocr_service.process_pdf_with_chunks(file_bytes)
+
+                    # Prepare documents for batch storage (sử dụng batch embedding)
+                    documents_to_store = []
+                    for chunk_index, chunk_text in chunk_results:
+                        if not chunk_text or not chunk_text.strip():
+                            logger.warning(f"⚠️ Empty OCR result for chunk {chunk_index}")
+                            continue
+
+                        chunk_id = f"{user_storage_id}_chunk_{chunk_index}"
+                        documents_to_store.append({
+                            'id': chunk_id,
+                            'user_storage_id': user_storage_id,
+                            'content': chunk_text,
+                            'page_range': str(chunk_index),
+                            'title': f"Chunk {chunk_index}"
+                        })
+                        logger.info(f"📝 Prepared chunk {chunk_index}: {len(chunk_text)} chars")
+
+                    # Batch store với batch embedding (tối ưu rate limit)
+                    if documents_to_store:
+                        stored_count = await pg_store.store_documents_batch(documents_to_store)
+                    else:
+                        stored_count = 0
+
+                except Exception as pdf_error:
+                    logger.error(f"PDF processing failed: {pdf_error}")
+                    # Fallback to simple text extraction
+                    logger.info("Falling back to simple text extraction...")
+                    file_content = extract_text_from_file(temp_path, file_info.mimetype)
+
+                    if file_content and not file_content.startswith("Error"):
+                        # Split into smaller chunks for embedding
+                        from langchain_text_splitters import RecursiveCharacterTextSplitter
+                        text_splitter = RecursiveCharacterTextSplitter(
+                            chunk_size=2000,
+                            chunk_overlap=200
+                        )
+                        text_chunks = text_splitter.split_text(file_content)
+
+                        # Prepare for batch storage
+                        documents_to_store = []
+                        for i, chunk_text in enumerate(text_chunks):
+                            chunk_id = f"{user_storage_id}_chunk_{i}"
+                            documents_to_store.append({
+                                'id': chunk_id,
+                                'user_storage_id': user_storage_id,
+                                'content': chunk_text,
+                                'page_range': str(i + 1),
+                                'title': f"Chunk {i + 1}"
+                            })
+
+                        if documents_to_store:
+                            stored_count = await pg_store.store_documents_batch(documents_to_store)
+            else:
+                # Non-PDF: Extract text and chunk
+                logger.info(f"📝 Processing non-PDF file: {file_info.mimetype}")
+                file_content = extract_text_from_file(temp_path, file_info.mimetype)
+
+                if file_content.startswith("Error") or file_content.startswith("Unsupported"):
+                    raise HTTPException(status_code=400, detail=file_content)
+
+                # Split into chunks
+                from langchain_text_splitters import RecursiveCharacterTextSplitter
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=2000,
+                    chunk_overlap=200
+                )
+                text_chunks = text_splitter.split_text(file_content)
+
+                # Prepare for batch storage
+                documents_to_store = []
+                for i, chunk_text in enumerate(text_chunks):
+                    chunk_id = f"{user_storage_id}_chunk_{i}"
+                    documents_to_store.append({
+                        'id': chunk_id,
+                        'user_storage_id': user_storage_id,
+                        'content': chunk_text,
+                        'page_range': str(i + 1),
+                        'title': f"Chunk {i + 1}"
+                    })
+
+                if documents_to_store:
+                    stored_count = await pg_store.store_documents_batch(documents_to_store)
 
             # Cleanup temp file
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
 
-            if file_content.startswith("Error") or file_content.startswith("Unsupported"):
+            if stored_count == 0:
                 await ocr_service.update_processing_status(user_storage_id, "FAILED")
-                raise HTTPException(status_code=400, detail=file_content)
-
-            # Create chunks
-            retriever, chunks = create_in_memory_retriever(file_content)
-
-            # Store each chunk with embeddings
-            pg_store = get_pg_vector_store()
-            stored_count = 0
-
-            for i, chunk in enumerate(chunks):
-                chunk_id = f"{user_storage_id}_chunk_{i}"
-                page = getattr(chunk, 'metadata', {}).get('page', str(i + 1))
-
-                success = await pg_store.store_document(
-                    doc_id=chunk_id,
-                    user_storage_id=user_storage_id,
-                    content=chunk.page_content,
-                    page_range=str(page),
-                    title=file_info.filename
-                )
-                if success:
-                    stored_count += 1
+                raise HTTPException(status_code=400, detail="No content could be extracted from file")
 
             # Update status to COMPLETED
             await ocr_service.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
 
-            # Cache retriever
-            _retriever_cache[user_storage_id] = retriever
-
-            logger.info(f"File processed successfully: {user_storage_id}, {stored_count} chunks")
+            logger.info(f"✅ File processed successfully: {user_storage_id}, {stored_count} chunks")
 
             return {
                 "success": True,
@@ -168,7 +245,9 @@ async def process_file(request: ProcessFileRequest):
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
         logger.error(f"Error processing file: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
 

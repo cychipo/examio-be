@@ -1,14 +1,19 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+    Injectable,
+    Logger,
+    NotFoundException,
+    BadRequestException,
+    InternalServerErrorException,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { User } from '@prisma/client';
-import {
-    GenerateIdService,
-    EventPublisherService,
-    EventType,
-    OcrRequestedPayload,
-} from '@examio/common';
+import { GenerateIdService, R2ClientService } from '@examio/common';
 import { AIRepository } from './ai.repository';
-import { UploadFileDto, RegenerateDto } from './dto/ai.dto';
+import {
+    UploadFileDto,
+    RegenerateDto,
+    GenerateFromFileDto,
+} from './dto/ai.dto';
 import { firstValueFrom } from 'rxjs';
 import { FinanceClientService } from '../finance-client/finance-client.service';
 
@@ -20,12 +25,324 @@ export class AIService {
     constructor(
         private readonly aiRepository: AIRepository,
         private readonly generateIdService: GenerateIdService,
-        private readonly eventPublisher: EventPublisherService,
         private readonly httpService: HttpService,
-        private readonly financeClient: FinanceClientService
+        private readonly financeClient: FinanceClientService,
+        private readonly r2ClientService: R2ClientService
     ) {
         this.aiServiceUrl =
             process.env.AI_SERVICE_URL || 'http://localhost:8000/api';
+    }
+
+    /**
+     * Quick upload - uploads file to R2 immediately without OCR processing.
+     * OCR happens on-demand when first message is sent.
+     */
+    async quickUpload(
+        user: User,
+        file: Express.Multer.File
+    ): Promise<{
+        success: boolean;
+        userStorageId: string;
+        filename: string;
+        url: string;
+    }> {
+        // Validate file
+        if (!file || !file.buffer) {
+            this.logger.error('Quick upload: No file provided');
+            throw new BadRequestException('No file provided for upload');
+        }
+
+        this.logger.log(
+            `Quick upload file: ${file.originalname} (${file.size} bytes, ${file.mimetype})`
+        );
+
+        try {
+            // 1. Upload to R2 via gRPC - returns key (string)
+            this.logger.log('Uploading to R2 via gRPC...');
+            let keyR2: string;
+            try {
+                keyR2 = await this.r2ClientService.uploadFile(
+                    file.originalname,
+                    file.buffer,
+                    file.mimetype,
+                    'ai-teacher'
+                );
+            } catch (grpcError) {
+                this.logger.error(
+                    `gRPC R2 upload failed: ${grpcError.message}`,
+                    grpcError.stack
+                );
+                throw new InternalServerErrorException(
+                    `R2 Service error: ${grpcError.message}. Is R2 service running?`
+                );
+            }
+            this.logger.log(`R2 upload success, key: ${keyR2}`);
+
+            // Validate keyR2 is not undefined/empty
+            if (!keyR2) {
+                this.logger.error('R2 upload returned empty key');
+                throw new InternalServerErrorException(
+                    'R2 upload failed: No key returned from R2 service'
+                );
+            }
+
+            // 2. Get public URL from key
+            const url = this.r2ClientService.getPublicUrl(keyR2);
+
+            // 3. Create UserStorage with PENDING status (no OCR yet)
+            const id = this.generateIdService.generateId();
+            const userStorage = await this.aiRepository.createUserStorage({
+                id,
+                userId: user.id,
+                filename: file.originalname,
+                url,
+                mimetype: file.mimetype,
+                size: file.size,
+                keyR2,
+                processingStatus: 'PENDING',
+                creditCharged: false,
+            });
+
+            this.logger.log(
+                `Quick upload created: ${userStorage.id} - ${file.originalname}`
+            );
+
+            return {
+                success: true,
+                userStorageId: userStorage.id,
+                filename: file.originalname,
+                url,
+            };
+        } catch (error) {
+            this.logger.error(
+                `Quick upload failed: ${error.message}`,
+                error.stack
+            );
+            throw error;
+        }
+    }
+
+    /**
+     * Generate quiz/flashcard from uploaded file
+     * Combines upload + regenerate into one step
+     * Returns immediately after creating job - processing happens async via RabbitMQ
+     */
+    async generateFromFile(
+        user: User,
+        file: Express.Multer.File,
+        dto: GenerateFromFileDto
+    ): Promise<{
+        jobId: string;
+        status: string;
+        message: string;
+        newBalance?: number;
+    }> {
+        const startTime = Date.now();
+        this.logger.log(`Generate from file: ${file.originalname}`);
+
+        // Validate file
+        if (!file || !file.buffer) {
+            throw new BadRequestException('No file provided');
+        }
+
+        try {
+            // 1. Upload to R2 via gRPC
+            const uploadStart = Date.now();
+            this.logger.log('Uploading to R2 via gRPC...');
+            const keyR2 = await this.r2ClientService.uploadFile(
+                file.originalname,
+                file.buffer,
+                file.mimetype,
+                'ai-uploads'
+            );
+            this.logger.log(
+                `R2 upload success in ${Date.now() - uploadStart}ms, key: ${keyR2}`
+            );
+
+            // 2. Get public URL
+            const url = this.r2ClientService.getPublicUrl(keyR2);
+
+            // 3. Calculate credits and deduct (skip if fails to let job run)
+            const sizeMB = file.size / (1024 * 1024);
+            const uploadCredits = Math.ceil(sizeMB / 2);
+            const generateCredits = 5;
+            const totalCredits = uploadCredits + generateCredits;
+
+            let newBalance: number | undefined;
+            const creditStart = Date.now();
+            if (totalCredits > 0) {
+                try {
+                    const deductionResult =
+                        await this.financeClient.deductCredits(
+                            user.id,
+                            totalCredits,
+                            `Generate from file: ${file.originalname}`
+                        );
+                    if (deductionResult?.success) {
+                        newBalance = deductionResult.newBalance;
+                    }
+                    this.logger.log(
+                        `Credit deduction done in ${Date.now() - creditStart}ms`
+                    );
+                } catch (creditError) {
+                    this.logger.warn(
+                        `Credit deduction failed: ${creditError.message}`
+                    );
+                    throw creditError; // Re-throw to stop if not enough credits
+                }
+            }
+
+            // 4. Create UserStorage with PENDING status
+            const dbStart = Date.now();
+            const id = this.generateIdService.generateId();
+            const userStorage = await this.aiRepository.createUserStorage({
+                id,
+                userId: user.id,
+                filename: file.originalname,
+                url,
+                mimetype: file.mimetype,
+                size: file.size,
+                keyR2,
+                processingStatus: 'PENDING',
+                creditCharged: true,
+            });
+            this.logger.log(`DB record created in ${Date.now() - dbStart}ms`);
+
+            // 5. Call AI service directly via HTTP to process OCR + generate content
+            // This is more reliable than RabbitMQ events for this use case
+            const typeResult = parseInt(dto.typeResult, 10) || 1;
+            const quantityQuizz = dto.quantityQuizz
+                ? parseInt(dto.quantityQuizz, 10)
+                : 10;
+            const quantityFlashcard = dto.quantityFlashcard
+                ? parseInt(dto.quantityFlashcard, 10)
+                : 10;
+
+            // Fire and forget - call AI service async without waiting
+            this.processFileAsync(
+                userStorage.id,
+                user.id,
+                typeResult,
+                quantityQuizz,
+                quantityFlashcard
+            ).catch((err) => {
+                this.logger.error(
+                    `Background processing failed for ${userStorage.id}: ${err.message}`
+                );
+            });
+
+            this.logger.log(
+                `Total generateFromFile time: ${Date.now() - startTime}ms`
+            );
+
+            return {
+                jobId: userStorage.id,
+                status: 'PENDING',
+                message: 'File đã được upload, đang xử lý OCR và tạo nội dung',
+                newBalance,
+            };
+        } catch (error) {
+            this.logger.error(
+                `Generate from file failed: ${error.message}`,
+                error.stack
+            );
+            throw error;
+        }
+    }
+
+    /**
+     * Process file asynchronously - call AI service to OCR + generate content
+     * This runs in background after returning jobId to client
+     */
+    private async processFileAsync(
+        userStorageId: string,
+        userId: string,
+        typeResult: number,
+        quantityQuizz: number,
+        quantityFlashcard: number
+    ): Promise<void> {
+        try {
+            this.logger.log(
+                `Starting async processing for ${userStorageId}...`
+            );
+
+            // Update status to PROCESSING
+            await this.aiRepository.updateUserStorageStatus(
+                userStorageId,
+                'PROCESSING'
+            );
+
+            // Step 1: Call AI service to process OCR + embeddings
+            this.logger.log(
+                `Calling AI service to process file ${userStorageId}...`
+            );
+            const ocrResponse = await firstValueFrom(
+                this.httpService.post(
+                    `${this.aiServiceUrl}/ai/process-file`,
+                    { user_storage_id: userStorageId },
+                    { timeout: 300000 } // 5 min timeout for OCR
+                )
+            );
+
+            if (!ocrResponse.data?.success) {
+                throw new Error(
+                    ocrResponse.data?.error || 'OCR processing failed'
+                );
+            }
+
+            this.logger.log(
+                `OCR completed for ${userStorageId}: ${ocrResponse.data.chunks_count} chunks`
+            );
+
+            // Step 2: Generate quiz or flashcard
+            const isFlashcard = typeResult === 2;
+            const count = isFlashcard ? quantityFlashcard : quantityQuizz;
+            const endpoint = isFlashcard
+                ? `${this.aiServiceUrl}/generate/flashcards`
+                : `${this.aiServiceUrl}/generate/quiz`;
+
+            this.logger.log(
+                `Generating ${count} ${isFlashcard ? 'flashcards' : 'quiz questions'} for ${userStorageId}...`
+            );
+
+            const generateResponse = await firstValueFrom(
+                this.httpService.post(
+                    endpoint,
+                    {
+                        userStorageId,
+                        userId,
+                        [isFlashcard ? 'numFlashcards' : 'numQuestions']: count,
+                    },
+                    { timeout: 300000 } // 5 min timeout for generation
+                )
+            );
+
+            if (!generateResponse.data) {
+                throw new Error('Content generation failed');
+            }
+
+            this.logger.log(
+                `Generation completed for ${userStorageId}, historyId: ${generateResponse.data.history_id}`
+            );
+
+            // Status will be updated to COMPLETED by AI service
+        } catch (error) {
+            this.logger.error(
+                `Async processing failed for ${userStorageId}: ${error.message}`
+            );
+
+            // Update status to FAILED
+            try {
+                await this.aiRepository.updateUserStorageStatus(
+                    userStorageId,
+                    'FAILED'
+                );
+            } catch (updateError) {
+                this.logger.error(
+                    `Failed to update status to FAILED: ${updateError.message}`
+                );
+            }
+        }
     }
 
     /**
@@ -60,12 +377,129 @@ export class AIService {
     }
 
     /**
-     * Delete an upload
+     * Delete an upload and its file from R2
      */
     async deleteUpload(uploadId: string, user: User) {
         const upload = await this.getUploadDetail(uploadId, user);
+
+        // Delete file from R2 if keyR2 exists
+        if (upload.keyR2) {
+            try {
+                await this.r2ClientService.deleteFile(upload.keyR2);
+                this.logger.log(`Deleted file from R2: ${upload.keyR2}`);
+            } catch (error) {
+                this.logger.warn(
+                    `Failed to delete file from R2: ${upload.keyR2} - ${error.message}`
+                );
+                // Continue with database deletion even if R2 deletion fails
+            }
+        }
+
+        // Delete related Documents (embeddings)
+        try {
+            await this.aiRepository.deleteDocumentsByUserStorageId(upload.id);
+            this.logger.log(`Deleted documents for UserStorage: ${upload.id}`);
+        } catch (error) {
+            this.logger.warn(
+                `Failed to delete documents for UserStorage: ${upload.id} - ${error.message}`
+            );
+        }
+
         await this.aiRepository.deleteUserStorage(upload.id);
         return { success: true, message: 'Xóa thành công' };
+    }
+
+    /**
+     * Cancel a job that is in progress
+     * This will delete the UserStorage and refund credits if applicable
+     */
+    async cancelJob(jobId: string, user: User) {
+        const upload = await this.aiRepository.findUserStorageById(jobId);
+
+        if (!upload) {
+            return {
+                success: false,
+                message: 'Job không tồn tại',
+            };
+        }
+
+        // Verify ownership
+        if (upload.userId !== user.id) {
+            return {
+                success: false,
+                message: 'Không có quyền hủy job này',
+            };
+        }
+
+        // Only allow canceling pending or processing jobs
+        if (
+            upload.processingStatus !== 'PENDING' &&
+            upload.processingStatus !== 'PROCESSING'
+        ) {
+            return {
+                success: false,
+                message: 'Không thể hủy job đã hoàn thành hoặc thất bại',
+            };
+        }
+
+        // Delete file from R2 if keyR2 exists
+        if (upload.keyR2) {
+            try {
+                await this.r2ClientService.deleteFile(upload.keyR2);
+                this.logger.log(`Deleted file from R2: ${upload.keyR2}`);
+            } catch (error) {
+                this.logger.warn(
+                    `Failed to delete file from R2: ${upload.keyR2} - ${error.message}`
+                );
+            }
+        }
+
+        // Delete related Documents (embeddings)
+        try {
+            await this.aiRepository.deleteDocumentsByUserStorageId(upload.id);
+            this.logger.log(
+                `Deleted documents for cancelled job: ${upload.id}`
+            );
+        } catch (error) {
+            this.logger.warn(
+                `Failed to delete documents for cancelled job: ${upload.id} - ${error.message}`
+            );
+        }
+
+        // Refund credits if charged
+        let newBalance: number | undefined;
+        if (upload.creditCharged) {
+            const sizeMB = upload.size / (1024 * 1024);
+            const credits = Math.ceil(sizeMB / 2);
+            if (credits > 0) {
+                try {
+                    const refundResult = await this.financeClient.addCredits(
+                        user.id,
+                        credits,
+                        `Hoàn tiền hủy job: ${upload.filename}`
+                    );
+                    if (refundResult?.success) {
+                        newBalance = refundResult.newBalance;
+                        this.logger.log(
+                            `Refunded ${credits} credits for cancelled job: ${upload.id}`
+                        );
+                    }
+                } catch (error) {
+                    this.logger.warn(
+                        `Failed to refund credits for cancelled job: ${upload.id} - ${error.message}`
+                    );
+                }
+            }
+        }
+
+        // Delete UserStorage
+        await this.aiRepository.deleteUserStorage(upload.id);
+
+        return {
+            success: true,
+            message: 'Đã hủy job và hoàn tiền thành công',
+            newBalance,
+        };
     }
 
     /**
@@ -106,24 +540,19 @@ export class AIService {
             creditCharged,
         });
 
-        // Publish OCR_REQUESTED event to RabbitMQ
-        const payload: OcrRequestedPayload = {
-            userStorageId: userStorage.id,
-            userId: user.id,
-            fileUrl: dto.url,
-            fileName: dto.filename,
-            mimeType: dto.mimetype,
-        };
-
-        await this.eventPublisher.publish(
-            `ai.${EventType.OCR_REQUESTED}`,
-            EventType.OCR_REQUESTED,
-            payload,
-            { sourceService: 'exam-service' }
+        // Process file asynchronously via HTTP to AI service
+        this.processFileAsync(
+            userStorage.id,
+            user.id,
+            dto.typeResult || 1,
+            dto.quantityQuizz || 10,
+            dto.quantityFlashcard || 10
+        ).catch((err) =>
+            this.logger.error(`Background processing failed: ${err.message}`)
         );
 
         this.logger.log(
-            `Published OCR_REQUESTED for userStorageId: ${userStorage.id}`
+            `Started async processing for userStorageId: ${userStorage.id}`
         );
 
         return {
@@ -141,34 +570,41 @@ export class AIService {
     async regenerate(uploadId: string, user: User, dto: RegenerateDto) {
         const upload = await this.getUploadDetail(uploadId, user);
 
-        // If not yet processed, trigger OCR first
-        if (upload.processingStatus === 'PENDING') {
-            const payload: OcrRequestedPayload = {
-                userStorageId: upload.id,
-                userId: user.id,
-                fileUrl: upload.url,
-                fileName: upload.filename,
-                mimeType: upload.mimetype,
-            };
+        // If not yet processed or FAILED, trigger OCR first via HTTP
+        if (
+            upload.processingStatus === 'PENDING' ||
+            upload.processingStatus === 'FAILED'
+        ) {
+            // Reset status to PENDING for retry
+            if (upload.processingStatus === 'FAILED') {
+                await this.aiRepository.updateUserStorageStatus(
+                    uploadId,
+                    'PENDING'
+                );
+                this.logger.log(`Retrying failed upload ${uploadId}`);
+            }
 
-            await this.eventPublisher.publish(
-                `ai.${EventType.OCR_REQUESTED}`,
-                EventType.OCR_REQUESTED,
-                payload,
-                { sourceService: 'exam-service' }
+            // Start async processing
+            this.processFileAsync(
+                upload.id,
+                user.id,
+                dto.typeResult || 1,
+                dto.quantityQuizz || dto.count || 10,
+                dto.quantityFlashcard || dto.count || 10
+            ).catch((err) =>
+                this.logger.error(
+                    `Background processing failed: ${err.message}`
+                )
             );
 
             return {
                 jobId: upload.id,
                 status: 'processing',
-                message: 'Đang xử lý OCR, vui lòng thử lại sau',
+                message:
+                    upload.processingStatus === 'FAILED'
+                        ? 'Đang thử lại xử lý file, vui lòng đợi...'
+                        : 'Đang xử lý OCR, vui lòng thử lại sau',
             };
-        }
-
-        if (upload.processingStatus === 'FAILED') {
-            throw new NotFoundException(
-                'File xử lý thất bại, vui lòng upload lại'
-            );
         }
 
         // OCR is complete, call AI service to generate content

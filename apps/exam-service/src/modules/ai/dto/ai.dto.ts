@@ -84,3 +84,21 @@ export class UploadImageDto extends createZodDto(UploadImageSchema) {
     @ApiProperty({ description: 'Tên file', required: false })
     filename?: string;
 }
+
+// DTO for generate-from-file endpoint (multipart form data)
+export class GenerateFromFileDto {
+    @ApiProperty({ description: 'Loại output: 0 = flashcard, 1 = quiz' })
+    typeResult: string; // Comes as string from form-data
+
+    @ApiProperty({ description: 'Số câu hỏi quiz', required: false })
+    quantityQuizz?: string;
+
+    @ApiProperty({ description: 'Số flashcard', required: false })
+    quantityFlashcard?: string;
+
+    @ApiProperty({ description: 'Tìm kiếm hẹp', required: false })
+    isNarrowSearch?: string;
+
+    @ApiProperty({ description: 'Từ khóa tìm kiếm', required: false })
+    keyword?: string;
+}

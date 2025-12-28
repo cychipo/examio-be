@@ -66,13 +66,35 @@ class PgVectorStore:
             await self._pool.close()
             self._pool = None
 
-    async def create_embedding(self, text: str) -> List[float]:
+    async def create_embedding(self, text: str, task_type: str = "retrieval_document") -> List[float]:
         """
         Tạo embedding vector cho text.
         Sử dụng GeminiClient để có token rotation.
+
+        Args:
+            text: Text cần embedding
+            task_type: "retrieval_document" cho documents, "retrieval_query" cho queries
         """
-        from ..llm.gemini_client import gemini_client
-        return await gemini_client.create_embedding(text)
+        try:
+            from llm.gemini_client import gemini_client
+        except ImportError:
+            from ..llm.gemini_client import gemini_client
+        return await gemini_client.create_embedding(text, task_type)
+
+    async def create_embeddings_batch(
+        self,
+        texts: List[str],
+        task_type: str = "retrieval_document"
+    ) -> List[List[float]]:
+        """
+        Tạo embeddings cho nhiều texts với batching.
+        Sử dụng GeminiClient để có token rotation và tránh rate limit.
+        """
+        try:
+            from llm.gemini_client import gemini_client
+        except ImportError:
+            from ..llm.gemini_client import gemini_client
+        return await gemini_client.create_embeddings_batch(texts, task_type)
 
     async def store_document(
         self,
@@ -126,6 +148,74 @@ class PgVectorStore:
             print(f"❌ Error storing document: {e}")
             return False
 
+    async def store_documents_batch(
+        self,
+        documents: List[Dict[str, Any]]
+    ) -> int:
+        """
+        Lưu nhiều document chunks với batch embedding.
+        Sử dụng batch embedding để tối ưu rate limit.
+
+        Args:
+            documents: List dict với keys: id, user_storage_id, content, page_range, title (optional)
+
+        Returns:
+            Số documents được lưu thành công
+        """
+        if not documents:
+            return 0
+
+        try:
+            # Tạo batch embeddings
+            contents = [doc['content'] for doc in documents]
+            embeddings = await self.create_embeddings_batch(contents, "retrieval_document")
+
+            pool = await self._get_pool()
+            success_count = 0
+
+            # Insert từng document với embedding tương ứng
+            for i, doc in enumerate(documents):
+                try:
+                    await pool.execute(
+                        """
+                        INSERT INTO "Document" (id, "userStorageId", content, "pageRange", title, embeddings, "createdAt", "updatedAt")
+                        VALUES ($1, $2, $3, $4, $5, $6::vector, NOW(), NOW())
+                        ON CONFLICT (id) DO UPDATE SET
+                            content = EXCLUDED.content,
+                            embeddings = EXCLUDED.embeddings,
+                            "updatedAt" = NOW()
+                        """,
+                        doc['id'],
+                        doc['user_storage_id'],
+                        doc['content'],
+                        doc['page_range'],
+                        doc.get('title'),
+                        f"[{','.join(str(v) for v in embeddings[i])}]"
+                    )
+                    success_count += 1
+                except Exception as e:
+                    print(f"❌ Error storing document {doc['id']}: {e}")
+
+            print(f"✅ Stored {success_count}/{len(documents)} documents with batch embedding")
+            return success_count
+
+        except Exception as e:
+            print(f"❌ Error in batch store: {e}")
+            # Fallback: store từng document một
+            print("⚠️ Falling back to individual document storage...")
+            success_count = 0
+            for doc in documents:
+                success = await self.store_document(
+                    doc['id'],
+                    doc['user_storage_id'],
+                    doc['content'],
+                    doc['page_range'],
+                    doc.get('title')
+                )
+                if success:
+                    success_count += 1
+            return success_count
+
     async def search_similar(
         self,
         user_storage_ids: List[str],
@@ -149,8 +239,8 @@ class PgVectorStore:
         similarity_threshold = similarity_threshold or self.VECTOR_SEARCH_CONFIG["SIMILARITY_THRESHOLD"]
 
         try:
-            # Tạo embedding cho query
-            query_embedding = await self.create_embedding(query)
+            # Tạo embedding cho query (dùng task_type khác với document)
+            query_embedding = await self.create_embedding(query, task_type="retrieval_query")
 
             pool = await self._get_pool()
 

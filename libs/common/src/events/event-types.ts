@@ -90,6 +90,10 @@ export interface OcrRequestedPayload {
     fileUrl: string;
     fileName: string;
     mimeType: string;
+    // Optional generation params for async processing
+    typeResult?: number; // 1 = quiz, 2 = flashcard, 3 = both
+    quantityQuizz?: number;
+    quantityFlashcard?: number;
 }
 
 export interface OcrCompletedPayload {

@@ -8,6 +8,10 @@ import {
     Query,
     UseGuards,
     Req,
+    UseInterceptors,
+    UploadedFile,
+    Logger,
+    BadRequestException,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -16,15 +20,91 @@ import {
     ApiCookieAuth,
     ApiParam,
     ApiQuery,
+    ApiConsumes,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard, AuthenticatedRequest } from '@examio/common';
 import { AIService } from './ai.service';
-import { UploadFileDto, RegenerateDto, UploadImageDto } from './dto/ai.dto';
+import {
+    UploadFileDto,
+    RegenerateDto,
+    UploadImageDto,
+    GenerateFromFileDto,
+} from './dto/ai.dto';
 
 @ApiTags('AI')
 @Controller('ai')
 export class AIController {
+    private readonly logger = new Logger(AIController.name);
+
     constructor(private readonly aiService: AIService) {}
+
+    @Post('quick-upload')
+    @UseGuards(AuthGuard)
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Quick upload file cho AI Teacher (không chờ OCR)',
+    })
+    @ApiConsumes('multipart/form-data')
+    @ApiResponse({ status: 201, description: 'File đã được upload' })
+    async quickUpload(
+        @Req() req: AuthenticatedRequest,
+        @UploadedFile() file: Express.Multer.File
+    ) {
+        this.logger.log('--- EXAM SERVICE: QUICK UPLOAD REQUEST RECEIVED ---');
+        this.logger.log(`User: ${req.user?.id}`);
+        this.logger.log(
+            `File: ${file ? `${file.originalname} (${file.size} bytes)` : 'MISSING'}`
+        );
+
+        if (!file || !file.buffer) {
+            this.logger.error('No file received in exam-service quick-upload');
+            throw new BadRequestException('No file uploaded');
+        }
+
+        try {
+            return await this.aiService.quickUpload(req.user, file);
+        } catch (error) {
+            this.logger.error(
+                `--- EXAM SERVICE: QUICK UPLOAD ERROR --- ${error.message}`,
+                error.stack
+            );
+            throw error;
+        }
+    }
+
+    @Post('generate-from-file')
+    @UseGuards(AuthGuard)
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Upload file và tạo quiz/flashcard',
+    })
+    @ApiConsumes('multipart/form-data')
+    @ApiResponse({ status: 201, description: 'Job đã được tạo' })
+    async generateFromFile(
+        @Req() req: AuthenticatedRequest,
+        @UploadedFile() file: Express.Multer.File,
+        @Body() dto: GenerateFromFileDto
+    ) {
+        console.log(
+            '--- EXAM SERVICE: GENERATE FROM FILE REQUEST RECEIVED ---'
+        );
+        console.log('User:', req.user?.id);
+        console.log(
+            'File:',
+            file ? `${file.originalname} (${file.size} bytes)` : 'MISSING'
+        );
+
+        try {
+            return await this.aiService.generateFromFile(req.user, file, dto);
+        } catch (error) {
+            console.error('--- EXAM SERVICE: GENERATE ERROR ---', error);
+            this.logger.error(`Generate error: ${error.message}`, error.stack);
+            throw error;
+        }
+    }
 
     @Get('recent-uploads')
     @UseGuards(AuthGuard)
@@ -132,6 +212,27 @@ export class AIController {
             };
         }
         return this.aiService.getJobStatus(jobId, req.user);
+    }
+
+    @Delete('job/:jobId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Hủy job đang xử lý' })
+    @ApiParam({ name: 'jobId', description: 'ID của job (userStorageId)' })
+    @ApiResponse({ status: 200, description: 'Job đã được hủy' })
+    async cancelJob(
+        @Req() req: AuthenticatedRequest,
+        @Param('jobId') jobId: string
+    ) {
+        // Validate jobId
+        if (!jobId || jobId === 'undefined' || jobId === 'null') {
+            return {
+                error: 'Invalid job ID',
+                message: 'Job ID không hợp lệ',
+                statusCode: 400,
+            };
+        }
+        return this.aiService.cancelJob(jobId, req.user);
     }
 
     @Get('upload/:uploadId/history')

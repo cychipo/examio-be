@@ -11,6 +11,7 @@ import { firstValueFrom, Observable, Subject } from 'rxjs';
 import { ClientGrpc } from '@nestjs/microservices';
 import { AIChatRepository } from './ai-chat.repository';
 import { User } from '@prisma/client';
+import { PrismaService } from '@examio/database';
 
 interface SubscriptionService {
     getUserBenefits(data: { userId: string }): Observable<{
@@ -32,7 +33,8 @@ export class AIChatService implements OnModuleInit {
     constructor(
         private readonly chatRepository: AIChatRepository,
         private readonly httpService: HttpService,
-        @Inject('FINANCE_PACKAGE') private client: ClientGrpc
+        @Inject('FINANCE_PACKAGE') private client: ClientGrpc,
+        private readonly prisma: PrismaService
     ) {}
 
     onModuleInit() {
@@ -116,18 +118,33 @@ export class AIChatService implements OnModuleInit {
         });
 
         // Get history for context - sliding window of 30 recent messages
-        // When new message comes, oldest is dropped automatically (slice takes last 30)
         const history = await this.chatRepository.findMessagesByChatId(chatId);
         const historyForAI = history.slice(-30).map((m) => ({
             role: m.role,
             content: m.content,
         }));
 
-        // Get document IDs for RAG
-        const docIds =
-            data.documentIds ||
-            (await this.chatRepository.getDocumentIds(chatId));
-        const userStorageId = docIds.length > 0 ? docIds[0] : null;
+        // Collect all document IDs: from DTO + from chat's linked documents
+        let effectiveDocumentIds: string[] = [];
+        if (data.documentIds && Array.isArray(data.documentIds)) {
+            effectiveDocumentIds.push(...data.documentIds);
+        }
+        if (data.documentId) {
+            effectiveDocumentIds.push(data.documentId);
+        }
+        // Add documents from chat's AIChatDocument table
+        const chatDocIds = await this.chatRepository.getDocumentIds(chatId);
+        effectiveDocumentIds.push(...chatDocIds);
+        // Deduplicate
+        effectiveDocumentIds = [...new Set(effectiveDocumentIds)];
+
+        // Process documents on-demand if they haven't been OCR'd yet
+        if (effectiveDocumentIds.length > 0) {
+            await this.checkAndProcessDocuments(effectiveDocumentIds);
+        }
+
+        const userStorageId =
+            effectiveDocumentIds.length > 0 ? effectiveDocumentIds[0] : null;
 
         // Call AI service
         let aiResponse = '';
@@ -184,6 +201,28 @@ export class AIChatService implements OnModuleInit {
         // Check subscription limits
         await this.checkLimits(user.id, chatId);
 
+        // Collect all document IDs: from DTO + from chat's linked documents
+        let effectiveDocumentIds: string[] = [];
+        if (data.documentIds && Array.isArray(data.documentIds)) {
+            effectiveDocumentIds.push(...data.documentIds);
+        }
+        if (data.documentId) {
+            effectiveDocumentIds.push(data.documentId);
+        }
+        // Add documents from chat's AIChatDocument table
+        const chatDocIds = await this.chatRepository.getDocumentIds(chatId);
+        effectiveDocumentIds.push(...chatDocIds);
+        // Deduplicate
+        effectiveDocumentIds = [...new Set(effectiveDocumentIds)];
+
+        // Process documents on-demand if they haven't been OCR'd yet
+        if (effectiveDocumentIds.length > 0) {
+            this.logger.log(
+                `[streamMessage] Processing ${effectiveDocumentIds.length} documents on-demand...`
+            );
+            await this.checkAndProcessDocuments(effectiveDocumentIds);
+        }
+
         // 1. Save User Message
         const userMessage = await this.chatRepository.createMessage({
             id: this.generateId(),
@@ -204,10 +243,8 @@ export class AIChatService implements OnModuleInit {
             content: m.content,
         }));
 
-        const docIds =
-            data.documentIds ||
-            (await this.chatRepository.getDocumentIds(chatId));
-        const userStorageId = docIds.length > 0 ? docIds[0] : null;
+        const userStorageId =
+            effectiveDocumentIds.length > 0 ? effectiveDocumentIds[0] : null;
 
         const payload = {
             query: data.message,
@@ -398,6 +435,67 @@ export class AIChatService implements OnModuleInit {
         return (
             Date.now().toString(36) + Math.random().toString(36).substring(2, 9)
         );
+    }
+
+    /**
+     * Check and process documents on-demand
+     * If documents have PENDING/FAILED status, trigger OCR/vectorization via AI service
+     */
+    private async checkAndProcessDocuments(
+        documentIds: string[]
+    ): Promise<void> {
+        if (!documentIds.length) return;
+
+        // Find documents that need processing
+        const pendingDocs = await this.prisma.userStorage.findMany({
+            where: {
+                id: { in: documentIds },
+                processingStatus: { in: ['PENDING', 'FAILED'] },
+            },
+        });
+
+        if (pendingDocs.length === 0) {
+            this.logger.log(
+                '[checkAndProcessDocuments] All documents already processed'
+            );
+            return;
+        }
+
+        this.logger.log(
+            `[checkAndProcessDocuments] Processing ${pendingDocs.length} pending documents`
+        );
+
+        // Process each document sequentially
+        for (const doc of pendingDocs) {
+            try {
+                this.logger.log(
+                    `[checkAndProcessDocuments] Processing: ${doc.filename}`
+                );
+
+                // Call AI service to OCR/vectorize
+                const response = await firstValueFrom(
+                    this.httpService.post(
+                        `${this.aiServiceUrl}/ai/process-file`,
+                        { user_storage_id: doc.id },
+                        { timeout: 300000 } // 5 min timeout for OCR
+                    )
+                );
+
+                if (response.data?.success) {
+                    this.logger.log(
+                        `[checkAndProcessDocuments] Completed: ${doc.filename}`
+                    );
+                } else {
+                    this.logger.warn(
+                        `[checkAndProcessDocuments] Failed: ${doc.filename} - ${response.data?.error || 'Unknown error'}`
+                    );
+                }
+            } catch (error) {
+                this.logger.error(
+                    `[checkAndProcessDocuments] Error processing ${doc.filename}: ${error.message}`
+                );
+            }
+        }
     }
 
     private async checkLimits(userId: string, chatId: string) {
