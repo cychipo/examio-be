@@ -34,6 +34,7 @@ export const RegenerateSchema = z.object({
     quantityFlashcard: z.number().optional(),
     isNarrowSearch: z.boolean().optional(),
     keyword: z.string().optional(),
+    modelType: z.string().optional(), // 'gemini' or 'fayedark'
     // Legacy fields for backward compatibility
     outputType: z.enum(['quiz', 'flashcard']).optional(),
     count: z.number().optional(),
@@ -57,6 +58,12 @@ export class RegenerateDto extends createZodDto(RegenerateSchema) {
 
     @ApiProperty({ description: 'Từ khóa tìm kiếm', required: false })
     keyword?: string;
+
+    @ApiProperty({
+        description: 'Model AI: gemini hoặc fayedark',
+        required: false,
+    })
+    modelType?: string;
 
     @ApiProperty({
         description: 'Loại output (legacy)',
@@ -101,4 +108,10 @@ export class GenerateFromFileDto {
 
     @ApiProperty({ description: 'Từ khóa tìm kiếm', required: false })
     keyword?: string;
+
+    @ApiProperty({
+        description: 'Model AI: gemini hoặc fayedark',
+        required: false,
+    })
+    modelType?: string;
 }

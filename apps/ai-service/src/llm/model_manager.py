@@ -10,9 +10,28 @@ from enum import Enum
 # Load environment variables
 load_dotenv()
 
+
 class ModelType(str, Enum):
+    """Internal model type enum"""
     OLLAMA = "ollama"
     GEMINI = "gemini"
+
+
+class AIModelType(str, Enum):
+    """
+    AI Model types exposed to API.
+    - gemini: Google Gemini AI with key/model rotation
+    - fayedark: FayeDark AI using Ollama local LLM
+    """
+    GEMINI = "gemini"
+    FAYEDARK = "fayedark"
+
+    @classmethod
+    def to_model_type(cls, ai_model: "AIModelType") -> ModelType:
+        """Convert AIModelType to internal ModelType"""
+        if ai_model == cls.FAYEDARK:
+            return ModelType.OLLAMA
+        return ModelType.GEMINI
 
 class ModelManager:
     """Quản lý các mô hình LLM và tham số của chúng (Stateless)."""
@@ -196,6 +215,30 @@ class ModelManager:
             response.raise_for_status()
             data = response.json()
             return data.get("response", "")
+
+    async def generate_content_with_model(
+        self,
+        prompt: str,
+        ai_model_type: AIModelType = AIModelType.GEMINI
+    ) -> str:
+        """
+        Generate content using a specific AI model type (thread-safe).
+
+        This method does NOT change global state, making it safe for concurrent requests.
+
+        Args:
+            prompt: The prompt to send to the model
+            ai_model_type: The AI model to use (gemini or fayedark)
+
+        Returns:
+            Generated text response
+        """
+        model_type = AIModelType.to_model_type(ai_model_type)
+
+        if model_type == ModelType.GEMINI:
+            return await self._generate_with_gemini(prompt)
+        else:
+            return await self._generate_with_ollama(prompt)
 
 
 # Singleton instance

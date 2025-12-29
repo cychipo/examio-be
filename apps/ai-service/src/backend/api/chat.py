@@ -2,7 +2,8 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Literal
+from enum import Enum
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -15,6 +16,7 @@ from rag.simple_chat_agent import SimpleChatAgent
 from rag.retriever import create_in_memory_retriever
 from backend.services.ocr_service import ocr_service
 from rag.vector_store_pg import get_pg_vector_store
+from llm.model_manager import AIModelType
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,14 @@ class ChatRequest(BaseModel):
     history: List[Message] = Field(default=[], description="Previous conversation history")
     user_storage_id: Optional[str] = Field(None, description="ID for RAG context from a specific file")
     department: Optional[str] = Field(None, description="Department context for general RAG")
+    model_type: Optional[str] = Field(
+        default="gemini",
+        alias="modelType",
+        description="AI model to use: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)"
+    )
+
+    class Config:
+        populate_by_name = True
 
 class ChatResponse(BaseModel):
     answer: str
@@ -65,8 +75,9 @@ async def query_ai(request: ChatRequest):
     try:
         query = request.query
         user_storage_id = request.user_storage_id
+        model_type = request.model_type or "gemini"
 
-        logger.info(f"Query AI: {query[:50]}... (RAG ID: {user_storage_id})")
+        logger.info(f"Query AI: {query[:50]}... (RAG ID: {user_storage_id}, Model: {model_type})")
 
         retriever = None
         sources = []
@@ -83,10 +94,10 @@ async def query_ai(request: ChatRequest):
                 similar_docs = await pg_store.search_similar([user_storage_id], query, top_k=3)
                 sources = [{"content": doc.content[:300], "page": doc.page_range} for doc in similar_docs]
 
-        # 2. Use Agent to answer
+        # 2. Use Agent to answer with specified model type
         # Note: In a stateless model, we pass history to the agent if supported,
         # or we prefix the query with context.
-        agent = SimpleChatAgent(custom_retriever=retriever)
+        agent = SimpleChatAgent(custom_retriever=retriever, model_type=model_type)
 
         # If we have history, we should ideally use it.
         # For SimpleChatAgent, we might need to modify it to accept history or just use a generic LangChain chain.
@@ -118,8 +129,9 @@ async def stream_ai(request: ChatRequest):
     try:
         query = request.query
         user_storage_id = request.user_storage_id
+        model_type = request.model_type or "gemini"
 
-        logger.info(f"Stream AI: {query[:50]}... (RAG ID: {user_storage_id})")
+        logger.info(f"Stream AI: {query[:50]}... (RAG ID: {user_storage_id}, Model: {model_type})")
 
         retriever = None
 
@@ -130,7 +142,7 @@ async def stream_ai(request: ChatRequest):
                 combined_content = "\n\n".join([c.content for c in chunks])
                 retriever, _ = create_in_memory_retriever(combined_content)
 
-        agent = SimpleChatAgent(custom_retriever=retriever)
+        agent = SimpleChatAgent(custom_retriever=retriever, model_type=model_type)
 
         # History setup
         history_dicts = []

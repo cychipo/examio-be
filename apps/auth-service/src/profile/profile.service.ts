@@ -6,7 +6,7 @@ import {
     OnModuleInit,
 } from '@nestjs/common';
 import { ClientGrpc } from '@nestjs/microservices';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Observable } from 'rxjs';
 import { User } from '@prisma/client';
 import {
     GenerateIdService,
@@ -16,7 +16,7 @@ import {
 import { UserRepository } from '../repositories/user.repository';
 import { UpdateProfileDto, ProfileResponseDto } from './dto/profile.dto';
 
-// gRPC R2 Service interface
+// gRPC R2 Service interface (NestJS gRPC returns Observable, not Promise)
 interface R2GrpcService {
     uploadFile(data: {
         user_id: string;
@@ -24,7 +24,7 @@ interface R2GrpcService {
         mimetype: string;
         content: Buffer;
         folder?: string;
-    }): Promise<{
+    }): Observable<{
         success: boolean;
         file_id: string;
         url: string;
@@ -34,10 +34,10 @@ interface R2GrpcService {
     getFileUrl(data: {
         key_r2: string;
         expires_in_seconds?: number;
-    }): Promise<{ url: string; expires_at: number }>;
+    }): Observable<{ url: string; expires_at: number }>;
     deleteFile(data: {
         key_r2: string;
-    }): Promise<{ success: boolean; message: string }>;
+    }): Observable<{ success: boolean; message: string }>;
 }
 
 @Injectable()

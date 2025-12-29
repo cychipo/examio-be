@@ -114,6 +114,7 @@ export class AIChatController {
             documentId?: string;
             documentIds?: string[];
             documentName?: string;
+            modelType?: string;
         }
     ) {
         res.setHeader('Content-Type', 'text/event-stream');

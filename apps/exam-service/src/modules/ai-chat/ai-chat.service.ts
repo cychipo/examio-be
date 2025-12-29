@@ -194,6 +194,7 @@ export class AIChatService implements OnModuleInit {
             documentId?: string;
             documentIds?: string[];
             documentName?: string;
+            modelType?: string;
         }
     ): Promise<Observable<any>> {
         const chat = await this.getChatByIdAndValidateOwner(chatId, user);
@@ -250,7 +251,12 @@ export class AIChatService implements OnModuleInit {
             query: data.message,
             history: historyForAI,
             user_storage_id: userStorageId,
+            model_type: data.modelType || 'gemini',
         };
+
+        this.logger.log(
+            `[streamMessage] Using AI model: ${payload.model_type}`
+        );
 
         // 3. Call AI Service Stream
         this.httpService

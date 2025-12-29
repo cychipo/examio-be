@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from backend.utils.prompt_utils import prompt_utils
 from backend.services.ocr_service import ocr_service, DocumentChunk
-from llm.model_manager import model_manager
+from llm.model_manager import model_manager, AIModelType
 from rag.vector_store_pg import get_pg_vector_store
 
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +32,7 @@ class GenerateQuizRequest(BaseModel):
     num_questions: int = Field(default=10, ge=1, le=50, description="Số câu hỏi cần tạo")
     is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
+    model_type: str = Field(default="gemini", description="AI model: 'gemini' or 'fayedark'")
 
 
 class GenerateFlashcardRequest(BaseModel):
@@ -41,6 +42,7 @@ class GenerateFlashcardRequest(BaseModel):
     num_flashcards: int = Field(default=10, ge=1, le=50, description="Số flashcard cần tạo")
     is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
+    model_type: str = Field(default="gemini", description="AI model: 'gemini' or 'fayedark'")
 
 
 @dataclass
@@ -139,6 +141,10 @@ class ContentGenerationService:
             # Distribute questions across chunks
             questions_per_chunk = self._distribute_items(request.num_questions, len(chunks))
 
+            # Determine AI model type
+            ai_model = AIModelType.FAYEDARK if request.model_type == "fayedark" else AIModelType.GEMINI
+            logger.info(f"Using AI model: {ai_model.value}")
+
             # Generate questions from each chunk
             all_questions = []
             for i, chunk in enumerate(chunks):
@@ -151,8 +157,8 @@ class ContentGenerationService:
                     content=chunk.content
                 )
 
-                # Call LLM
-                response = await model_manager.generate_content(prompt)
+                # Call LLM with specified model type
+                response = await model_manager.generate_content_with_model(prompt, ai_model)
                 questions = self._parse_quiz_response(response, chunk.page_range)
                 all_questions.extend(questions)
 
@@ -227,6 +233,10 @@ class ContentGenerationService:
             # Distribute flashcards across chunks
             flashcards_per_chunk = self._distribute_items(request.num_flashcards, len(chunks))
 
+            # Determine AI model type
+            ai_model = AIModelType.FAYEDARK if request.model_type == "fayedark" else AIModelType.GEMINI
+            logger.info(f"Using AI model: {ai_model.value}")
+
             # Generate flashcards from each chunk
             all_flashcards = []
             for i, chunk in enumerate(chunks):
@@ -239,8 +249,8 @@ class ContentGenerationService:
                     content=chunk.content
                 )
 
-                # Call LLM
-                response = await model_manager.generate_content(prompt)
+                # Call LLM with specified model type
+                response = await model_manager.generate_content_with_model(prompt, ai_model)
                 flashcards = self._parse_flashcard_response(response, chunk.page_range)
                 all_flashcards.extend(flashcards)
 

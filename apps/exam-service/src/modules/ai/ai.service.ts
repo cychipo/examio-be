@@ -224,7 +224,8 @@ export class AIService {
                 user.id,
                 typeResult,
                 quantityQuizz,
-                quantityFlashcard
+                quantityFlashcard,
+                dto.modelType
             ).catch((err) => {
                 this.logger.error(
                     `Background processing failed for ${userStorage.id}: ${err.message}`
@@ -259,7 +260,8 @@ export class AIService {
         userId: string,
         typeResult: number,
         quantityQuizz: number,
-        quantityFlashcard: number
+        quantityFlashcard: number,
+        modelType?: string
     ): Promise<void> {
         try {
             this.logger.log(
@@ -302,7 +304,7 @@ export class AIService {
                 : `${this.aiServiceUrl}/generate/quiz`;
 
             this.logger.log(
-                `Generating ${count} ${isFlashcard ? 'flashcards' : 'quiz questions'} for ${userStorageId}...`
+                `Generating ${count} ${isFlashcard ? 'flashcards' : 'quiz questions'} for ${userStorageId} with model: ${modelType || 'gemini'}...`
             );
 
             const generateResponse = await firstValueFrom(
@@ -312,6 +314,7 @@ export class AIService {
                         userStorageId,
                         userId,
                         [isFlashcard ? 'numFlashcards' : 'numQuestions']: count,
+                        modelType: modelType || 'gemini',
                     },
                     { timeout: 300000 } // 5 min timeout for generation
                 )
@@ -546,7 +549,8 @@ export class AIService {
             user.id,
             dto.typeResult || 1,
             dto.quantityQuizz || 10,
-            dto.quantityFlashcard || 10
+            dto.quantityFlashcard || 10,
+            dto.modelType
         ).catch((err) =>
             this.logger.error(`Background processing failed: ${err.message}`)
         );
@@ -590,7 +594,8 @@ export class AIService {
                 user.id,
                 dto.typeResult || 1,
                 dto.quantityQuizz || dto.count || 10,
-                dto.quantityFlashcard || dto.count || 10
+                dto.quantityFlashcard || dto.count || 10,
+                dto.modelType
             ).catch((err) =>
                 this.logger.error(
                     `Background processing failed: ${err.message}`
@@ -648,6 +653,7 @@ export class AIService {
                             numFlashcards: count,
                             isNarrowSearch: dto.isNarrowSearch,
                             keyword: dto.keyword,
+                            modelType: dto.modelType || 'gemini',
                         }
                     )
                 );
@@ -677,6 +683,7 @@ export class AIService {
                             numQuestions: count,
                             isNarrowSearch: dto.isNarrowSearch,
                             keyword: dto.keyword,
+                            modelType: dto.modelType || 'gemini',
                         }
                     )
                 );

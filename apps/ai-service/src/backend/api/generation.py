@@ -34,6 +34,11 @@ class GenerateQuizBody(BaseModel):
     num_questions: int = Field(default=10, alias="numQuestions", ge=1, le=50)
     is_narrow_search: bool = Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")
     keyword: str = Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")
+    model_type: str = Field(
+        default="gemini",
+        alias="modelType",
+        description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
+    )
 
     class Config:
         populate_by_name = True
@@ -46,6 +51,11 @@ class GenerateFlashcardBody(BaseModel):
     num_flashcards: int = Field(default=10, alias="numFlashcards", ge=1, le=50)
     is_narrow_search: bool = Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")
     keyword: str = Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")
+    model_type: str = Field(
+        default="gemini",
+        alias="modelType",
+        description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
+    )
 
     class Config:
         populate_by_name = True
@@ -71,14 +81,15 @@ async def generate_quiz(body: GenerateQuizBody):
     - quizzes: array of generated questions
     - count: number of questions generated
     """
-    logger.info(f"Generate quiz request: {body.user_storage_id}, {body.num_questions} questions")
+    logger.info(f"Generate quiz request: {body.user_storage_id}, {body.num_questions} questions, model: {body.model_type}")
 
     request = GenerateQuizRequest(
         user_storage_id=body.user_storage_id,
         user_id=body.user_id,
         num_questions=body.num_questions,
         is_narrow_search=body.is_narrow_search,
-        keyword=body.keyword
+        keyword=body.keyword,
+        model_type=body.model_type
     )
 
     result = await generation_service.generate_quiz(request)
@@ -110,14 +121,15 @@ async def generate_flashcards(body: GenerateFlashcardBody):
     - flashcards: array of generated flashcards
     - count: number of flashcards generated
     """
-    logger.info(f"Generate flashcards request: {body.user_storage_id}, {body.num_flashcards} flashcards")
+    logger.info(f"Generate flashcards request: {body.user_storage_id}, {body.num_flashcards} flashcards, model: {body.model_type}")
 
     request = GenerateFlashcardRequest(
         user_storage_id=body.user_storage_id,
         user_id=body.user_id,
         num_flashcards=body.num_flashcards,
         is_narrow_search=body.is_narrow_search,
-        keyword=body.keyword
+        keyword=body.keyword,
+        model_type=body.model_type
     )
 
     result = await generation_service.generate_flashcards(request)

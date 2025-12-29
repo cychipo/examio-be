@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from llm import get_llm, LLMConfig
+from llm.model_manager import AIModelType, model_manager
 from rag.retriever import create_enhanced_hybrid_retriever, smart_retrieve, get_metadata_config, MetadataEnhancedHybridRetriever
 
 # Set up logging
@@ -15,11 +16,19 @@ logger = logging.getLogger(__name__)
 class SimpleChatAgent:
     """Simplified chat agent without LangGraph to avoid recursion issues"""
 
-    def __init__(self, custom_retriever=None, model_name: str = None):
-        """Initialize the Simple Chat Agent"""
+    def __init__(self, custom_retriever=None, model_name: str = None, model_type: str = "gemini"):
+        """Initialize the Simple Chat Agent
+
+        Args:
+            custom_retriever: Custom retriever for RAG (optional)
+            model_name: Specific model name (optional, deprecated)
+            model_type: AI model type - 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)
+        """
         try:
-            self.llm = get_llm()
-            logger.info(f"Initialized LLM with runtime model selection")
+            # Use LLMFactory to create model based on model_type
+            self.model_type = model_type
+            self.llm = self._create_llm_for_type(model_type)
+            logger.info(f"Initialized LLM with model type: {model_type}")
         except Exception as e:
             logger.error(f"Failed to initialize LLM: {e}")
             raise
@@ -36,6 +45,30 @@ class SimpleChatAgent:
 
         # Load prompts
         self.prompts = self._load_prompts()
+
+    def _create_llm_for_type(self, model_type: str):
+        """Create LLM instance based on model type
+
+        Args:
+            model_type: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)
+
+        Returns:
+            Configured LLM instance
+        """
+        from llm.llm_factory import LLMFactory
+        from llm.model_manager import ModelType
+
+        # Temporarily set model type for LLMFactory
+        if model_type == "fayedark":
+            model_manager._runtime_model_type = ModelType.OLLAMA
+        else:
+            model_manager._runtime_model_type = ModelType.GEMINI
+
+        try:
+            return LLMFactory.create_llm()
+        finally:
+            # Reset to default after creation
+            model_manager._runtime_model_type = None
 
     def get_default_retriever(self):
         """Get the default hybrid retriever for KMA regulations"""
