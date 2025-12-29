@@ -34,6 +34,9 @@ import {
     CheatingLogProxyController,
 } from './controllers/ai-study-proxy.controller';
 
+// R2 Storage
+import { R2ProxyController } from './controllers/r2-proxy.controller';
+
 @Module({
     imports: [
         // Rate limiting: 100 requests per minute
@@ -69,6 +72,8 @@ import {
         FlashcardStudyProxyController,
         QuizPracticeProxyController,
         CheatingLogProxyController,
+        // R2 Storage
+        R2ProxyController,
     ],
     providers: [
         {

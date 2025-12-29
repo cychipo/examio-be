@@ -2,6 +2,7 @@ import {
     Controller,
     Get,
     Post,
+    Put,
     Delete,
     Param,
     Body,
@@ -729,7 +730,7 @@ export class QuizPracticeProxyController {
         );
     }
 
-    @Post(':attemptId')
+    @Put(':attemptId')
     @ApiOperation({ summary: 'Update attempt' })
     async update(
         @Param('attemptId') attemptId: string,

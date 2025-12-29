@@ -21,6 +21,7 @@ import { FlashcardSetModule } from './modules/flashcardset/flashcardset.module';
 import { AIModule } from './modules/ai/ai.module';
 import { AIChatModule } from './modules/ai-chat/ai-chat.module';
 import { FinanceClientModule } from './modules/finance-client/finance-client.module';
+import { R2Module } from './modules/r2/r2.module';
 
 @Module({
     imports: [
@@ -38,6 +39,7 @@ import { FinanceClientModule } from './modules/finance-client/finance-client.mod
         FlashcardSetModule,
         AIModule,
         AIChatModule,
+        R2Module,
     ],
     controllers: [ExamServiceController],
     providers: [
