@@ -8,7 +8,13 @@ import {
     Body,
     Query,
     Req,
+    UseInterceptors,
+    UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import * as FormData from 'form-data';
 import {
     ApiTags,
     ApiOperation,
@@ -24,7 +30,10 @@ import { ProxyService } from '../services/proxy.service';
 @Controller('wallet')
 @ApiBearerAuth('access-token')
 export class WalletProxyController {
-    constructor(private readonly proxyService: ProxyService) {}
+    constructor(
+        private readonly proxyService: ProxyService,
+        private readonly httpService: HttpService
+    ) {}
 
     @Get('details')
     @ApiOperation({ summary: 'Lấy chi tiết ví với transactions' })
@@ -149,7 +158,10 @@ export class PaymentProxyController {
 @Controller('profile')
 @ApiBearerAuth('access-token')
 export class ProfileProxyController {
-    constructor(private readonly proxyService: ProxyService) {}
+    constructor(
+        private readonly proxyService: ProxyService,
+        private readonly httpService: HttpService
+    ) {}
 
     @Get()
     @ApiOperation({ summary: 'Lấy thông tin profile' })
@@ -177,32 +189,38 @@ export class ProfileProxyController {
     }
 
     @Post('upload-avatar')
+    @UseInterceptors(FileInterceptor('file'))
     @ApiOperation({ summary: 'Upload avatar' })
-    async uploadAvatar(@Body() body: any, @Req() req: Request) {
-        return this.proxyService.forwardWithAuth(
-            'auth',
-            {
-                method: 'POST',
-                path: '/api/v1/profile/upload-avatar',
-                body,
-                headers: this.h(req),
-            },
-            this.t(req)
+    async uploadAvatar(
+        @Req() req: Request,
+        @UploadedFile() file: Express.Multer.File
+    ) {
+        if (!file) {
+            throw new Error('No file uploaded');
+        }
+        return this.forwardWithFile(
+            'POST',
+            '/api/v1/profile/upload-avatar',
+            file,
+            req
         );
     }
 
     @Post('upload-banner')
+    @UseInterceptors(FileInterceptor('file'))
     @ApiOperation({ summary: 'Upload banner' })
-    async uploadBanner(@Body() body: any, @Req() req: Request) {
-        return this.proxyService.forwardWithAuth(
-            'auth',
-            {
-                method: 'POST',
-                path: '/api/v1/profile/upload-banner',
-                body,
-                headers: this.h(req),
-            },
-            this.t(req)
+    async uploadBanner(
+        @Req() req: Request,
+        @UploadedFile() file: Express.Multer.File
+    ) {
+        if (!file) {
+            throw new Error('No file uploaded');
+        }
+        return this.forwardWithFile(
+            'POST',
+            '/api/v1/profile/upload-banner',
+            file,
+            req
         );
     }
 
@@ -214,6 +232,66 @@ export class ProfileProxyController {
         return a?.startsWith('Bearer ')
             ? a.substring(7)
             : req.cookies?.token || req.cookies?.accessToken || '';
+    }
+
+    /**
+     * Forward request with file as multipart/form-data to auth service
+     */
+    private async forwardWithFile(
+        method: string,
+        path: string,
+        file: Express.Multer.File,
+        req: Request
+    ) {
+        console.log('forwardWithFile - file info:', {
+            filename: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            hasBuffer: !!file.buffer,
+            bufferLength: file.buffer?.length,
+        });
+
+        const formData = new FormData();
+
+        // Append file with buffer
+        formData.append('file', file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+        });
+
+        const authServiceUrl =
+            process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
+        const url = `${authServiceUrl}${path}`;
+
+        try {
+            const response = await firstValueFrom(
+                this.httpService.request({
+                    method,
+                    url,
+                    data: formData,
+                    headers: {
+                        ...formData.getHeaders(),
+                        Authorization: `Bearer ${this.t(req)}`,
+                    },
+                    maxBodyLength: Infinity,
+                    maxContentLength: Infinity,
+                })
+            );
+            return response.data;
+        } catch (error) {
+            console.error('forwardWithFile error:', {
+                status: error.response?.status,
+                data: error.response?.data,
+                message: error.message,
+            });
+            if (error.response) {
+                throw new Error(
+                    JSON.stringify(error.response.data) ||
+                        'Failed to forward request'
+                );
+            }
+            throw error;
+        }
     }
 }
 

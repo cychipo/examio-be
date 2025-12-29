@@ -50,6 +50,14 @@ export class SePayService {
 
             return response.data;
         } catch (error) {
+            if (error.response?.status === 401) {
+                this.logger.error(
+                    'SePay API authentication failed - Invalid or expired API key'
+                );
+                throw new BadGatewayException(
+                    'Payment service authentication failed. Please check SePay API key configuration.'
+                );
+            }
             this.logger.error(`Error payment status: ${error.message}`);
             throw new BadGatewayException('System error', error.message);
         }

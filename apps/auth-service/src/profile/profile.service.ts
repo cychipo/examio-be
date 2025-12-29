@@ -6,6 +6,7 @@ import {
     OnModuleInit,
 } from '@nestjs/common';
 import { ClientGrpc } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 import { User } from '@prisma/client';
 import {
     GenerateIdService,
@@ -146,17 +147,43 @@ export class ProfileService implements OnModuleInit {
         const directory = type === 'avatar' ? 'avatars' : 'banners';
 
         // Upload via gRPC to R2 Service
-        const uploadResult = await this.r2GrpcService.uploadFile({
-            user_id: user.id,
-            filename,
-            mimetype: file.mimetype,
-            content: file.buffer,
-            folder: directory,
-        });
+        let uploadResult;
+        try {
+            console.log('Calling R2 gRPC uploadFile with:', {
+                user_id: user.id,
+                filename,
+                mimetype: file.mimetype,
+                contentLength: file.buffer.length,
+                folder: directory,
+            });
+
+            uploadResult = await firstValueFrom(
+                this.r2GrpcService.uploadFile({
+                    user_id: user.id,
+                    filename,
+                    mimetype: file.mimetype,
+                    content: file.buffer,
+                    folder: directory,
+                })
+            );
+
+            console.log('R2 gRPC uploadFile result:', uploadResult);
+        } catch (error) {
+            console.error('R2 gRPC uploadFile error:', error);
+            throw new BadRequestException(
+                `R2 service error: ${error.message || 'Failed to connect to R2 service. Make sure r2-service is running.'}`
+            );
+        }
+
+        if (!uploadResult) {
+            throw new BadRequestException(
+                'R2 service returned no result. Make sure r2-service is running.'
+            );
+        }
 
         if (!uploadResult.success) {
             throw new BadRequestException(
-                `Upload failed: ${uploadResult.message}`
+                `Upload failed: ${uploadResult.message || 'Unknown error from R2 service'}`
             );
         }
 
@@ -172,14 +199,11 @@ export class ProfileService implements OnModuleInit {
         if (oldImageUrl) {
             const oldKey = this.extractR2Key(oldImageUrl);
             if (oldKey) {
-                await this.r2GrpcService
-                    .deleteFile({ key_r2: oldKey })
-                    .catch((err) => {
-                        console.warn(
-                            `Failed to delete old ${type} from R2:`,
-                            err
-                        );
-                    });
+                await firstValueFrom(
+                    this.r2GrpcService.deleteFile({ key_r2: oldKey })
+                ).catch((err) => {
+                    console.warn(`Failed to delete old ${type} from R2:`, err);
+                });
             }
         }
 
