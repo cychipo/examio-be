@@ -4,11 +4,17 @@ import { AuthModule } from '@examio/common';
 import { DevicesController } from './devices.controller';
 import { DevicesService } from './devices.service';
 import { UserSessionRepository } from './repositories/user-session.repository';
+import { SessionCleanupCron } from './session-cleanup.cron';
 
 @Module({
     imports: [AuthModule],
     controllers: [DevicesController],
-    providers: [DevicesService, PrismaService, UserSessionRepository],
+    providers: [
+        DevicesService,
+        PrismaService,
+        UserSessionRepository,
+        SessionCleanupCron,
+    ],
     exports: [DevicesService, UserSessionRepository],
 })
 export class DevicesModule {}

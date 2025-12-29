@@ -65,6 +65,14 @@ export class LogoutResponseDto {
     success: boolean;
 }
 
+export class RefreshTokenResponseDto {
+    @ApiProperty({ description: 'Trạng thái thành công' })
+    success: boolean;
+
+    @ApiProperty({ description: 'Access token mới' })
+    token: string;
+}
+
 export class AuthMessageResponseDto {
     @ApiProperty({ description: 'Thông báo' })
     message: string;

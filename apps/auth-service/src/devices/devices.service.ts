@@ -19,8 +19,22 @@ export class DevicesService {
         userId: string,
         currentSessionId: string
     ): Promise<GetDevicesResponseDto> {
+        console.log(
+            '[DevicesService] getDevices - currentSessionId:',
+            currentSessionId
+        );
+
         const sessions =
             await this.userSessionRepository.findActiveSessionsByUserId(userId);
+
+        console.log('[DevicesService] Found sessions:', sessions.length);
+        sessions.forEach((s, idx) => {
+            console.log(`[DevicesService] Session ${idx}:`, {
+                id: s.id,
+                sessionId: s.sessionId,
+                isCurrent: s.sessionId === currentSessionId,
+            });
+        });
 
         const devices: DeviceDto[] = sessions.map((session) => ({
             id: session.id,
@@ -75,7 +89,11 @@ export class DevicesService {
     async logoutAllOthers(
         userId: string,
         currentSessionId: string
-    ): Promise<{ success: boolean; message: string; devicesLoggedOut: number }> {
+    ): Promise<{
+        success: boolean;
+        message: string;
+        devicesLoggedOut: number;
+    }> {
         const count =
             await this.userSessionRepository.deactivateAllOtherSessions(
                 userId,

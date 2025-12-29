@@ -26,6 +26,13 @@ async function bootstrap() {
             'http://127.0.0.1:5173',
         ],
         credentials: true,
+        allowedHeaders: [
+            'Content-Type',
+            'Authorization',
+            'Cookie',
+            'X-Requested-With',
+            'X-Device-ID',
+        ],
     });
 
     // Swagger Configuration

@@ -13,8 +13,14 @@
         "tsConfigPath": "apps/codecraft-be/tsconfig.app.json",
         "webpack": true,
         "deleteOutDir": true,
-        "assets": [],
-        "watchAssets": false,
+        "assets": [
+            {
+                "include": "templates/**/*",
+                "outDir": "dist",
+                "watchAssets": true
+            }
+        ],
+        "watchAssets": true,
         "plugins": []
     },
     "root": "apps/codecraft-be",
@@ -25,7 +31,14 @@
             "entryFile": "main",
             "sourceRoot": "apps/auth-service/src",
             "compilerOptions": {
-                "tsConfigPath": "apps/auth-service/tsconfig.app.json"
+                "tsConfigPath": "apps/auth-service/tsconfig.app.json",
+                "assets": [
+                    {
+                        "include": "../../templates/**/*",
+                        "outDir": "dist/apps/auth-service",
+                        "watchAssets": true
+                    }
+                ]
             }
         },
         "codecraft-be": {
@@ -61,7 +74,14 @@
             "entryFile": "main",
             "sourceRoot": "apps/exam-service/src",
             "compilerOptions": {
-                "tsConfigPath": "apps/exam-service/tsconfig.app.json"
+                "tsConfigPath": "apps/exam-service/tsconfig.app.json",
+                "assets": [
+                    {
+                        "include": "../../templates/**/*",
+                        "outDir": "dist/apps/exam-service",
+                        "watchAssets": true
+                    }
+                ]
             }
         },
         "finance-service": {

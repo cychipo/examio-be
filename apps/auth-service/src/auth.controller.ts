@@ -6,6 +6,7 @@ import {
     Req,
     Get,
     Res,
+    UnauthorizedException,
 } from '@nestjs/common';
 import { AuthService, DeviceInfo } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -35,6 +36,7 @@ import {
     LogoutResponseDto,
     AuthMessageResponseDto,
     GetUserResponseDto,
+    RefreshTokenResponseDto,
 } from './dto/auth-response.dto';
 import * as crypto from 'crypto';
 
@@ -46,7 +48,8 @@ import * as crypto from 'crypto';
     LoginResponseDto,
     LogoutResponseDto,
     AuthMessageResponseDto,
-    GetUserResponseDto
+    GetUserResponseDto,
+    RefreshTokenResponseDto
 )
 @Controller('auth')
 export class AuthController {
@@ -113,10 +116,63 @@ export class AuthController {
     })
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
-    async logout(@Res({ passthrough: true }) response: ExpressResponse) {
+    async logout(
+        @Req() request: Request,
+        @Res({ passthrough: true }) response: ExpressResponse
+    ) {
+        // Extract session ID from cookie
+        const sessionId = request.cookies?.session_id;
+
+        // Deactivate session in database if exists
+        if (sessionId) {
+            await this.authService.logout(sessionId);
+        }
+
+        // Clear cookies
         response.clearCookie('token');
+        response.clearCookie('refreshToken');
         response.clearCookie('session_id');
         return { success: true };
+    }
+
+    @Post('refresh')
+    @ApiOperation({ summary: 'Refresh access token using refresh token' })
+    @ApiResponse({
+        status: 200,
+        description: 'New access token generated',
+        type: RefreshTokenResponseDto,
+    })
+    async refreshToken(
+        @Req() request: Request,
+        @Res({ passthrough: true }) response: ExpressResponse
+    ) {
+        // Extract refresh token from cookie
+        const refreshToken = request.cookies?.refreshToken;
+
+        if (!refreshToken) {
+            throw new UnauthorizedException('Refresh token not found');
+        }
+
+        try {
+            const result =
+                await this.authService.refreshAccessToken(refreshToken);
+
+            const cookieConfig = getCookieConfig({
+                feOrigin: request.headers.origin,
+                isProductionBE: process.env.NODE_ENV === 'production',
+            });
+
+            // Set new access token
+            response.cookie('token', result.token, cookieConfig);
+            response.cookie('accessToken', result.token, cookieConfig);
+
+            return {
+                success: true,
+                token: result.token,
+            };
+        } catch (error) {
+            throw new UnauthorizedException('Invalid or expired refresh token');
+        }
     }
 
     @Post('sendVerificationEmail')
@@ -225,7 +281,7 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token } = req.user;
+        const { token, sessionId } = req.user;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -233,6 +289,9 @@ export class AuthController {
         });
 
         res.cookie('token', token, cookieConfig);
+        if (sessionId) {
+            res.cookie('session_id', sessionId, cookieConfig);
+        }
 
         const isLocalFE =
             request.headers.origin?.includes('localhost') ||
@@ -258,7 +317,7 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token } = req.user;
+        const { token, sessionId } = req.user;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -266,6 +325,9 @@ export class AuthController {
         });
 
         res.cookie('token', token, cookieConfig);
+        if (sessionId) {
+            res.cookie('session_id', sessionId, cookieConfig);
+        }
 
         const isLocalFE =
             request.headers.origin?.includes('localhost') ||
@@ -291,7 +353,7 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token } = req.user;
+        const { token, sessionId } = req.user;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -299,6 +361,9 @@ export class AuthController {
         });
 
         res.cookie('token', token, cookieConfig);
+        if (sessionId) {
+            res.cookie('session_id', sessionId, cookieConfig);
+        }
 
         const isLocalFE =
             request.headers.origin?.includes('localhost') ||

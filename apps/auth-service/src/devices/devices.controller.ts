@@ -59,10 +59,16 @@ export class DevicesController {
 
     private extractSessionIdFromCookie(req: Request): string | undefined {
         const cookieHeader = req.headers.cookie;
+        console.log('[DevicesController] Cookie header:', cookieHeader);
+
         if (cookieHeader) {
             const cookies = cookie.parse(cookieHeader);
+            console.log('[DevicesController] Parsed cookies:', cookies);
+            console.log('[DevicesController] session_id:', cookies.session_id);
             return cookies.session_id;
         }
+
+        console.log('[DevicesController] No cookie header found');
         return undefined;
     }
 }

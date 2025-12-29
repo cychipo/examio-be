@@ -478,24 +478,26 @@ model UserMonthlyFileUpload {
 
 
 model UserSession {
-    id           String   @id
-    userId       String
-    sessionId    String   @unique
-    deviceId     String
-    deviceName   String?
-    browser      String?
-    os           String?
-    ipAddress    String?
-    country      String?
-    city         String?
-    isActive     Boolean  @default(true)
-    lastActivity DateTime @default(now())
-    createdAt    DateTime @default(now())
-    expiresAt    DateTime
-    updatedAt    DateTime @default(now()) @updatedAt
+    id            String   @id
+    userId        String
+    sessionId     String   @unique
+    refreshToken  String   @unique // Token để refresh access token
+    deviceId      String
+    deviceName    String?
+    browser       String?
+    os            String?
+    ipAddress     String?
+    country       String?
+    city          String?
+    isActive      Boolean  @default(true)
+    lastActivity  DateTime @default(now())
+    createdAt     DateTime @default(now())
+    expiresAt     DateTime
+    updatedAt     DateTime @default(now()) @updatedAt
 
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     @@index([userId, isActive])
     @@index([userId, deviceId])
+    @@index([refreshToken])
 }

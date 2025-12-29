@@ -49,4 +49,16 @@ export class LoginResponse {
         required: false,
     })
     deviceId?: string;
+
+    @ApiProperty({
+        description: 'Session ID for device tracking',
+        required: false,
+    })
+    sessionId?: string;
+
+    @ApiProperty({
+        description: 'Refresh token để renew access token',
+        required: false,
+    })
+    refreshToken?: string;
 }

@@ -10,6 +10,7 @@ export interface ProxyRequest {
     body?: any;
     headers?: Record<string, string>;
     query?: Record<string, string>;
+    cookies?: Record<string, string>;
 }
 
 @Injectable()
@@ -34,12 +35,24 @@ export class ProxyService {
         const baseUrl = this.serviceUrls[service];
         const url = `${baseUrl}${request.path}`;
 
+        // Debug logging for cookies
+        if (request.cookies) {
+            this.logger.debug(
+                `Forwarding cookies: ${JSON.stringify(request.cookies)}`
+            );
+        }
+
         const config: AxiosRequestConfig = {
             method: request.method as any,
             url,
             headers: {
                 ...request.headers,
                 'Content-Type': 'application/json',
+                ...(request.cookies && {
+                    Cookie: Object.entries(request.cookies)
+                        .map(([key, value]) => `${key}=${value}`)
+                        .join('; '),
+                }),
             },
             params: request.query,
         };

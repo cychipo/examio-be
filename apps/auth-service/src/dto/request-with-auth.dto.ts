@@ -8,5 +8,6 @@ export interface AuthenticatedOauthRequest extends Request {
     user: {
         user: User;
         token?: string;
+        sessionId?: string;
     };
 }

@@ -10,6 +10,7 @@ export class UserSessionRepository {
         id: string;
         userId: string;
         sessionId: string;
+        refreshToken: string;
         deviceId: string;
         deviceName?: string | null;
         browser?: string | null;
@@ -20,6 +21,14 @@ export class UserSessionRepository {
         expiresAt: Date;
     }): Promise<UserSession> {
         return this.prisma.userSession.create({ data });
+    }
+
+    async findByRefreshToken(
+        refreshToken: string
+    ): Promise<UserSession | null> {
+        return this.prisma.userSession.findUnique({
+            where: { refreshToken },
+        });
     }
 
     async findBySessionId(sessionId: string): Promise<UserSession | null> {
@@ -48,6 +57,13 @@ export class UserSessionRepository {
     async deactivateSession(id: string): Promise<void> {
         await this.prisma.userSession.update({
             where: { id },
+            data: { isActive: false },
+        });
+    }
+
+    async deactivateByRefreshToken(refreshToken: string): Promise<void> {
+        await this.prisma.userSession.updateMany({
+            where: { refreshToken },
             data: { isActive: false },
         });
     }

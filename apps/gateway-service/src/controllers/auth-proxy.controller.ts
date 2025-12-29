@@ -44,10 +44,30 @@ export class AuthProxyController {
             headers: this.extractHeaders(req),
         });
         if (result.token) {
-            res.cookie('accessToken', result.token, {
+            const cookieOptions = {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax' as const,
                 maxAge: 30 * 24 * 60 * 60 * 1000,
+            };
+            // Set both cookies for compatibility
+            res.cookie('token', result.token, cookieOptions);
+            res.cookie('accessToken', result.token, cookieOptions);
+        }
+        if (result.sessionId) {
+            res.cookie('session_id', result.sessionId, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax' as const,
+                maxAge: 30 * 24 * 60 * 60 * 1000,
+            });
+        }
+        if (result.refreshToken) {
+            res.cookie('refreshToken', result.refreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax' as const,
+                maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
             });
         }
         return res.json(result);
@@ -159,10 +179,14 @@ export class AuthProxyController {
                 method: 'POST',
                 path: '/api/v1/auth/logout',
                 headers: this.extractHeaders(req),
+                cookies: req.cookies,
             },
             this.extractToken(req)
         );
         res.clearCookie('accessToken');
+        res.clearCookie('token');
+        res.clearCookie('session_id');
+        res.clearCookie('refreshToken');
         return res.json(result);
     }
 
@@ -231,6 +255,7 @@ export class AuthProxyController {
     private extractHeaders(req: Request): Record<string, string> {
         return {
             'user-agent': req.headers['user-agent'] || '',
+            'x-device-id': (req.headers['x-device-id'] as string) || '',
             'x-forwarded-for':
                 (req.headers['x-forwarded-for'] as string) ||
                 req.socket.remoteAddress ||

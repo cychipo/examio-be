@@ -4,6 +4,7 @@ import {
     NotFoundException,
     InternalServerErrorException,
     BadRequestException,
+    UnauthorizedException,
     Inject,
     OnModuleInit,
 } from '@nestjs/common';
@@ -70,18 +71,30 @@ export class AuthService {
             }
             const token = this.jwtService.sign({ userId: user.id });
 
-            let sessionId: string | undefined;
-            if (deviceInfo) {
-                sessionId = await this.createSession(user.id, deviceInfo);
-            }
+            try {
+                // Extract device info from request if available
+                let sessionId: string | undefined;
+                let refreshToken: string | undefined;
+                if (deviceInfo) {
+                    const session = await this.createSession(
+                        user.id,
+                        deviceInfo
+                    );
+                    sessionId = session.sessionId;
+                    refreshToken = session.refreshToken;
+                }
 
-            return {
-                token,
-                user: sanitizeUser(user),
-                success: true,
-                sessionId,
-                deviceId: deviceInfo?.deviceId,
-            };
+                return {
+                    token,
+                    user: sanitizeUser(user),
+                    success: true,
+                    sessionId,
+                    refreshToken,
+                    deviceId: deviceInfo?.deviceId,
+                };
+            } catch (error) {
+                throw error;
+            }
         } catch (error) {
             if (
                 error instanceof NotFoundException ||
@@ -499,9 +512,16 @@ export class AuthService {
 
         const token = this.jwtService.sign({ userId: existingUser.id });
 
+        // Create session for OAuth login
         let sessionId: string | undefined;
+        let refreshToken: string | undefined;
         if (deviceInfo) {
-            sessionId = await this.createSession(existingUser.id, deviceInfo);
+            const session = await this.createSession(
+                existingUser.id,
+                deviceInfo
+            );
+            sessionId = session.sessionId;
+            refreshToken = session.refreshToken;
         }
 
         return {
@@ -509,6 +529,7 @@ export class AuthService {
             user: sanitizeUser(existingUser),
             success: true,
             sessionId,
+            refreshToken,
             deviceId: deviceInfo?.deviceId,
         };
     }
@@ -556,11 +577,63 @@ export class AuthService {
         return { user: sanitizeUser(foundUser) };
     }
 
+    async logout(sessionId: string): Promise<void> {
+        try {
+            const session =
+                await this.userSessionRepository.findBySessionId(sessionId);
+            if (session) {
+                await this.userSessionRepository.deactivateSession(session.id);
+            }
+        } catch (error) {
+            console.error('Error deactivating session:', error);
+            // Don't throw error - allow logout to proceed even if session cleanup fails
+        }
+    }
+
+    async refreshAccessToken(
+        refreshToken: string
+    ): Promise<{ token: string; user: any }> {
+        // Find session by refresh token
+        const session =
+            await this.userSessionRepository.findByRefreshToken(refreshToken);
+
+        if (!session || !session.isActive) {
+            throw new UnauthorizedException('Invalid or expired refresh token');
+        }
+
+        // Check if session has expired
+        if (new Date() > session.expiresAt) {
+            await this.userSessionRepository.deactivateSession(session.id);
+            throw new UnauthorizedException('Session expired');
+        }
+
+        // Get user
+        const user = await this.userRepository.findByIdWithRelations(
+            session.userId,
+            []
+        );
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        // Generate new access token
+        const token = this.jwtService.sign({ userId: user.id });
+
+        // Update last activity
+        await this.userSessionRepository.updateLastActivity(session.sessionId);
+
+        return {
+            token,
+            user: sanitizeUser(user),
+        };
+    }
+
     async createSession(
         userId: string,
         deviceInfo: DeviceInfo
-    ): Promise<string> {
+    ): Promise<{ sessionId: string; refreshToken: string }> {
         const sessionId = this.generateIdService.generateId();
+        const refreshToken = this.generateIdService.generateId(); // Generate unique refresh token
         const { browser, os, deviceName } = this.parseUserAgent(
             deviceInfo.userAgent || ''
         );
@@ -569,6 +642,7 @@ export class AuthService {
             id: this.generateIdService.generateId(),
             userId,
             sessionId,
+            refreshToken, // Store refresh token
             deviceId: deviceInfo.deviceId,
             deviceName,
             browser,
@@ -576,10 +650,10 @@ export class AuthService {
             ipAddress: deviceInfo.ipAddress || null,
             country: null,
             city: null,
-            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
         });
 
-        return sessionId;
+        return { sessionId, refreshToken };
     }
 
     private parseUserAgent(userAgent: string): {

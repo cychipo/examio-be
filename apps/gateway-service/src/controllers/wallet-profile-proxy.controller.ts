@@ -230,7 +230,12 @@ export class DevicesProxyController {
     async getDevices(@Req() req: Request) {
         return this.proxyService.forwardWithAuth(
             'auth',
-            { method: 'GET', path: '/api/v1/devices', headers: this.h(req) },
+            {
+                method: 'GET',
+                path: '/api/v1/devices',
+                headers: this.h(req),
+                cookies: req.cookies,
+            },
             this.t(req)
         );
     }
@@ -247,6 +252,7 @@ export class DevicesProxyController {
                 method: 'DELETE',
                 path: `/api/v1/devices/${sessionId}`,
                 headers: this.h(req),
+                cookies: req.cookies,
             },
             this.t(req)
         );
@@ -261,6 +267,7 @@ export class DevicesProxyController {
                 method: 'POST',
                 path: '/api/v1/devices/logout-all-others',
                 headers: this.h(req),
+                cookies: req.cookies,
             },
             this.t(req)
         );
