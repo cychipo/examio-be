@@ -5,9 +5,22 @@ import { ApiProperty } from '@nestjs/swagger';
 export const UpdateFlashcardSetDtoSchema = z.object({
     title: z.string().min(1, { message: 'Title must not be empty' }).optional(),
     description: z.string().optional(),
-    isPublic: z.boolean().optional(),
-    tag: z.array(z.string()).optional(),
-    thumbnail: z.string().url().optional(),
+    // Handle both boolean and string from FormData
+    isPublic: z
+        .union([z.boolean(), z.string()])
+        .transform((val) => (typeof val === 'string' ? val === 'true' : val))
+        .optional(),
+    isPinned: z
+        .union([z.boolean(), z.string()])
+        .transform((val) => (typeof val === 'string' ? val === 'true' : val))
+        .optional(),
+    // Handle both array and JSON string from FormData
+    tags: z
+        .union([z.array(z.string()), z.string()])
+        .transform((val) => (typeof val === 'string' ? JSON.parse(val) : val))
+        .optional(),
+    // Handle both URL string and empty string (when uploading file)
+    thumbnail: z.string().optional(),
 });
 
 export class UpdateFlashcardSetDto extends createZodDto(
@@ -35,12 +48,19 @@ export class UpdateFlashcardSetDto extends createZodDto(
     isPublic?: boolean;
 
     @ApiProperty({
+        description: 'Indicates if the flashcard set is pinned',
+        example: false,
+        required: false,
+    })
+    isPinned?: boolean;
+
+    @ApiProperty({
         description: 'Tags associated with the flashcard set',
         example: ['english', 'vocabulary'],
         required: false,
         type: [String],
     })
-    tag?: string[];
+    tags?: string[];
 
     @ApiProperty({
         description: 'URL of the thumbnail image for the flashcard set',

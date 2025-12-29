@@ -2,6 +2,7 @@ import { Injectable, HttpException, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosRequestConfig, AxiosResponse } from 'axios';
+import { Request } from 'express';
 
 export interface ProxyRequest {
     method: string;
@@ -80,5 +81,62 @@ export class ProxyService {
                 Authorization: `Bearer ${token}`,
             },
         });
+    }
+
+    /**
+     * Forward raw request (for multipart/form-data)
+     * This bypasses body parsing and forwards the request as-is
+     */
+    async forwardRaw(
+        service: 'auth' | 'exam' | 'finance',
+        req: Request,
+        path: string
+    ): Promise<any> {
+        const baseUrl = this.serviceUrls[service];
+        const url = `${baseUrl}${path}`;
+
+        // Extract token from request
+        const token =
+            req.headers.authorization?.replace('Bearer ', '') ||
+            req.cookies?.token ||
+            req.cookies?.accessToken ||
+            '';
+
+        // Forward all headers except host
+        const headers = { ...req.headers };
+        delete headers.host;
+        delete headers['content-length']; // Let axios recalculate
+
+        // Add authorization
+        if (token) {
+            headers.authorization = `Bearer ${token}`;
+        }
+
+        const config: AxiosRequestConfig = {
+            method: req.method as any,
+            url,
+            headers,
+            params: req.query,
+            data: req.body,
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+        };
+
+        try {
+            this.logger.debug(`Forwarding RAW ${req.method} ${url}`);
+            const response: AxiosResponse = await firstValueFrom(
+                this.httpService.request(config)
+            );
+            return response.data;
+        } catch (error) {
+            if (error.response) {
+                throw new HttpException(
+                    error.response.data,
+                    error.response.status
+                );
+            }
+            this.logger.error(`Proxy error: ${error.message}`);
+            throw new HttpException('Service unavailable', 503);
+        }
     }
 }

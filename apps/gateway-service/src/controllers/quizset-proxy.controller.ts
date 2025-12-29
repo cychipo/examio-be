@@ -8,6 +8,8 @@ import {
     Body,
     Query,
     Req,
+    UseInterceptors,
+    UploadedFile,
 } from '@nestjs/common';
 import {
     ApiTags,
@@ -17,13 +19,20 @@ import {
     ApiQuery,
 } from '@nestjs/swagger';
 import { Request } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ProxyService } from '../services/proxy.service';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import * as FormData from 'form-data';
 
 @ApiTags('Quizsets')
 @Controller('quizsets')
 @ApiBearerAuth('access-token')
 export class QuizsetProxyController {
-    constructor(private readonly proxyService: ProxyService) {}
+    constructor(
+        private readonly proxyService: ProxyService,
+        private readonly httpService: HttpService
+    ) {}
 
     @Get()
     @ApiOperation({ summary: 'Lấy danh sách quiz sets' })
@@ -73,6 +82,25 @@ export class QuizsetProxyController {
         );
     }
 
+    @Get(':id/questions')
+    @ApiOperation({ summary: 'Lấy danh sách câu hỏi có phân trang' })
+    async getQuestions(
+        @Param('id') id: string,
+        @Query() query: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/quizsets/${id}/questions`,
+                query,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     @Get(':id')
     @ApiOperation({ summary: 'Lấy chi tiết quiz set' })
     async getById(@Param('id') id: string, @Req() req: Request) {
@@ -88,8 +116,24 @@ export class QuizsetProxyController {
     }
 
     @Post()
+    @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiOperation({ summary: 'Tạo quiz set mới' })
-    async create(@Body() body: any, @Req() req: Request) {
+    async create(
+        @Body() body: any,
+        @Req() req: Request,
+        @UploadedFile() thumbnail?: Express.Multer.File
+    ) {
+        // If thumbnail file exists, forward as multipart/form-data
+        if (thumbnail) {
+            return this.forwardWithFile(
+                'POST',
+                '/api/v1/quizsets',
+                body,
+                thumbnail,
+                req
+            );
+        }
+
         return this.proxyService.forwardWithAuth(
             'exam',
             {
@@ -103,12 +147,25 @@ export class QuizsetProxyController {
     }
 
     @Put(':id')
+    @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiOperation({ summary: 'Cập nhật quiz set' })
     async update(
         @Param('id') id: string,
         @Body() body: any,
-        @Req() req: Request
+        @Req() req: Request,
+        @UploadedFile() thumbnail?: Express.Multer.File
     ) {
+        // If thumbnail file exists, forward as multipart/form-data
+        if (thumbnail) {
+            return this.forwardWithFile(
+                'PUT',
+                `/api/v1/quizsets/${id}`,
+                body,
+                thumbnail,
+                req
+            );
+        }
+
         return this.proxyService.forwardWithAuth(
             'exam',
             {
@@ -225,15 +282,67 @@ export class QuizsetProxyController {
     }
 
     private h(req: Request) {
-        return {
-            'user-agent': req.headers['user-agent'] || '',
-            'x-forwarded-for': (req.headers['x-forwarded-for'] as string) || '',
-        };
+        return { 'user-agent': req.headers['user-agent'] || '' };
     }
     private t(req: Request) {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')
             ? a.substring(7)
             : req.cookies?.token || req.cookies?.accessToken || '';
+    }
+
+    /**
+     * Forward request with file as multipart/form-data
+     */
+    private async forwardWithFile(
+        method: string,
+        path: string,
+        body: any,
+        file: Express.Multer.File,
+        req: Request
+    ) {
+        const formData = new FormData();
+
+        // Append file
+        formData.append('thumbnail', file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+        });
+
+        // Append other fields
+        Object.keys(body).forEach((key) => {
+            if (body[key] !== undefined && body[key] !== null) {
+                formData.append(key, body[key]);
+            }
+        });
+
+        const examServiceUrl =
+            process.env.EXAM_SERVICE_URL || 'http://localhost:3002';
+        const url = `${examServiceUrl}${path}`;
+
+        try {
+            const response = await firstValueFrom(
+                this.httpService.request({
+                    method,
+                    url,
+                    data: formData,
+                    headers: {
+                        ...formData.getHeaders(),
+                        Authorization: `Bearer ${this.t(req)}`,
+                    },
+                    maxBodyLength: Infinity,
+                    maxContentLength: Infinity,
+                })
+            );
+            return response.data;
+        } catch (error) {
+            if (error.response) {
+                throw new Error(
+                    JSON.stringify(error.response.data) ||
+                        'Failed to forward request'
+                );
+            }
+            throw error;
+        }
     }
 }

@@ -57,6 +57,7 @@ import {
     UpdateFlashcardResponseDto,
     DeleteFlashcardResponseDto,
 } from './dto/flashcard.dto';
+import { GetFlashcardsDto } from './dto/get-flashcards.dto';
 
 @ApiTags('Flashcardsets')
 @ApiExtraModels(
@@ -86,9 +87,31 @@ export class FlashcardsetController {
     })
     async createFlashcardSet(
         @Req() req: AuthenticatedRequest,
-        @Body() createFlashcardsetDto: CreateFlashcardsetDto,
         @UploadedFile() thumbnail?: Express.Multer.File
     ) {
+        // Access body from req.body (Multer stores parsed fields here)
+        const body = req.body;
+
+        // Manually parse form data fields since @Body() doesn't work with multipart/form-data
+        const createFlashcardsetDto: CreateFlashcardsetDto = {
+            title: body.title,
+            description: body.description,
+            isPublic:
+                body.isPublic !== undefined
+                    ? body.isPublic === 'true' || body.isPublic === true
+                    : undefined,
+            isPinned:
+                body.isPinned !== undefined
+                    ? body.isPinned === 'true' || body.isPinned === true
+                    : undefined,
+            tags: body.tags
+                ? typeof body.tags === 'string'
+                    ? JSON.parse(body.tags)
+                    : body.tags
+                : undefined,
+            thumbnail: body.thumbnail,
+        };
+
         return this.flashcardsetService.createFlashcardSet(
             req.user,
             createFlashcardsetDto,
@@ -124,6 +147,28 @@ export class FlashcardsetController {
         return this.flashcardsetService.getFlashcardSetById(id, req.user);
     }
 
+    @Get(':id/flashcards')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get paginated flashcards for a flashcard set' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcards retrieved successfully with pagination',
+    })
+    async getFlashcardSetFlashcards(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string,
+        @Query() query: GetFlashcardsDto
+    ) {
+        return this.flashcardsetService.getFlashcardSetFlashcards(
+            id,
+            req.user,
+            query.page,
+            query.limit
+        );
+    }
+
     @Put(':id')
     @UseGuards(AuthGuard)
     @UseInterceptors(FileInterceptor('thumbnail'))
@@ -137,9 +182,31 @@ export class FlashcardsetController {
     async updateFlashcardSet(
         @Req() req: AuthenticatedRequest,
         @Param('id') id: string,
-        @Body() updateFlashcardSetDto: UpdateFlashcardSetDto,
         @UploadedFile() thumbnail?: Express.Multer.File
     ) {
+        // Access body from req.body (Multer stores parsed fields here)
+        const body = req.body;
+
+        // Manually parse form data fields since @Body() doesn't work with multipart/form-data
+        const updateFlashcardSetDto: UpdateFlashcardSetDto = {
+            title: body.title,
+            description: body.description,
+            isPublic:
+                body.isPublic !== undefined
+                    ? body.isPublic === 'true' || body.isPublic === true
+                    : undefined,
+            isPinned:
+                body.isPinned !== undefined
+                    ? body.isPinned === 'true' || body.isPinned === true
+                    : undefined,
+            tags: body.tags
+                ? typeof body.tags === 'string'
+                    ? JSON.parse(body.tags)
+                    : body.tags
+                : undefined,
+            thumbnail: body.thumbnail,
+        };
+
         return this.flashcardsetService.updateFlashcardSet(
             id,
             req.user,

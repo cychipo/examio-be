@@ -44,6 +44,7 @@ import {
     UpdateQuestionResponseDto,
     DeleteQuestionResponseDto,
 } from './dto/question.dto';
+import { GetQuestionsDto } from './dto/get-questions.dto';
 
 @ApiTags('Quizsets')
 @ApiExtraModels(
@@ -73,9 +74,31 @@ export class QuizsetController {
     })
     async createQuizSet(
         @Req() req: AuthenticatedRequest,
-        @Body() createQuizsetDto: CreateQuizsetDto,
         @UploadedFile() thumbnail?: Express.Multer.File
     ) {
+        // Access body from req.body (Multer stores parsed fields here)
+        const body = req.body;
+
+        // Manually parse form data fields since @Body() doesn't work with multipart/form-data
+        const createQuizsetDto: CreateQuizsetDto = {
+            title: body.title,
+            description: body.description,
+            isPublic:
+                body.isPublic !== undefined
+                    ? body.isPublic === 'true' || body.isPublic === true
+                    : undefined,
+            isPinned:
+                body.isPinned !== undefined
+                    ? body.isPinned === 'true' || body.isPinned === true
+                    : undefined,
+            tags: body.tags
+                ? typeof body.tags === 'string'
+                    ? JSON.parse(body.tags)
+                    : body.tags
+                : undefined,
+            thumbnail: body.thumbnail,
+        };
+
         return this.quizsetService.createQuizSet(
             req.user,
             createQuizsetDto,
@@ -111,6 +134,28 @@ export class QuizsetController {
         return this.quizsetService.getQuizSetById(id, req.user);
     }
 
+    @Get(':id/questions')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get paginated questions for a quiz set' })
+    @ApiParam({ name: 'id', description: 'Quiz set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Questions retrieved successfully with pagination',
+    })
+    async getQuizSetQuestions(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string,
+        @Query() query: GetQuestionsDto
+    ) {
+        return this.quizsetService.getQuizSetQuestions(
+            id,
+            req.user,
+            query.page,
+            query.limit
+        );
+    }
+
     @Put(':id')
     @UseGuards(AuthGuard)
     @UseInterceptors(FileInterceptor('thumbnail'))
@@ -124,9 +169,31 @@ export class QuizsetController {
     async updateQuizSet(
         @Req() req: AuthenticatedRequest,
         @Param('id') id: string,
-        @Body() updateQuizSetDto: UpdateQuizSetDto,
         @UploadedFile() thumbnail?: Express.Multer.File
     ) {
+        // Access body from req.body (Multer stores parsed fields here)
+        const body = req.body;
+
+        // Manually parse form data fields since @Body() doesn't work with multipart/form-data
+        const updateQuizSetDto: UpdateQuizSetDto = {
+            title: body.title,
+            description: body.description,
+            isPublic:
+                body.isPublic !== undefined
+                    ? body.isPublic === 'true' || body.isPublic === true
+                    : undefined,
+            isPinned:
+                body.isPinned !== undefined
+                    ? body.isPinned === 'true' || body.isPinned === true
+                    : undefined,
+            tags: body.tags
+                ? typeof body.tags === 'string'
+                    ? JSON.parse(body.tags)
+                    : body.tags
+                : undefined,
+            thumbnail: body.thumbnail,
+        };
+
         return this.quizsetService.updateQuizSet(
             id,
             req.user,

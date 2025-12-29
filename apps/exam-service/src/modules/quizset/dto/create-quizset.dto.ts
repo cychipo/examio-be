@@ -6,6 +6,7 @@ export const CreateQuizsetSchema = z.object({
     title: z.string().min(1, { message: 'Title must not be empty' }),
     description: z.string().optional(),
     isPublic: z.boolean().optional().default(false),
+    isPinned: z.boolean().optional().default(false),
     tags: z.array(z.string()).optional().default([]),
     thumbnail: z.string().url().optional(),
 });
@@ -30,6 +31,13 @@ export class CreateQuizsetDto extends createZodDto(CreateQuizsetSchema) {
         required: false,
     })
     isPublic?: boolean;
+
+    @ApiProperty({
+        description: 'Indicates if the quiz set is pinned',
+        example: false,
+        required: false,
+    })
+    isPinned?: boolean;
 
     @ApiProperty({
         description: 'Tags associated with the quiz set',

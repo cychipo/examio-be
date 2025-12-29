@@ -6,7 +6,8 @@ export const CreateFlashcardsetSchema = z.object({
     title: z.string().min(1, { message: 'Title must not be empty' }),
     description: z.string().optional(),
     isPublic: z.boolean().optional().default(false),
-    tag: z.array(z.string()).optional().default([]),
+    isPinned: z.boolean().optional().default(false),
+    tags: z.array(z.string()).optional().default([]),
     thumbnail: z.string().url().optional(),
 });
 
@@ -34,12 +35,19 @@ export class CreateFlashcardsetDto extends createZodDto(
     isPublic?: boolean;
 
     @ApiProperty({
+        description: 'Indicates if the flashcard set is pinned',
+        example: false,
+        required: false,
+    })
+    isPinned?: boolean;
+
+    @ApiProperty({
         description: 'Tags associated with the flashcard set',
         example: ['english', 'vocabulary'],
         required: false,
         type: [String],
     })
-    tag?: string[];
+    tags?: string[];
 
     @ApiProperty({
         description: 'URL of the thumbnail image for the flashcard set',

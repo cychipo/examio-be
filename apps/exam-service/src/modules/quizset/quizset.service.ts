@@ -61,6 +61,9 @@ export class QuizsetService {
                     isPublic:
                         dto.isPublic === true ||
                         dto.isPublic?.toString() === 'true',
+                    isPinned:
+                        dto.isPinned === true ||
+                        dto.isPinned?.toString() === 'true',
                     tags: Array.isArray(dto.tags)
                         ? dto.tags
                         : typeof dto.tags === 'string'
@@ -149,6 +152,66 @@ export class QuizsetService {
             questions: detailsQuizQuestions.map(
                 (detail: any) => detail.quizQuestion
             ),
+        };
+    }
+
+    /**
+     * Get questions with pagination for a quiz set
+     * Tối ưu query bằng cách chỉ lấy questions cần thiết theo page/limit
+     */
+    async getQuizSetQuestions(
+        id: string,
+        user: User,
+        page: number = 1,
+        limit: number = 10
+    ) {
+        // Ensure page and limit are numbers (query params come as strings)
+        const pageNum = Number(page) || 1;
+        const limitNum = Number(limit) || 10;
+
+        // First verify ownership
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id, userId: user.id },
+            cache: true,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        const skip = (pageNum - 1) * limitNum;
+
+        // Get total count
+        const totalCount = await this.prisma.detailsQuizQuestion.count({
+            where: { quizSetId: id },
+        });
+
+        // Get paginated questions - order by quizQuestion.createdAt
+        const detailsQuizQuestions =
+            await this.prisma.detailsQuizQuestion.findMany({
+                where: { quizSetId: id },
+                include: {
+                    quizQuestion: true,
+                },
+                skip,
+                take: limitNum,
+                orderBy: {
+                    quizQuestion: { createdAt: 'asc' },
+                },
+            });
+
+        const questions = detailsQuizQuestions.map(
+            (detail) => detail.quizQuestion
+        );
+
+        return {
+            questions,
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total: totalCount,
+                totalPages: Math.ceil(totalCount / limitNum),
+            },
         };
     }
 
@@ -336,7 +399,11 @@ export class QuizsetService {
 
             // Handle thumbnail upload if file is provided
             let thumbnailUrl = dto.thumbnail;
-            if (thumbnailFile) {
+            if (
+                thumbnailFile &&
+                thumbnailFile.buffer &&
+                thumbnailFile.buffer.length > 0
+            ) {
                 const oldThumbnailUrl = quizSet.thumbnail;
 
                 const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
@@ -363,21 +430,34 @@ export class QuizsetService {
                         });
                     }
                 }
+            } else if (thumbnailFile) {
+                // File was sent but is empty - keep existing thumbnail
+                console.warn(
+                    'Thumbnail file was sent but has no content, keeping existing thumbnail'
+                );
+                thumbnailUrl = quizSet.thumbnail || undefined;
             }
 
             // Update using repository (auto invalidate cache)
+            // Note: DTO is already parsed in controller
             await this.quizSetRepository.update(
                 id,
                 {
                     ...(dto.title && { title: dto.title }),
-                    ...(dto.description && { description: dto.description }),
+                    ...(dto.description !== undefined && {
+                        description: dto.description,
+                    }),
                     ...(dto.isPublic !== undefined && {
                         isPublic: dto.isPublic,
                     }),
-                    ...(dto.tags && { tags: dto.tags }),
-                    ...(thumbnailUrl !== undefined && {
-                        thumbnail: thumbnailUrl,
+                    ...(dto.isPinned !== undefined && {
+                        isPinned: dto.isPinned,
                     }),
+                    ...(dto.tags !== undefined && { tags: dto.tags }),
+                    ...(thumbnailUrl !== undefined &&
+                        thumbnailUrl !== '' && {
+                            thumbnail: thumbnailUrl,
+                        }),
                 },
                 user.id
             );

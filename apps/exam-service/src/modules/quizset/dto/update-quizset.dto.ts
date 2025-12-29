@@ -5,9 +5,22 @@ import { ApiProperty } from '@nestjs/swagger';
 export const UpdateQuizSetDtoSchema = z.object({
     title: z.string().min(1, { message: 'Title must not be empty' }).optional(),
     description: z.string().optional(),
-    isPublic: z.boolean().optional(),
-    tags: z.array(z.string()).optional(),
-    thumbnail: z.string().url().optional(),
+    // Handle both boolean and string from FormData
+    isPublic: z
+        .union([z.boolean(), z.string()])
+        .transform((val) => (typeof val === 'string' ? val === 'true' : val))
+        .optional(),
+    isPinned: z
+        .union([z.boolean(), z.string()])
+        .transform((val) => (typeof val === 'string' ? val === 'true' : val))
+        .optional(),
+    // Handle both array and JSON string from FormData
+    tags: z
+        .union([z.array(z.string()), z.string()])
+        .transform((val) => (typeof val === 'string' ? JSON.parse(val) : val))
+        .optional(),
+    // Handle both URL string and empty string (when uploading file)
+    thumbnail: z.string().optional(),
 });
 
 export class UpdateQuizSetDto extends createZodDto(UpdateQuizSetDtoSchema) {
@@ -31,6 +44,13 @@ export class UpdateQuizSetDto extends createZodDto(UpdateQuizSetDtoSchema) {
         required: false,
     })
     isPublic?: boolean;
+
+    @ApiProperty({
+        description: 'Indicates if the quiz set is pinned',
+        example: false,
+        required: false,
+    })
+    isPinned?: boolean;
 
     @ApiProperty({
         description: 'Tags associated with the quiz set',

@@ -59,6 +59,9 @@ export class FlashcardsetService {
                     isPublic:
                         dto.isPublic === true ||
                         dto.isPublic?.toString() === 'true',
+                    isPinned:
+                        dto.isPinned === true ||
+                        dto.isPinned?.toString() === 'true',
                     tag: Array.isArray(dto.tags)
                         ? dto.tags
                         : typeof dto.tags === 'string'
@@ -69,9 +72,14 @@ export class FlashcardsetService {
                 },
                 user.id
             );
+            // Transform 'tag' to 'tags' for frontend compatibility
+            const { tag, ...rest } = newFlashcardSet as any;
             return {
                 message: 'Tạo bộ thẻ ghi nhớ thành công',
-                flashcardSet: newFlashcardSet,
+                flashcardSet: {
+                    ...rest,
+                    tags: tag,
+                },
             };
         } catch (error) {
             console.log(error);
@@ -132,11 +140,70 @@ export class FlashcardsetService {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
-        // Transform để trả về flashCards như cũ
-        const { detailsFlashCard, ...flashcardSetData } = flashcardSet as any;
+        // Transform để trả về flashCards như cũ và map 'tag' to 'tags'
+        const { detailsFlashCard, tag, ...flashcardSetData } =
+            flashcardSet as any;
         return {
             ...flashcardSetData,
+            tags: tag,
             flashCards: detailsFlashCard.map((detail: any) => detail.flashCard),
+        };
+    }
+
+    /**
+     * Get flashcards with pagination for a flashcard set
+     * Tối ưu query bằng cách chỉ lấy flashcards cần thiết theo page/limit
+     */
+    async getFlashcardSetFlashcards(
+        id: string,
+        user: User,
+        page: number = 1,
+        limit: number = 10
+    ) {
+        // Ensure page and limit are numbers (query params come as strings)
+        const pageNum = Number(page) || 1;
+        const limitNum = Number(limit) || 10;
+
+        // First verify ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id, userId: user.id },
+            cache: true,
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const skip = (pageNum - 1) * limitNum;
+
+        // Get total count
+        const totalCount = await this.prisma.detailsFlashCard.count({
+            where: { flashCardSetId: id },
+        });
+
+        // Get paginated flashcards - order by flashCard.createdAt
+        const detailsFlashCards = await this.prisma.detailsFlashCard.findMany({
+            where: { flashCardSetId: id },
+            include: {
+                flashCard: true,
+            },
+            skip,
+            take: limitNum,
+            orderBy: {
+                flashCard: { createdAt: 'asc' },
+            },
+        });
+
+        const flashCards = detailsFlashCards.map((detail) => detail.flashCard);
+
+        return {
+            flashCards,
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total: totalCount,
+                totalPages: Math.ceil(totalCount / limitNum),
+            },
         };
     }
 
@@ -178,10 +245,12 @@ export class FlashcardsetService {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
         }
 
-        // Transform để trả về flashCards như cũ
-        const { detailsFlashCard, ...flashcardSetData } = flashcardSet as any;
+        // Transform để trả về flashCards như cũ và map 'tag' to 'tags'
+        const { detailsFlashCard, tag, ...flashcardSetData } =
+            flashcardSet as any;
         return {
             ...flashcardSetData,
+            tags: tag,
             flashCards: detailsFlashCard.map((detail: any) => detail.flashCard),
         };
     }
@@ -226,8 +295,14 @@ export class FlashcardsetService {
             user.id
         );
 
+        // Transform 'tag' to 'tags' for all flashcard sets
+        const transformedData = (result.data as any[]).map((fs) => {
+            const { tag, ...rest } = fs;
+            return { ...rest, tags: tag };
+        });
+
         return {
-            flashcardSets: result.data,
+            flashcardSets: transformedData,
             total: result.total,
             page: result.page,
             limit: result.size,
@@ -254,7 +329,11 @@ export class FlashcardsetService {
 
             // Handle thumbnail upload if file is provided
             let thumbnailUrl = dto.thumbnail;
-            if (thumbnailFile) {
+            if (
+                thumbnailFile &&
+                thumbnailFile.buffer &&
+                thumbnailFile.buffer.length > 0
+            ) {
                 const oldThumbnailUrl = flashcardSet.thumbnail;
 
                 const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
@@ -281,23 +360,34 @@ export class FlashcardsetService {
                         });
                     }
                 }
+            } else if (thumbnailFile) {
+                // File was sent but is empty - keep existing thumbnail
+                console.warn(
+                    'Thumbnail file was sent but has no content, keeping existing thumbnail'
+                );
+                thumbnailUrl = flashcardSet.thumbnail || undefined;
             }
 
             // Update using repository
+            // Note: DTO is already parsed in controller
             await this.flashcardSetRepository.update(
                 id,
                 {
                     ...(dto.title && { title: dto.title }),
-                    ...(dto.description && {
+                    ...(dto.description !== undefined && {
                         description: dto.description,
                     }),
                     ...(dto.isPublic !== undefined && {
                         isPublic: dto.isPublic,
                     }),
-                    ...(dto.tag && { tag: dto.tag }),
-                    ...(thumbnailUrl !== undefined && {
-                        thumbnail: thumbnailUrl,
+                    ...(dto.isPinned !== undefined && {
+                        isPinned: dto.isPinned,
                     }),
+                    ...(dto.tags !== undefined && { tag: dto.tags }),
+                    ...(thumbnailUrl !== undefined &&
+                        thumbnailUrl !== '' && {
+                            thumbnail: thumbnailUrl,
+                        }),
                 },
                 user.id
             );
@@ -311,9 +401,14 @@ export class FlashcardsetService {
                     },
                 });
 
+            // Transform 'tag' to 'tags' for frontend compatibility
+            const { tag, ...rest } = updatedFlashcardSet as any;
             return {
                 message: 'Cập nhật bộ thẻ ghi nhớ thành công',
-                flashcardSet: updatedFlashcardSet,
+                flashcardSet: {
+                    ...rest,
+                    tags: tag,
+                },
             };
         } catch (error) {
             console.log('Error updating flashcard set:', error);
