@@ -147,8 +147,17 @@ export class AIChatRepository {
         documentId: string;
         documentName: string;
     }) {
-        return this.prisma.aIChatDocument.create({
-            data: {
+        return this.prisma.aIChatDocument.upsert({
+            where: {
+                chatId_documentId: {
+                    chatId: data.chatId,
+                    documentId: data.documentId,
+                },
+            },
+            update: {
+                documentName: data.documentName,
+            },
+            create: {
                 chatId: data.chatId,
                 documentId: data.documentId,
                 documentName: data.documentName,

@@ -3,6 +3,7 @@ import {
     Get,
     Post,
     Put,
+    Patch,
     Delete,
     Param,
     Body,
@@ -378,7 +379,8 @@ export class AIChatProxyController {
         @Body() body: any,
         @Req() req: Request
     ) {
-        return this.proxyService.forwardWithAuth(
+        // Use extended timeout for AI streaming (5 minutes)
+        return this.proxyService.forwardWithAuthAndTimeout(
             'exam',
             {
                 method: 'POST',
@@ -386,7 +388,8 @@ export class AIChatProxyController {
                 body,
                 headers: this.h(req),
             },
-            this.t(req)
+            this.t(req),
+            300000 // 5 minutes timeout for AI streaming
         );
     }
 
@@ -499,6 +502,44 @@ export class AIChatProxyController {
             {
                 method: 'POST',
                 path: `/api/v1/ai-chat/message/${messageId}/regenerate`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('message/:messageId/regenerate-stream')
+    @ApiOperation({ summary: 'Regenerate response với streaming' })
+    async regenerateMessageStream(
+        @Param('messageId') messageId: string,
+        @Req() req: Request
+    ) {
+        // Use extended timeout for AI streaming (5 minutes)
+        return this.proxyService.forwardWithAuthAndTimeout(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai-chat/message/${messageId}/regenerate-stream`,
+                headers: this.h(req),
+            },
+            this.t(req),
+            300000 // 5 minutes timeout for AI streaming
+        );
+    }
+
+    @Patch('message/:messageId')
+    @ApiOperation({ summary: 'Cập nhật message' })
+    async updateMessage(
+        @Param('messageId') messageId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'PATCH',
+                path: `/api/v1/ai-chat/message/${messageId}`,
+                body,
                 headers: this.h(req),
             },
             this.t(req)

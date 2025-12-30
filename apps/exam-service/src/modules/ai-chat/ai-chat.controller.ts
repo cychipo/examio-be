@@ -179,6 +179,44 @@ export class AIChatController {
         return this.chatService.regenerateFromMessage(messageId, req.user);
     }
 
+    @Post('message/:messageId/regenerate-stream')
+    @ApiOperation({
+        summary: 'Regenerate AI response từ message với streaming (SSE)',
+    })
+    async regenerateFromMessageStream(
+        @Req() req: AuthenticatedRequest,
+        @Res() res: Response,
+        @Param('messageId') messageId: string
+    ) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        const observable = await this.chatService.regenerateFromMessageStream(
+            messageId,
+            req.user
+        );
+
+        const subscription = observable.subscribe({
+            next: (event) => {
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+            },
+            error: (err) => {
+                res.write(
+                    `data: ${JSON.stringify({ type: 'error', data: err.message })}\n\n`
+                );
+                res.end();
+            },
+            complete: () => {
+                res.end();
+            },
+        });
+
+        req.on('close', () => {
+            subscription.unsubscribe();
+        });
+    }
+
     // ==================== DOCUMENTS ====================
 
     @Get(':chatId/documents')

@@ -400,6 +400,37 @@ export class AIChatService implements OnModuleInit {
         });
     }
 
+    async regenerateFromMessageStream(
+        messageId: string,
+        user: User
+    ): Promise<Observable<any>> {
+        const message = await this.chatRepository.findMessageById(messageId);
+        if (!message) throw new NotFoundException('Message not found');
+        if (message.role !== 'user')
+            throw new NotFoundException(
+                'Can only regenerate from user message'
+            );
+
+        const chat = await this.getChatByIdAndValidateOwner(
+            message.chatId,
+            user
+        );
+
+        // Delete messages after this one (including this user message, it will be re-created by streamMessage)
+        await this.chatRepository.deleteMessagesAfter(
+            chat.id,
+            message.createdAt
+        );
+
+        // Re-send the message with streaming
+        return this.streamMessage(chat.id, user, {
+            message: message.content,
+            imageUrl: message.imageUrl || undefined,
+            documentId: message.documentId || undefined,
+            documentName: message.documentName || undefined,
+        });
+    }
+
     // ==================== DOCUMENTS ====================
 
     async getDocuments(chatId: string, user: User) {

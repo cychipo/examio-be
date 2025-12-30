@@ -97,6 +97,54 @@ export class ProxyService {
     }
 
     /**
+     * Forward với JWT token và custom timeout (cho streaming/long-running requests)
+     */
+    async forwardWithAuthAndTimeout(
+        service: 'auth' | 'exam' | 'finance',
+        request: ProxyRequest,
+        token: string,
+        timeoutMs: number
+    ): Promise<any> {
+        const baseUrl = this.serviceUrls[service];
+        const url = `${baseUrl}${request.path}`;
+
+        const config: AxiosRequestConfig = {
+            method: request.method as any,
+            url,
+            headers: {
+                ...request.headers,
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            params: request.query,
+            timeout: timeoutMs,
+        };
+
+        if (request.body && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
+            config.data = request.body;
+        }
+
+        try {
+            this.logger.debug(
+                `Forwarding ${request.method} ${url} (timeout: ${timeoutMs}ms)`
+            );
+            const response: AxiosResponse = await firstValueFrom(
+                this.httpService.request(config)
+            );
+            return response.data;
+        } catch (error) {
+            if (error.response) {
+                throw new HttpException(
+                    error.response.data,
+                    error.response.status
+                );
+            }
+            this.logger.error(`Proxy error: ${error.message}`);
+            throw new HttpException('Service unavailable', 503);
+        }
+    }
+
+    /**
      * Forward raw request (for multipart/form-data)
      * This bypasses body parsing and forwards the request as-is
      */
