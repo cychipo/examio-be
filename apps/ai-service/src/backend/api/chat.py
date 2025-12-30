@@ -133,16 +133,21 @@ async def stream_ai(request: ChatRequest):
 
         logger.info(f"Stream AI: {query[:50]}... (RAG ID: {user_storage_id}, Model: {model_type})")
 
-        retriever = None
-
-        # 1. Setup RAG if ID provided
+        # Use PostgreSQL vector search instead of in-memory FAISS
+        # This uses pre-computed embeddings from database (no re-embedding!)
+        pre_context = None
         if user_storage_id:
-            chunks = await ocr_service.get_document_chunks(user_storage_id)
-            if chunks:
-                combined_content = "\n\n".join([c.content for c in chunks])
-                retriever, _ = create_in_memory_retriever(combined_content)
+            pg_store = get_pg_vector_store()
+            pre_context = await pg_store.search_and_combine(
+                [user_storage_id],
+                query,
+                top_k=8,
+                max_content_length=8000
+            )
+            logger.info(f"Got context from PostgreSQL: {len(pre_context) if pre_context else 0} chars")
 
-        agent = SimpleChatAgent(custom_retriever=retriever, model_type=model_type)
+        # Create agent with pre-fetched context (fast path - no retriever creation)
+        agent = SimpleChatAgent(pre_context=pre_context, model_type=model_type)
 
         # History setup
         history_dicts = []

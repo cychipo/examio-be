@@ -654,7 +654,8 @@ export class AIService {
                             isNarrowSearch: dto.isNarrowSearch,
                             keyword: dto.keyword,
                             modelType: dto.modelType || 'gemini',
-                        }
+                        },
+                        { timeout: 600000 } // 10 min timeout for Ollama
                     )
                 );
 
@@ -684,7 +685,8 @@ export class AIService {
                             isNarrowSearch: dto.isNarrowSearch,
                             keyword: dto.keyword,
                             modelType: dto.modelType || 'gemini',
-                        }
+                        },
+                        { timeout: 600000 } // 10 min timeout for Ollama
                     )
                 );
 

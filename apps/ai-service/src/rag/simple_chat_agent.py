@@ -16,13 +16,15 @@ logger = logging.getLogger(__name__)
 class SimpleChatAgent:
     """Simplified chat agent without LangGraph to avoid recursion issues"""
 
-    def __init__(self, custom_retriever=None, model_name: str = None, model_type: str = "gemini"):
+    def __init__(self, custom_retriever=None, model_name: str = None, model_type: str = "gemini", pre_context: str = None):
         """Initialize the Simple Chat Agent
 
         Args:
             custom_retriever: Custom retriever for RAG (optional)
             model_name: Specific model name (optional, deprecated)
             model_type: AI model type - 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)
+            pre_context: Pre-fetched context from PostgreSQL vector search (optional)
+                        If provided, bypasses retriever-based RAG for faster responses.
         """
         try:
             # Use LLMFactory to create model based on model_type
@@ -33,15 +35,20 @@ class SimpleChatAgent:
             logger.error(f"Failed to initialize LLM: {e}")
             raise
 
+        # Store pre-fetched context (from PostgreSQL vector search)
+        self.pre_context = pre_context
+
         # Store the retriever - allow None for general chat without documents
         if custom_retriever is not None:
             self.retriever = custom_retriever
-        else:
+        elif pre_context is None:  # Only try default retriever if no pre_context
             try:
                 self.retriever = self.get_default_retriever()
             except Exception as e:
                 logger.warning(f"No default retriever available: {e}. Will use LLM only for general chat.")
                 self.retriever = None
+        else:
+            self.retriever = None  # Using pre_context instead
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -212,9 +219,16 @@ Answer only YES or NO."""
                 elif role == 'assistant':
                     lc_messages.append(AIMessage(content=content))
 
-            # 2. Check relevance
+            # 2. Check if we have pre-context (from PostgreSQL) or need retriever
             use_rag = False
-            if self.retriever:
+            context = None
+
+            if self.pre_context:
+                # Use pre-fetched context from PostgreSQL (fast path - no re-embedding)
+                logger.info("Using pre-fetched context from PostgreSQL (no re-embedding)")
+                use_rag = True
+                context = self.pre_context
+            elif self.retriever:
                 use_rag = self.check_relevance(message)
 
             # 3. NO RAG
@@ -224,18 +238,25 @@ Answer only YES or NO."""
                 yield from stream_with_retry(lc_messages)
                 return
 
-            # 4. RAG
-            logger.info("Query relevant to docs, retrieving context...")
-            if isinstance(self.retriever, MetadataEnhancedHybridRetriever):
-                docs = smart_retrieve(self.retriever, message, use_smart_filtering=True)
-            else:
-                docs = self.retriever.get_relevant_documents(message)
+            # 4. RAG with context
+            logger.info("Query relevant to docs, using context...")
 
-            context_docs = docs[:8]
-            context = "\n\n---\n\n".join([
-                f"Đoạn {i+1}:\n{doc.page_content}"
-                for i, doc in enumerate(context_docs)
-            ])
+            # If no pre-context, retrieve using retriever
+            if context is None:
+                if isinstance(self.retriever, MetadataEnhancedHybridRetriever):
+                    docs = smart_retrieve(self.retriever, message, use_smart_filtering=True)
+                else:
+                    docs = self.retriever.get_relevant_documents(message)
+
+                context_docs = docs[:8]
+                context = "\n\n---\n\n".join([
+                    f"Đoạn {i+1}:\n{doc.page_content}"
+                    for i, doc in enumerate(context_docs)
+                ])
+                num_docs = len(context_docs)
+            else:
+                # Pre-context is already formatted
+                num_docs = context.count("[Trang")  # Approximate from PgVectorStore format
 
             if context.strip():
                 enhanced_prompt = f"""Bạn là một trợ lý AI chuyên nghiệp. Hãy trả lời câu hỏi dựa trên thông tin được cung cấp dưới đây.
@@ -258,8 +279,8 @@ Tôi sẽ trả lời dựa trên kiến thức chung: {message}"""
 
             yield from stream_with_retry(lc_messages)
 
-            if context.strip() and len(context_docs) > 0:
-                yield f"\n\n📋 *Thông tin từ {len(context_docs)} đoạn trích dẫn.*"
+            if context.strip() and num_docs > 0:
+                yield f"\n\n📋 *Thông tin từ {num_docs} đoạn trích dẫn.*"
 
         except Exception as e:
             logger.error(f"Error in chat streaming: {str(e)}")

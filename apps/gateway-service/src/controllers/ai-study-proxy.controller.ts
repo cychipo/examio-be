@@ -240,7 +240,8 @@ export class AIProxyController {
         @Body() body: any,
         @Req() req: Request
     ) {
-        return this.proxyService.forwardWithAuth(
+        // Use extended timeout for Ollama model requests
+        return this.proxyService.forwardWithAuthAndTimeout(
             'exam',
             {
                 method: 'POST',
@@ -248,7 +249,8 @@ export class AIProxyController {
                 body,
                 headers: this.h(req),
             },
-            this.t(req)
+            this.t(req),
+            600000 // 10 min timeout for Ollama
         );
     }
 
