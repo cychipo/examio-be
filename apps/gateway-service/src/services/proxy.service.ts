@@ -80,6 +80,65 @@ export class ProxyService {
     }
 
     /**
+     * Forward request nhưng KHÔNG follow redirects - dùng cho OAuth
+     * Trả về redirect URL để browser tự redirect
+     */
+    async forwardWithRedirect(
+        service: 'auth' | 'exam' | 'finance',
+        request: ProxyRequest
+    ): Promise<{ redirectUrl?: string; data?: any; headers?: any }> {
+        const baseUrl = this.serviceUrls[service];
+        const url = `${baseUrl}${request.path}`;
+
+        const config: AxiosRequestConfig = {
+            method: request.method as any,
+            url,
+            headers: {
+                ...request.headers,
+            },
+            params: request.query,
+            maxRedirects: 0, // Không follow redirects
+            validateStatus: (status) => status >= 200 && status < 400, // Accept 3xx
+        };
+
+        try {
+            this.logger.debug(`Forwarding OAuth ${request.method} ${url}`);
+            const response: AxiosResponse = await firstValueFrom(
+                this.httpService.request(config)
+            );
+
+            // Nếu là redirect (3xx), trả về redirect URL
+            if (response.status >= 300 && response.status < 400) {
+                return {
+                    redirectUrl: response.headers.location,
+                    headers: response.headers
+                };
+            }
+
+            return {
+                data: response.data,
+                headers: response.headers
+            };
+        } catch (error) {
+            // Axios throws error on redirect khi maxRedirects: 0
+            if (error.response?.status >= 300 && error.response?.status < 400) {
+                return {
+                    redirectUrl: error.response.headers.location,
+                    headers: error.response.headers
+                };
+            }
+            if (error.response) {
+                throw new HttpException(
+                    error.response.data,
+                    error.response.status
+                );
+            }
+            this.logger.error(`Proxy error: ${error.message}`);
+            throw new HttpException('Service unavailable', 503);
+        }
+    }
+
+    /**
      * Forward với JWT token
      */
     async forwardWithAuth(
