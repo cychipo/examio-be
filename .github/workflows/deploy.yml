@@ -85,17 +85,30 @@ jobs:
             # Restart services
             echo "🔄 Restarting services..."
 
-            # Force cleanup ALL examio containers first (before compose down)
-            # Force cleanup ALL examio containers first (before compose down)
-            echo "🧹 Stopping and removing all examio containers..."
-            IDS=$(docker ps -a -q --filter "name=examio-")
-            if [ -n "$IDS" ]; then
-              docker stop $IDS || true
-              docker rm -f $IDS || true
-            fi
+            # Force compose down first
+            echo "🧹 Stopping compose services..."
+            docker compose down --remove-orphans --volumes=false --timeout 30 2>/dev/null || true
 
-            docker compose down --remove-orphans || true
-            docker compose up -d
+            # Wait a bit for resources to be released
+            sleep 3
+
+            # Force remove ALL examio containers (including stuck ones)
+            echo "🧹 Force removing all examio containers..."
+            docker ps -aq --filter "name=examio" | xargs -r docker rm -f 2>/dev/null || true
+
+            # Also try by compose project name (examio-be specific)
+            docker ps -aq --filter "label=com.docker.compose.project=examio-be" | xargs -r docker rm -f 2>/dev/null || true
+
+            # Remove orphaned networks
+            echo "🧹 Cleaning up networks..."
+            docker network ls --filter "name=examio" -q | xargs -r docker network rm 2>/dev/null || true
+
+            # Wait for cleanup to complete
+            sleep 2
+
+            # Start fresh
+            echo "🚀 Starting services..."
+            docker compose up -d --remove-orphans
 
             # Cleanup only examio-related resources
             echo "🧹 Cleaning up old Examio images..."
