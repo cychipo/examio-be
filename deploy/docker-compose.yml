@@ -34,6 +34,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=7000
+      - FRONTEND_URL=${FRONTEND_URL}
       - AUTH_SERVICE_URL=http://auth:7001
       - EXAM_SERVICE_URL=http://exam:7002
       - FINANCE_SERVICE_URL=http://finance:7003

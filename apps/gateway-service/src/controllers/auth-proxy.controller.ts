@@ -109,47 +109,84 @@ export class AuthProxyController {
 
     @Get('google')
     @ApiOperation({ summary: 'Đăng nhập bằng Google' })
-    async googleAuth(@Res() res: Response) {
-        const authUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/google`;
-        return res.redirect(authUrl);
+    async googleAuth(@Req() req: Request, @Res() res: Response) {
+        // Proxy to auth service - it will return the OAuth redirect URL
+        const result = await this.proxyService.forward('auth', {
+            method: 'GET',
+            path: '/api/v1/auth/google',
+            headers: this.extractHeaders(req),
+        });
+        // If auth service returns a redirect URL, redirect browser there
+        if (result?.url) {
+            return res.redirect(result.url);
+        }
+        // If auth service already redirected (302), it will be in result
+        return res.json(result);
     }
 
     @Get('google/callback')
     @ApiOperation({ summary: 'Google OAuth callback' })
     async googleCallback(@Req() req: Request, @Res() res: Response) {
         const queryString = req.url.split('?')[1] || '';
-        const authCallbackUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/google/callback?${queryString}`;
-        return res.redirect(authCallbackUrl);
+        const result = await this.proxyService.forward('auth', {
+            method: 'GET',
+            path: `/api/v1/auth/google/callback?${queryString}`,
+            headers: this.extractHeaders(req),
+        });
+        // Handle auth response - set cookies and redirect to frontend
+        return this.handleOAuthCallback(result, res);
     }
 
     @Get('facebook')
     @ApiOperation({ summary: 'Đăng nhập bằng Facebook' })
-    async facebookAuth(@Res() res: Response) {
-        const authUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/facebook`;
-        return res.redirect(authUrl);
+    async facebookAuth(@Req() req: Request, @Res() res: Response) {
+        const result = await this.proxyService.forward('auth', {
+            method: 'GET',
+            path: '/api/v1/auth/facebook',
+            headers: this.extractHeaders(req),
+        });
+        if (result?.url) {
+            return res.redirect(result.url);
+        }
+        return res.json(result);
     }
 
     @Get('facebook/callback')
     @ApiOperation({ summary: 'Facebook OAuth callback' })
     async facebookCallback(@Req() req: Request, @Res() res: Response) {
         const queryString = req.url.split('?')[1] || '';
-        const authCallbackUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/facebook/callback?${queryString}`;
-        return res.redirect(authCallbackUrl);
+        const result = await this.proxyService.forward('auth', {
+            method: 'GET',
+            path: `/api/v1/auth/facebook/callback?${queryString}`,
+            headers: this.extractHeaders(req),
+        });
+        return this.handleOAuthCallback(result, res);
     }
 
     @Get('github')
     @ApiOperation({ summary: 'Đăng nhập bằng GitHub' })
-    async githubAuth(@Res() res: Response) {
-        const authUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/github`;
-        return res.redirect(authUrl);
+    async githubAuth(@Req() req: Request, @Res() res: Response) {
+        const result = await this.proxyService.forward('auth', {
+            method: 'GET',
+            path: '/api/v1/auth/github',
+            headers: this.extractHeaders(req),
+        });
+        if (result?.url) {
+            return res.redirect(result.url);
+        }
+        return res.json(result);
     }
 
     @Get('github/callback')
     @ApiOperation({ summary: 'GitHub OAuth callback' })
     async githubCallback(@Req() req: Request, @Res() res: Response) {
         const queryString = req.url.split('?')[1] || '';
-        const authCallbackUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:3001'}/api/v1/auth/github/callback?${queryString}`;
-        return res.redirect(authCallbackUrl);
+        const result = await this.proxyService.forward('auth', {
+            method: 'GET',
+            path: `/api/v1/auth/github/callback?${queryString}`,
+            headers: this.extractHeaders(req),
+        });
+        return this.handleOAuthCallback(result, res);
     }
 
     // ==================== AUTHENTICATED ENDPOINTS ====================
@@ -268,5 +305,41 @@ export class AuthProxyController {
         if (authHeader?.startsWith('Bearer ')) return authHeader.substring(7);
         // Check both cookie names for compatibility
         return req.cookies?.token || req.cookies?.accessToken || '';
+    }
+
+    private handleOAuthCallback(result: any, res: Response): void {
+        /**
+         * Handle OAuth callback response from auth-service.
+         * Sets cookies and redirects to frontend.
+         */
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+        if (!result) {
+            res.redirect(`${frontendUrl}/login?error=auth_failed`);
+            return;
+        }
+
+        // Set cookies if tokens are returned
+        const cookieOptions = {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax' as const,
+            maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        };
+
+        if (result.token) {
+            res.cookie('token', result.token, cookieOptions);
+            res.cookie('accessToken', result.token, cookieOptions);
+        }
+        if (result.sessionId) {
+            res.cookie('session_id', result.sessionId, cookieOptions);
+        }
+        if (result.refreshToken) {
+            res.cookie('refreshToken', result.refreshToken, cookieOptions);
+        }
+
+        // Redirect to frontend - auth service may provide a redirectUrl
+        const redirectUrl = result.redirectUrl || frontendUrl;
+        res.redirect(redirectUrl);
     }
 }
