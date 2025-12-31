@@ -97,9 +97,14 @@ jobs:
             docker compose down --remove-orphans || true
             docker compose up -d
 
-            # Cleanup old images
-            echo "🧹 Cleaning up old images..."
+            # Cleanup only examio-related resources
+            echo "🧹 Cleaning up old Examio images..."
+            # Remove old examio images (keep current ones in use)
+            docker images --filter "reference=*examio*" --filter "dangling=true" -q | xargs -r docker rmi -f 2>/dev/null || true
+            # Remove dangling images only (safe, won't affect other projects)
             docker image prune -f
+            # Clean build cache for this project only
+            docker builder prune -f --filter "until=24h" || true
 
             # Health Check Verification
             echo "⏳ Waiting for services to be healthy..."

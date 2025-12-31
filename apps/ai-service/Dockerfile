@@ -3,56 +3,45 @@
 # Target: < 500MB
 # =============================================================================
 
-# Stage 1: Builder with minimal deps
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# Install only essential build deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
-# Install torch CPU first (much smaller than GPU version)
+# Install torch CPU first
 RUN pip install --no-cache-dir --user \
     torch==2.2.0+cpu \
     --index-url https://download.pytorch.org/whl/cpu
 
-# Install remaining requirements
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Clean up pip cache and unnecessary files
+# Cleanup
 RUN find /root/.local -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
-    find /root/.local -type f -name "*.pyc" -delete 2>/dev/null || true && \
-    find /root/.local -type f -name "*.pyo" -delete 2>/dev/null || true
+    find /root/.local -type f -name "*.pyc" -delete 2>/dev/null || true
 
-# Stage 2: Minimal production image
+# Stage 2: Production
 FROM python:3.12-slim AS production
 
 WORKDIR /app
 
-# Only curl for healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
 
-# Copy only site-packages, not entire .local
 COPY --from=builder /root/.local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /root/.local/bin /usr/local/bin
 
-# Environment
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PORT=8000
 
-# Copy only necessary source code
-COPY src/backend /app/src/backend
-COPY src/rag /app/src/rag
-COPY src/llm /app/src/llm
-COPY src/__init__.py /app/src/
+# Copy ALL required source folders (src/__init__.py imports: agent, rag, score, llm)
+COPY src /app/src
 
 EXPOSE 8000
 
