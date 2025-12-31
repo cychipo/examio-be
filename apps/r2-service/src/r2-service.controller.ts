@@ -1,4 +1,4 @@
-import { Controller, Logger } from '@nestjs/common';
+import { Controller, Logger, Get } from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
 import { R2ServiceService } from './r2-service.service';
 
@@ -25,6 +25,11 @@ export class R2ServiceController {
     private readonly logger = new Logger(R2ServiceController.name);
 
     constructor(private readonly r2Service: R2ServiceService) {}
+
+    @Get('health')
+    health() {
+        return { status: 'ok', service: 'r2-service' };
+    }
 
     @GrpcMethod('R2Service', 'UploadFile')
     async uploadFile(data: UploadFileRequest) {
