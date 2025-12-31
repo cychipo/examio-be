@@ -4,6 +4,7 @@ python-dotenv>=1.1.0,<2.0.0
 # LangChain and LangGraph (Core only)
 langchain>=0.3.22,<0.4.0
 langchain-core>=0.3.76,<0.4.0
+langchain-community>=0.3.0,<0.4.0
 langgraph>=0.3.21,<0.4.0
 grandalf>=0.8,<0.9
 langchain-ollama>=0.3.0,<0.4.0

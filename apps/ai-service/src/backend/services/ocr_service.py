@@ -290,8 +290,8 @@ class OCRProcessingService:
             _, temp_path = await self.download_file_from_r2(file_info.url)
 
             # Import here to avoid circular imports
-            from rag.retriever import extract_text_from_file
-            from rag.vector_store_pg import get_pg_vector_store
+            from src.rag.retriever import extract_text_from_file
+            from src.rag.vector_store_pg import get_pg_vector_store
 
             # Extract text
             text = extract_text_from_file(temp_path)

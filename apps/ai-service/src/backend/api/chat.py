@@ -12,11 +12,11 @@ from pydantic import BaseModel, Field
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from rag.simple_chat_agent import SimpleChatAgent
-from rag.retriever import create_in_memory_retriever
-from backend.services.ocr_service import ocr_service
-from rag.vector_store_pg import get_pg_vector_store
-from llm.model_manager import AIModelType
+from src.rag.simple_chat_agent import SimpleChatAgent
+from src.rag.retriever import create_in_memory_retriever
+from src.backend.services.ocr_service import ocr_service
+from src.rag.vector_store_pg import get_pg_vector_store
+from src.llm.model_manager import AIModelType
 
 logger = logging.getLogger(__name__)
 

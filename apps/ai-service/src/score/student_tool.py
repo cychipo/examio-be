@@ -14,7 +14,14 @@ class GlobalDB:
     """A tool for retrieving student information from the database."""
 
     def __init__(self):
-        self.db = Database()
+        self._db = None  # Lazy initialization
+
+    @property
+    def db(self):
+        """Lazy load database connection"""
+        if self._db is None:
+            self._db = Database()
+        return self._db
 
     async def connect(self):
         """Connect to the database"""
@@ -22,7 +29,8 @@ class GlobalDB:
 
     async def close(self):
         """Close the database connection"""
-        await self.db.close()
+        if self._db is not None:
+            await self._db.close()
 
 
 global_db = GlobalDB()

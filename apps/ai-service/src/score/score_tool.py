@@ -5,7 +5,7 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field, validator
 
-from score.student_tool import global_db
+from src.score.student_tool import global_db
 from .models import ScoreFilter, ScoreResponse
 
 

@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from llm import get_llm, LLMConfig
-from llm.model_manager import AIModelType, model_manager
-from rag.retriever import create_enhanced_hybrid_retriever, smart_retrieve, get_metadata_config, MetadataEnhancedHybridRetriever
+from src.llm import get_llm, LLMConfig
+from src.llm.model_manager import AIModelType, model_manager
+from src.rag.retriever import create_enhanced_hybrid_retriever, smart_retrieve, get_metadata_config, MetadataEnhancedHybridRetriever
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -62,8 +62,8 @@ class SimpleChatAgent:
         Returns:
             Configured LLM instance
         """
-        from llm.llm_factory import LLMFactory
-        from llm.model_manager import ModelType
+        from src.llm.llm_factory import LLMFactory
+        from src.llm.model_manager import ModelType
 
         # Temporarily set model type for LLMFactory
         if model_type == "fayedark":
@@ -163,7 +163,7 @@ Answer only YES or NO."""
 
     def chat_stream(self, message: str, history: List[Dict[str, str]] = None):
         """Process a chat message and yield response chunks with history, dynamic RAG, and retry rotation"""
-        from llm.gemini_client import GeminiClient
+        from src.llm.gemini_client import GeminiClient
         import time
 
         def stream_with_retry(messages):
