@@ -56,7 +56,7 @@ services:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7000/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7000/api/v1/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -80,7 +80,7 @@ services:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7001/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7001/api/v1/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -112,7 +112,7 @@ services:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7002/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7002/api/v1/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -136,7 +136,7 @@ services:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7003/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7003/api/v1/health"]
     restart: unless-stopped
     logging: *default-logging
 
