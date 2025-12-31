@@ -26,5 +26,11 @@ python-venv/
 **/venv/
 **/.venv/
 **/env/
+**/python-venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
 #python
