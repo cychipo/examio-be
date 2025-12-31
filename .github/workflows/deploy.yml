@@ -1,64 +1,117 @@
-name: Deploy to Server
+name: Deploy Microservices
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev, staging]
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        default: 'main'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check required secrets and variables
+      - name: Get branch name
+        id: branch
         run: |
-          MISSING=()
-          [[ -z "${{ secrets.SERVER_HOST }}" ]] && MISSING+=("secrets.SERVER_HOST")
-          [[ -z "${{ secrets.SERVER_SSH_PORT }}" ]] && MISSING+=("secrets.SERVER_SSH_PORT")
-          [[ -z "${{ secrets.SERVER_USER }}" ]] && MISSING+=("secrets.SERVER_USER")
-          [[ -z "${{ secrets.SERVER_SSH_KEY }}" ]] && MISSING+=("secrets.SERVER_SSH_KEY")
-          [[ -z "${{ secrets.SERVER_DEPLOY_DIR }}" ]] && MISSING+=("secrets.SERVER_DEPLOY_DIR")
-          
-          [ ${#MISSING[@]} -gt 0 ] && { echo "❌ Missing: ${MISSING[*]}"; exit 1; }
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.branch }}" >> $GITHUB_OUTPUT
+          else
+            echo "name=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+          fi
 
-          OPTIONAL_MISSING=()
-          [[ -z "${{ secrets.PAT_TOKEN }}" ]] && OPTIONAL_MISSING+=("secrets.PAT_TOKEN")
-          [ ${#OPTIONAL_MISSING[@]} -gt 0 ] && { echo "⚠ Optional missing: ${OPTIONAL_MISSING[*]}"; }
-
-          echo "✅ All configured"
-
-      - name: Build and deploy on server
-        uses: appleboy/ssh-action@v1
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_HOST }}
-          port: ${{ secrets.SERVER_SSH_PORT }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_SSH_PORT }}
           script: |
             set -e
+
+            BRANCH="${{ steps.branch.outputs.name }}"
             DEPLOY_DIR="${{ secrets.SERVER_DEPLOY_DIR }}"
-            TOKEN="${{ secrets.PAT_TOKEN }}"
-            BRANCH="${{ github.ref_name }}"
-            REPO="${{ github.repository }}"
 
-            cd "$DEPLOY_DIR" || exit 1
-            [ -d ".git" ] || { echo "❌ Not a git repo"; exit 1; }
+            echo "🚀 Deploying branch: $BRANCH to $DEPLOY_DIR"
 
-            # Determine which docker-compose file to use
-            # If branch is main, use docker-compose.yml
-            # Otherwise, use docker-compose.<branch-name>.yml, with slashes replaced by dashes
-            # e.g., feature/abc -> docker-compose.feature-abc.yml
-            COMPOSE_FILE="docker-compose.yml"
-            [ "$BRANCH" != "main" ] && COMPOSE_FILE="docker-compose.${BRANCH//\//-}.yml"
-            [ -f "$COMPOSE_FILE" ] || { echo "❌ $COMPOSE_FILE not found"; exit 1; }
+            # Create deploy directory if not exists
+            mkdir -p "$DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
 
-            GIT_URL="https://github.com/$REPO.git"
-            [ -n "$TOKEN" ] && GIT_URL="https://$TOKEN@github.com/$REPO.git"
+            # Pull latest code
+            echo "📥 Pulling latest code..."
+            if [ -d .git ]; then
+              git fetch origin "$BRANCH"
+              git reset --hard "origin/$BRANCH"
+            else
+              git clone -b "$BRANCH" "https://${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git" .
+            fi
 
-            git fetch "$GIT_URL" "$BRANCH"
-            git reset --hard FETCH_HEAD
+            # Copy production docker-compose from deploy directory to root
+            # This allows build context '.' to work correctly from root
+            echo "📋 Configuring docker-compose..."
+            cp deploy/docker-compose.yml docker-compose.yml
 
-            echo "🚀 $BRANCH → $COMPOSE_FILE"
-            docker compose -f "$COMPOSE_FILE" build
-            docker compose -f "$COMPOSE_FILE" down
-            docker compose -f "$COMPOSE_FILE" up -d
+            # Also copy the multi-stage Dockerfile to root as Dockerfile.production if needed
+            # But the docker-compose points to 'Dockerfile' (NestJS default)
+            # We need to overwrite the default Dockerfile with our multi-stage one for production builds
+            # OR better, point docker-compose to deploy/Dockerfile
+            # Let's updating docker-compose to use deploy/Dockerfile in build context
+            # BUT: The docker-compose we created uses 'dockerfile: Dockerfile'.
+            # We should copy deploy/Dockerfile to Dockerfile.production and use that,
+            # Or just overwrite Dockerfile.
+            # Decision: Overwrite Dockerfile with deploy/Dockerfile for production build
+            cp deploy/Dockerfile Dockerfile
+
+            # Create .env file from secrets - SKIPPED (Managed manually on server)
+            # User must create .env file on VPS manually for the first time
+            if [ ! -f .env ]; then
+              echo "⚠️ .env file not found! Please create it on the server."
+            else
+              echo "✅ Found existing .env file."
+            fi
+
+            # Build images
+            echo "🔨 Building Docker images..."
+            # Using --remove-orphans to clean up old containers
+            docker compose build
+
+            # Restart services
+            echo "🔄 Restarting services..."
+            docker compose down --remove-orphans
+            docker compose up -d
+
+            # Cleanup old images
+            echo "🧹 Cleaning up old images..."
+            docker image prune -f
+
+            # Health Check Verification
+            echo "⏳ Waiting for services to be healthy..."
+            sleep 20
+
+            # Check Gateway Health
+            if docker compose exec -T gateway wget -q --spider http://localhost:3000/health; then
+               echo "✅ Gateway is healthy!"
+            else
+               echo "❌ Gateway health check failed!"
+               docker compose logs gateway --tail=50
+               # Optional: Rollback logic here
+               exit 1
+            fi
+
+            echo "🎉 Deployment completed successfully!"
+
+      - name: Deployment Status Notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Deployment successful"
+          else
+            echo "❌ Deployment failed"
+            exit 1
+          fi

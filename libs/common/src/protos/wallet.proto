@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package wallet;
+
+// Wallet Service - gọi từ Auth Service khi tạo user mới
+service WalletService {
+    // Tạo ví mới cho user
+    rpc CreateWallet (CreateWalletRequest) returns (CreateWalletResponse);
+
+    // Lấy thông tin ví
+    rpc GetWallet (GetWalletRequest) returns (GetWalletResponse);
+
+    // Cập nhật số dư ví
+    rpc UpdateBalance (UpdateBalanceRequest) returns (UpdateBalanceResponse);
+}
+
+message CreateWalletRequest {
+    string user_id = 1;
+    double initial_balance = 2;
+}
+
+message CreateWalletResponse {
+    bool success = 1;
+    string wallet_id = 2;
+    string message = 3;
+}
+
+message GetWalletRequest {
+    string user_id = 1;
+}
+
+message GetWalletResponse {
+    string wallet_id = 1;
+    string user_id = 2;
+    double balance = 3;
+}
+
+message UpdateBalanceRequest {
+    string user_id = 1;
+    double amount = 2;
+    string transaction_type = 3; // ADD | SUBTRACT
+    string description = 4;
+}
+
+message UpdateBalanceResponse {
+    bool success = 1;
+    double new_balance = 2;
+    string message = 3;
+}

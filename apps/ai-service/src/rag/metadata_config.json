@@ -1,0 +1,123 @@
+{
+  "folder_mappings": {
+    "phongdaotao": {
+      "department": "phongdaotao",
+      "department_vn": "Phòng Đào Tạo",
+      "source_type": "education",
+      "subfolders": {
+        "daihoc": {
+          "education_level": "daihoc",
+          "education_level_vn": "đại học"
+        },
+        "thacsi": {
+          "education_level": "thacsi",
+          "education_level_vn": "thạc sĩ"
+        },
+        "tiensi": {
+          "education_level": "tiensi",
+          "education_level_vn": "tiến sĩ"
+        },
+        "giangvien": {
+          "education_level": "giangvien",
+          "education_level_vn": "giảng viên"
+        }
+      }
+    },
+    "vanphong": {
+      "department": "vanphong",
+      "department_vn": "Văn Phòng", 
+      "source_type": "administration"
+    },
+    "phongkhcn": {
+      "department": "phongkhcn",
+      "department_vn": "Phòng KHCN",
+      "source_type": "research",
+      "subfolders": {
+        "detai": {
+          "research_type": "project",
+          "research_type_vn": "đề tài"
+        },
+        "baibao": {
+          "research_type": "publication", 
+          "research_type_vn": "bài báo"
+        }
+      }
+    },
+    "phongtccb": {
+      "department": "phongtccb",
+      "department_vn": "Phòng TCCB",
+      "source_type": "hr"
+    },
+    "phongkhaothi": {
+      "department": "phongkhaothi",
+      "department_vn": "Phòng Khảo thí",
+      "source_type": "examination",
+      "subfolders": {
+        "hoidong": {
+          "document_type": "council",
+          "document_type_vn": "hội đồng"
+        },
+        "quyche": {
+          "document_type": "regulation",
+          "document_type_vn": "quy chế"
+        }
+      }
+    },
+    "khoa": {
+      "department": "khoa", 
+      "department_vn": "Các Khoa",
+      "source_type": "academic_department"
+    },
+    "thongtinHVKTMM": {
+      "department": "thongtinhvktmm",
+      "department_vn": "Thông Tin HVKTMM", 
+      "source_type": "general_info"
+    },
+    "viennghiencuuvahoptacphattrien": {
+      "department": "viennghiencuu",
+      "department_vn": "Viện Nghiên Cứu và Hợp Tác Phát Triển",
+      "source_type": "research_collaboration"
+    }
+  },
+  "default_metadata": {
+    "department": "general",
+    "department_vn": "Chung",
+    "source_type": "regulation"
+  },
+  "query_keywords": {
+    "education_levels": {
+      "daihoc": ["đại học", "sinh viên", "cử nhân", "đh", "university"],
+      "thacsi": ["thạc sĩ", "cao học", "ths", "master"],
+      "tiensi": ["tiến sĩ", "nghiên cứu sinh", "ts", "phd", "doctor"],
+      "giangvien": ["giảng viên", "giáo viên", "gv", "teacher", "lecturer"]
+    },
+    "departments": {
+      "phongdaotao": ["phòng đào tạo", "quy chế đào tạo", "pdt", "education", "điểm học phần", "điểm trung bình", "tích lũy", "cách tính điểm", "tốt nghiệp", "xếp loại", "thang điểm", "điểm số", "đăng ký học", "học bổng", "kết quả học tập", "học kỳ"],
+      "vanphong": ["văn phòng", "hành chính", "vp", "office"],
+      "phongkhcn": ["phòng khcn", "khoa học công nghệ", "nghiên cứu", "research"],
+      "phongtccb": ["phòng tccb", "tổ chức cán bộ", "nhân sự", "hr"],
+      "phongkhaothi": ["phòng khảo thí", "khảo thí", "thi cử", "examination", "đảm bảo chất lượng", "hội đồng", "coi thi", "chấm thi", "tổ chức thi", "kỳ thi", "phòng thi", "giám thị", "quy định thi"],
+      "khoa": ["khoa", "bộ môn", "giảng dạy", "academic", "department", "ngành", "chuyên ngành", "an toàn thông tin", "attt", "chương trình đào tạo", "kế hoạch học tập", "học phần", "tín chỉ", "môn học", "mã học phần", "khối lượng kiến thức", "chương trình giáo dục", "mục tiêu đào tạo"],
+      "thongtinhvktmm": ["thông tin", "giới thiệu", "hvktmm", "học viện", "general info"],
+      "viennghiencuu": ["viện nghiên cứu", "nghiên cứu", "hợp tác", "phát triển", "vnc", "research collaboration"]
+    },
+    "research_types": {
+      "project": ["đề tài", "dự án", "project"],
+      "publication": ["bài báo", "publication", "paper"]
+    },
+    "document_types": {
+      "council": ["hội đồng", "thành viên", "danh sách", "council", "members"],
+      "regulation": ["quy chế", "quy định", "regulation", "rule"]
+    }
+  },
+  "chunk_settings": {
+    "chunk_size": 1200,
+    "chunk_overlap": 300,
+    "separators": ["[KẾT THÚC BẢNG]\n\n", "\n\n", "\n", ". ", " ", ""],
+    "keep_separator": true,
+    "k_documents": 8,
+    "table_aware_chunking": true,
+    "preserve_table_structure": true,
+    "sliding_window_size": 10
+  }
+}

@@ -16,4 +16,15 @@ node_modules/
 docker-compose.yml
 docker-compose.*.yml
 !docker-compose.example.yml
+!deploy/docker-compose*.yml
 
+# Python virtual environments
+venv/
+.venv/
+env/
+python-venv/
+**/venv/
+**/.venv/
+**/env/
+
+#python
