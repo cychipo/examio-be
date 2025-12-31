@@ -84,12 +84,13 @@ jobs:
 
             # Restart services
             echo "🔄 Restarting services..."
+
+            # Force cleanup ALL examio containers first (before compose down)
+            echo "🧹 Stopping and removing all examio containers..."
+            docker ps -a --filter "name=examio-" --format "{{.Names}}" | xargs -r docker stop 2>/dev/null || true
+            docker ps -a --filter "name=examio-" --format "{{.Names}}" | xargs -r docker rm -f 2>/dev/null || true
+
             docker compose down --remove-orphans || true
-
-            # Force cleanup any orphan containers with same names
-            echo "🧹 Cleaning up orphan containers..."
-            docker rm -f examio-gateway examio-auth examio-exam examio-finance examio-r2 examio-ai examio-rabbitmq examio-migration 2>/dev/null || true
-
             docker compose up -d
 
             # Cleanup old images
