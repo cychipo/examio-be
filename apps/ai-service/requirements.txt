@@ -20,6 +20,7 @@ rank-bm25>=0.2.2,<0.3.0
 
 # ML - Minimal (torch installed separately for CPU optimization)
 numpy>=2.0.0,<3.0.0
+huggingface_hub>=0.20.0
 # torch installed via Dockerfile --index-url for CPU variant
 
 # Data processing (lightweight)
