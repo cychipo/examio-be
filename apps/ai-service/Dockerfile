@@ -14,7 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install packages to user directory
+# Copy requirements and install packages to user directory
 COPY requirements.txt .
+
+# Install torch CPU version first (saves ~700MB)
+RUN pip install --no-cache-dir --user torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining requirements
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Stage 2: Production

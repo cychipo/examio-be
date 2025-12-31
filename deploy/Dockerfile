@@ -73,7 +73,7 @@ COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=builder /app/libs ./libs
 
 # Install production dependencies and generate Prisma client
-RUN pnpm install --prod --frozen-lockfile && pnpm prisma:generate
+RUN pnpm install --prod --frozen-lockfile && pnpm prisma:generate && pnpm store prune && rm -rf /root/.local /root/.cache
 
 # Copy built application
 COPY --from=builder /app/dist ./dist
