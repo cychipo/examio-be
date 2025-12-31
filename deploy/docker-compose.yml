@@ -38,7 +38,7 @@ services:
       - AUTH_SERVICE_URL=http://auth:7001
       - EXAM_SERVICE_URL=http://exam:7002
       - FINANCE_SERVICE_URL=http://finance:7003
-      - AI_SERVICE_URL=http://ai:7005
+      - AI_SERVICE_URL=http://ai:7005/api
       - DATABASE_URL=${DATABASE_URL}
       - AUTH_GRPC_URL=auth:50051
     env_file:
@@ -54,7 +54,8 @@ services:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7000/api/v1/health"]
+      test:
+        ["CMD", "wget", "-q", "--spider", "http://localhost:7000/api/v1/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -68,17 +69,24 @@ services:
     container_name: examio-auth
     environment:
       - NODE_ENV=production
-      - NODE_ENV=production
       - PORT=7001
       - DATABASE_URL=${DATABASE_URL}
       - GRPC_PORT=50051
+      - WALLET_GRPC_URL=finance:50053
+      - R2_GRPC_URL=r2:50054
     env_file:
       - .env
+    depends_on:
+      finance:
+        condition: service_healthy
+      r2:
+        condition: service_healthy
     networks:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7001/api/v1/health"]
+      test:
+        ["CMD", "wget", "-q", "--spider", "http://localhost:7001/api/v1/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -93,13 +101,13 @@ services:
     container_name: examio-exam
     environment:
       - NODE_ENV=production
-      - NODE_ENV=production
       - PORT=7002
-      - AI_SERVICE_URL=http://ai:7005
+      - AI_SERVICE_URL=http://ai:7005/api
       - R2_SERVICE_URL=r2:7004
       - RABBITMQ_URL=${RABBITMQ_URL}
       - DATABASE_URL=${DATABASE_URL}
       - R2_GRPC_URL=r2:50054
+      - FINANCE_SERVICE_GRPC_URL=finance:50053
     env_file:
       - .env
     depends_on:
@@ -107,11 +115,14 @@ services:
         condition: service_healthy
       r2:
         condition: service_healthy
+      finance:
+        condition: service_healthy
     networks:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7002/api/v1/health"]
+      test:
+        ["CMD", "wget", "-q", "--spider", "http://localhost:7002/api/v1/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -125,7 +136,6 @@ services:
     container_name: examio-finance
     environment:
       - NODE_ENV=production
-      - NODE_ENV=production
       - PORT=7003
       - DATABASE_URL=${DATABASE_URL}
       - GRPC_PORT=50053
@@ -135,7 +145,8 @@ services:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7003/api/v1/health"]
+      test:
+        ["CMD", "wget", "-q", "--spider", "http://localhost:7003/api/v1/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -148,7 +159,6 @@ services:
         SERVICE_NAME: r2-service
     container_name: examio-r2
     environment:
-      - NODE_ENV=production
       - NODE_ENV=production
       - PORT=7004
       - GRPC_PORT=50054
@@ -174,6 +184,7 @@ services:
       - RABBITMQ_URL=${RABBITMQ_URL}
       - DATABASE_URL=${DATABASE_URL}
       - GEMINI_API_KEYS=${GEMINI_API_KEYS}
+      - GEMINI_MODEL_NAMES=${GEMINI_MODEL_NAMES}
     env_file:
       - .env
     depends_on:
