@@ -94,7 +94,7 @@ services:
       - PORT=3002
       - AI_SERVICE_URL=http://ai:8000
       - R2_SERVICE_URL=r2:5050
-      - RABBITMQ_URL=amqp://rabbitmq:5672
+      - RABBITMQ_URL=${RABBITMQ_URL}
       - DATABASE_URL=${DATABASE_URL}
     env_file:
       - .env
@@ -165,7 +165,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PORT=8000
-      - RABBITMQ_URL=amqp://rabbitmq:5672
+      - RABBITMQ_URL=${RABBITMQ_URL}
       - DATABASE_URL=${DATABASE_URL}
     env_file:
       - .env
