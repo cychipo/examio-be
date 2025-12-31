@@ -110,25 +110,24 @@ export class AuthProxyController {
     @Get('google')
     @ApiOperation({ summary: 'Đăng nhập bằng Google' })
     async googleAuth(@Req() req: Request, @Res() res: Response) {
-        // Proxy to auth service - it will return the OAuth redirect URL
-        const result = await this.proxyService.forward('auth', {
+        // Proxy to auth service - get OAuth redirect URL without following
+        const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
             path: '/api/v1/auth/google',
             headers: this.extractHeaders(req),
         });
-        // If auth service returns a redirect URL, redirect browser there
-        if (result?.url) {
-            return res.redirect(result.url);
+        // Redirect browser to OAuth provider
+        if (result.redirectUrl) {
+            return res.redirect(result.redirectUrl);
         }
-        // If auth service already redirected (302), it will be in result
-        return res.json(result);
+        return res.json(result.data || { error: 'OAuth redirect failed' });
     }
 
     @Get('google/callback')
     @ApiOperation({ summary: 'Google OAuth callback' })
     async googleCallback(@Req() req: Request, @Res() res: Response) {
         const queryString = req.url.split('?')[1] || '';
-        const result = await this.proxyService.forward('auth', {
+        const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
             path: `/api/v1/auth/google/callback?${queryString}`,
             headers: this.extractHeaders(req),
@@ -140,22 +139,22 @@ export class AuthProxyController {
     @Get('facebook')
     @ApiOperation({ summary: 'Đăng nhập bằng Facebook' })
     async facebookAuth(@Req() req: Request, @Res() res: Response) {
-        const result = await this.proxyService.forward('auth', {
+        const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
             path: '/api/v1/auth/facebook',
             headers: this.extractHeaders(req),
         });
-        if (result?.url) {
-            return res.redirect(result.url);
+        if (result.redirectUrl) {
+            return res.redirect(result.redirectUrl);
         }
-        return res.json(result);
+        return res.json(result.data || { error: 'OAuth redirect failed' });
     }
 
     @Get('facebook/callback')
     @ApiOperation({ summary: 'Facebook OAuth callback' })
     async facebookCallback(@Req() req: Request, @Res() res: Response) {
         const queryString = req.url.split('?')[1] || '';
-        const result = await this.proxyService.forward('auth', {
+        const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
             path: `/api/v1/auth/facebook/callback?${queryString}`,
             headers: this.extractHeaders(req),
@@ -166,22 +165,22 @@ export class AuthProxyController {
     @Get('github')
     @ApiOperation({ summary: 'Đăng nhập bằng GitHub' })
     async githubAuth(@Req() req: Request, @Res() res: Response) {
-        const result = await this.proxyService.forward('auth', {
+        const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
             path: '/api/v1/auth/github',
             headers: this.extractHeaders(req),
         });
-        if (result?.url) {
-            return res.redirect(result.url);
+        if (result.redirectUrl) {
+            return res.redirect(result.redirectUrl);
         }
-        return res.json(result);
+        return res.json(result.data || { error: 'OAuth redirect failed' });
     }
 
     @Get('github/callback')
     @ApiOperation({ summary: 'GitHub OAuth callback' })
     async githubCallback(@Req() req: Request, @Res() res: Response) {
         const queryString = req.url.split('?')[1] || '';
-        const result = await this.proxyService.forward('auth', {
+        const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
             path: `/api/v1/auth/github/callback?${queryString}`,
             headers: this.extractHeaders(req),
@@ -319,23 +318,9 @@ export class AuthProxyController {
             return;
         }
 
-        // Set cookies if tokens are returned
-        const cookieOptions = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax' as const,
-            maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-        };
-
-        if (result.token) {
-            res.cookie('token', result.token, cookieOptions);
-            res.cookie('accessToken', result.token, cookieOptions);
-        }
-        if (result.sessionId) {
-            res.cookie('session_id', result.sessionId, cookieOptions);
-        }
-        if (result.refreshToken) {
-            res.cookie('refreshToken', result.refreshToken, cookieOptions);
+        // Relay cookies from auth service response
+        if (result.headers && result.headers['set-cookie']) {
+            res.setHeader('Set-Cookie', result.headers['set-cookie']);
         }
 
         // Redirect to frontend - auth service may provide a redirectUrl

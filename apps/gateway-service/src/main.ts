@@ -18,9 +18,10 @@ async function bootstrap() {
     // Global prefix
     app.setGlobalPrefix('api/v1');
 
-    // CORS
+    // CORS - hardcoded for production
     app.enableCors({
-        origin: process.env.FRONTEND_URL || [
+        origin: [
+            'https://examio.fayedark.com',
             'http://localhost:5173',
             'http://localhost:3001',
             'http://127.0.0.1:5173',

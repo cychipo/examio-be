@@ -92,9 +92,10 @@ jobs:
             # Wait a bit for resources to be released
             sleep 3
 
-            # Force remove ALL examio containers (including stuck ones)
-            echo "🧹 Force removing all examio containers..."
-            docker ps -aq --filter "name=examio" | xargs -r docker rm -f 2>/dev/null || true
+            # Force remove ALL examio-be containers (including stuck ones)
+            # Uses 'examio-' prefix to NOT affect examio-fe containers
+            echo "🧹 Force removing all examio backend containers..."
+            docker ps -aq --filter "name=examio-" | grep -v "examio-fe" | xargs -r docker rm -f 2>/dev/null || true
 
             # Also try by compose project name (examio-be specific)
             docker ps -aq --filter "label=com.docker.compose.project=examio-be" | xargs -r docker rm -f 2>/dev/null || true
