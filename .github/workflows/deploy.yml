@@ -84,7 +84,12 @@ jobs:
 
             # Restart services
             echo "🔄 Restarting services..."
-            docker compose down --remove-orphans
+            docker compose down --remove-orphans || true
+
+            # Force cleanup any orphan containers with same names
+            echo "🧹 Cleaning up orphan containers..."
+            docker rm -f examio-gateway examio-auth examio-exam examio-finance examio-r2 examio-ai examio-rabbitmq examio-migration 2>/dev/null || true
+
             docker compose up -d
 
             # Cleanup old images
