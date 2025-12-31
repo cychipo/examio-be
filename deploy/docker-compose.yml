@@ -33,7 +33,7 @@ services:
         SERVICE_NAME: gateway-service
     container_name: examio-gateway
     ports:
-      - "3000:3000"
+      - "6369:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -103,8 +103,6 @@ services:
         condition: service_healthy
       r2:
         condition: service_healthy
-      postgres:
-        condition: service_started
     networks:
       - examio-network
     healthcheck:
@@ -205,49 +203,11 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  # ==================== REDIS ====================
-  redis:
-    image: redis:7-alpine
-    container_name: examio-redis
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    networks:
-      - examio-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-    logging: *default-logging
+  # ==================== REDIS (External) ====================
+  # Removed per request (User has existing Redis)
 
-  # ==================== POSTGRESQL ====================
-  postgres:
-    image: postgres:15-alpine
-    container_name: examio-postgres
-    # Ports exposed only to internal network by default, but can export to host if needed
-    # ports:
-    #   - "5432:5432"
-    environment:
-      # These will be populated from .env, but user might need to parse DATABASE_URL
-      # Or just set POSTGRES_PASSWORD manually in .env
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
-      - POSTGRES_DB=examio
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - examio-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    logging: *default-logging
+  # ==================== POSTGRESQL (External) ====================
+  # Removed per request (User has existing Postgres)
 
   # ==================== MIGRATION ====================
   # Runs prisma migrate deploy and exits
@@ -263,9 +223,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
     env_file:
       - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
+    # depends_on: postgres (Removed - external DB)
     networks:
       - examio-network
     restart: "no"
@@ -277,5 +235,3 @@ networks:
 
 volumes:
   rabbitmq_data:
-  redis_data:
-  postgres_data:
