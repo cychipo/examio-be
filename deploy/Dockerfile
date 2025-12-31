@@ -6,6 +6,7 @@ ARG ENABLE_OCR=false
 
 # Stage 1: Build
 FROM node:20-alpine AS builder
+ARG SERVICE_NAME
 RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
