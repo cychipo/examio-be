@@ -76,9 +76,9 @@ class PgVectorStore:
             task_type: "retrieval_document" cho documents, "retrieval_query" cho queries
         """
         try:
-            from llm.gemini_client import gemini_client
+            from src.llm.gemini_client import gemini_client
         except ImportError:
-            from ..llm.gemini_client import gemini_client
+            from src.llm.gemini_client import gemini_client
         return await gemini_client.create_embedding(text, task_type)
 
     async def create_embeddings_batch(
@@ -91,9 +91,9 @@ class PgVectorStore:
         Sử dụng GeminiClient để có token rotation và tránh rate limit.
         """
         try:
-            from llm.gemini_client import gemini_client
+            from src.llm.gemini_client import gemini_client
         except ImportError:
-            from ..llm.gemini_client import gemini_client
+            from src.llm.gemini_client import gemini_client
         return await gemini_client.create_embeddings_batch(texts, task_type)
 
     async def store_document(

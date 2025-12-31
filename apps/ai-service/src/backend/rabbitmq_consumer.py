@@ -13,7 +13,7 @@ from typing import Any, Dict
 import aio_pika
 from aio_pika import connect_robust, IncomingMessage
 
-from backend.services.ocr_service import ocr_service
+from src.backend.services.ocr_service import ocr_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -139,7 +139,7 @@ class RabbitMQConsumer:
         type_result: 1=quiz, 2=flashcard
         """
         try:
-            from backend.services.generation_service import (
+            from src.backend.services.generation_service import (
                 generation_service,
                 GenerateQuizRequest,
                 GenerateFlashcardRequest

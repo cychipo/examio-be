@@ -13,7 +13,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.services.generation_service import (
+from src.backend.services.generation_service import (
     generation_service,
     GenerateQuizRequest,
     GenerateFlashcardRequest,

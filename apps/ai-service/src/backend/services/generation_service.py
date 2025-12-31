@@ -14,10 +14,10 @@ from dataclasses import dataclass
 import asyncpg
 from pydantic import BaseModel, Field
 
-from backend.utils.prompt_utils import prompt_utils
-from backend.services.ocr_service import ocr_service, DocumentChunk
-from llm.model_manager import model_manager, AIModelType
-from rag.vector_store_pg import get_pg_vector_store
+from src.backend.utils.prompt_utils import prompt_utils
+from src.backend.services.ocr_service import ocr_service, DocumentChunk
+from src.llm.model_manager import model_manager, AIModelType
+from src.rag.vector_store_pg import get_pg_vector_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

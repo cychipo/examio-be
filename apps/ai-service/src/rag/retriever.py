@@ -14,7 +14,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
 from pydantic import Field, BaseModel
-from llm.config import get_llm  # Import get_llm thay vì get_gemini_llm
+from src.llm.config import get_llm  # Import get_llm thay vì get_gemini_llm
 
 # Set up logging
 logger = logging.getLogger(__name__)

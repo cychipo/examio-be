@@ -21,10 +21,10 @@ from pydantic import BaseModel, Field
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from rag.retriever import extract_text_from_file, create_in_memory_retriever
-from rag.simple_chat_agent import SimpleChatAgent
-from rag.vector_store_pg import get_pg_vector_store
-from backend.services.ocr_service import ocr_service
+from src.rag.retriever import extract_text_from_file, create_in_memory_retriever
+from src.rag.simple_chat_agent import SimpleChatAgent
+from src.rag.vector_store_pg import get_pg_vector_store
+from src.backend.services.ocr_service import ocr_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
