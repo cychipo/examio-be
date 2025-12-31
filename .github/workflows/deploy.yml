@@ -102,7 +102,7 @@ jobs:
             sleep 20
 
             # Check Gateway Health
-            if docker compose exec -T gateway wget -q --spider http://localhost:3000/health; then
+            if docker compose exec -T gateway wget -q --spider http://localhost:7000/api/v1/health; then
                echo "✅ Gateway is healthy!"
             else
                echo "❌ Gateway health check failed!"
