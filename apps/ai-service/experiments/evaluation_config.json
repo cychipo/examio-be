@@ -1,0 +1,35 @@
+{
+  "evaluation_config": {
+    "dataset_path": "d:/KMA_ChatBot_Frontend_System/chatbot_agent/experiments/dataset chatbot update.csv",
+    "output_directory": "d:/KMA_ChatBot_Frontend_System/chatbot_agent/experiments/evaluation_results",
+    "rate_limit": {
+      "queries_per_minute": 10,
+      "delay_seconds": 6
+    },
+    "evaluation_settings": {
+      "max_questions": null,
+      "use_gemini": true,
+      "api_base_url": "http://localhost:3434",
+      "timeout_seconds": 30
+    },
+    "metrics": [
+      "answer_correctness",
+      "faithfulness", 
+      "context_relevance",
+      "answer_relevance"
+    ],
+    "encoding_options": [
+      "utf-8",
+      "latin-1", 
+      "cp1252",
+      "iso-8859-1"
+    ]
+  },
+  "description": "Configuration for Vietnamese chatbot evaluation using RAGAS metrics with Gemini LLM",
+  "notes": [
+    "Rate limited to 10 queries per minute to avoid API limits",
+    "Uses Gemini LLM with RAG system for evaluation",
+    "Handles multiple encoding formats for Vietnamese text",
+    "Generates detailed CSV results and JSON metrics summary"
+  ]
+}

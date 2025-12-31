@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package r2;
+
+// R2 Storage Service - Quản lý file trên Cloudflare R2
+service R2Service {
+    // Upload file
+    rpc UploadFile (UploadFileRequest) returns (UploadFileResponse);
+
+    // Get file URL (signed URL)
+    rpc GetFileUrl (GetFileUrlRequest) returns (GetFileUrlResponse);
+
+    // Delete file
+    rpc DeleteFile (DeleteFileRequest) returns (DeleteFileResponse);
+
+    // List files by user
+    rpc ListUserFiles (ListUserFilesRequest) returns (ListUserFilesResponse);
+}
+
+message UploadFileRequest {
+    string user_id = 1;
+    string filename = 2;
+    string mimetype = 3;
+    bytes content = 4;
+    string folder = 5; // Optional folder path
+}
+
+message UploadFileResponse {
+    bool success = 1;
+    string file_id = 2;
+    string url = 3;
+    string key_r2 = 4;
+    string message = 5;
+}
+
+message GetFileUrlRequest {
+    string key_r2 = 1;
+    int32 expires_in_seconds = 2;
+}
+
+message GetFileUrlResponse {
+    string url = 1;
+    int64 expires_at = 2;
+}
+
+message DeleteFileRequest {
+    string key_r2 = 1;
+}
+
+message DeleteFileResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ListUserFilesRequest {
+    string user_id = 1;
+    int32 page = 2;
+    int32 size = 3;
+}
+
+message FileInfo {
+    string file_id = 1;
+    string filename = 2;
+    string url = 3;
+    string mimetype = 4;
+    int64 size = 5;
+    int64 created_at = 6;
+}
+
+message ListUserFilesResponse {
+    repeated FileInfo files = 1;
+    int32 total = 2;
+    int32 page = 3;
+    int32 size = 4;
+}

@@ -1,20 +1,124 @@
 {
-  "$schema": "https://json.schemastore.org/nest-cli",
-  "collection": "@nestjs/schematics",
-  "monorepo": false,
-  "sourceRoot": "src",
-  "entryFile": "main",
-  "language": "ts",
-  "generateOptions": {
-    "spec": false
-  },
-  "compilerOptions": {
-    "manualRestart": true,
-    "tsConfigPath": "./tsconfig.build.json",
-    "webpack": false,
-    "deleteOutDir": true,
-    "assets": [],
-    "watchAssets": false,
-    "plugins": []
-  }
+    "$schema": "https://json.schemastore.org/nest-cli",
+    "collection": "@nestjs/schematics",
+    "monorepo": true,
+    "sourceRoot": "apps/codecraft-be/src",
+    "entryFile": "main",
+    "language": "ts",
+    "generateOptions": {
+        "spec": false
+    },
+    "compilerOptions": {
+        "manualRestart": true,
+        "tsConfigPath": "apps/codecraft-be/tsconfig.app.json",
+        "webpack": true,
+        "deleteOutDir": true,
+        "assets": [
+            {
+                "include": "templates/**/*",
+                "outDir": "dist",
+                "watchAssets": true
+            }
+        ],
+        "watchAssets": true,
+        "plugins": []
+    },
+    "root": "apps/codecraft-be",
+    "projects": {
+        "auth-service": {
+            "type": "application",
+            "root": "apps/auth-service",
+            "entryFile": "main",
+            "sourceRoot": "apps/auth-service/src",
+            "compilerOptions": {
+                "tsConfigPath": "apps/auth-service/tsconfig.app.json",
+                "assets": [
+                    {
+                        "include": "../../templates/**/*",
+                        "outDir": "dist/apps/auth-service",
+                        "watchAssets": true
+                    }
+                ]
+            }
+        },
+        "codecraft-be": {
+            "type": "application",
+            "root": "apps/codecraft-be",
+            "entryFile": "main",
+            "sourceRoot": "apps/codecraft-be/src",
+            "compilerOptions": {
+                "tsConfigPath": "apps/codecraft-be/tsconfig.app.json"
+            }
+        },
+        "common": {
+            "type": "library",
+            "root": "libs/common",
+            "entryFile": "index",
+            "sourceRoot": "libs/common/src",
+            "compilerOptions": {
+                "tsConfigPath": "libs/common/tsconfig.lib.json"
+            }
+        },
+        "database": {
+            "type": "library",
+            "root": "libs/database",
+            "entryFile": "index",
+            "sourceRoot": "libs/database/src",
+            "compilerOptions": {
+                "tsConfigPath": "libs/database/tsconfig.lib.json"
+            }
+        },
+        "exam-service": {
+            "type": "application",
+            "root": "apps/exam-service",
+            "entryFile": "main",
+            "sourceRoot": "apps/exam-service/src",
+            "compilerOptions": {
+                "tsConfigPath": "apps/exam-service/tsconfig.app.json",
+                "assets": [
+                    {
+                        "include": "../../templates/**/*",
+                        "outDir": "dist/apps/exam-service",
+                        "watchAssets": true
+                    }
+                ]
+            }
+        },
+        "finance-service": {
+            "type": "application",
+            "root": "apps/finance-service",
+            "entryFile": "main",
+            "sourceRoot": "apps/finance-service/src",
+            "compilerOptions": {
+                "tsConfigPath": "apps/finance-service/tsconfig.app.json"
+            }
+        },
+        "r2-service": {
+            "type": "application",
+            "root": "apps/r2-service",
+            "entryFile": "main",
+            "sourceRoot": "apps/r2-service/src",
+            "compilerOptions": {
+                "tsConfigPath": "apps/r2-service/tsconfig.app.json"
+            }
+        },
+        "gateway-service": {
+            "type": "application",
+            "root": "apps/gateway-service",
+            "entryFile": "main",
+            "sourceRoot": "apps/gateway-service/src",
+            "compilerOptions": {
+                "tsConfigPath": "apps/gateway-service/tsconfig.app.json"
+            }
+        },
+        "redis": {
+            "type": "library",
+            "root": "libs/redis",
+            "entryFile": "index",
+            "sourceRoot": "libs/redis/src",
+            "compilerOptions": {
+                "tsConfigPath": "libs/redis/tsconfig.lib.json"
+            }
+        }
+    }
 }

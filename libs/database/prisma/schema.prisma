@@ -1,0 +1,497 @@
+//******** AUTO GENERATED FILE, DO NOT EDIT.  *********
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AIChat {
+  id        String   @id
+  userId    String
+  title     String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  AIChatMessage[]
+  documents AIChatDocument[] // Multi-file support
+
+  @@index([userId, updatedAt(sort: Desc)])
+}
+
+model AIChatMessage {
+  id           String   @id
+  chatId       String
+  role         String // "user" | "assistant"
+  content      String
+  imageUrl     String? // URL ảnh nếu có upload
+  documentId   String? // ID của UserStorage nếu dùng PDF context
+  documentName String? // Tên file để hiển thị
+  createdAt    DateTime @default(now())
+
+  chat AIChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId, createdAt])
+}
+
+// Junction table for multi-document support
+// Allows O(1) lookup of all documents for a chat via chatId index
+model AIChatDocument {
+  id           String   @id @default(cuid())
+  chatId       String
+  documentId   String // UserStorage ID (file gốc)
+  documentName String // File name for display
+  createdAt    DateTime @default(now())
+
+  chat        AIChat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  userStorage UserStorage @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // Composite unique constraint prevents duplicate document per chat
+  @@unique([chatId, documentId])
+  // Index for O(1) lookup of documents by chatId
+  @@index([chatId])
+}
+
+model QuizSet {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  userId      String
+  thumbnail   String?
+  isPublic    Boolean  @default(false)
+  isPinned    Boolean  @default(false)
+  tags        String[] @default([])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  createdBy   String?
+  updatedBy   String?
+
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  detailsQuizQuestions DetailsQuizQuestion[]
+  examRooms            ExamRoom[]
+  practiceAttempts     QuizPracticeAttempt[]
+}
+
+model FlashCardSet {
+  id          String   @id @default(cuid())
+  title       String
+  userId      String
+  thumbnail   String?
+  description String?
+  tag         String[] @default([])
+  isPublic    Boolean  @default(false)
+  isPinned    Boolean  @default(false)
+  viewCount   Int      @default(0)
+  accessCode  String? // 6-digit code for private access
+  whitelist   String[] @default([]) // List of user IDs who can access
+  createdAt   DateTime @default(now())
+  updatedBy   String?
+  createdBy   String?
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  detailsFlashCard DetailsFlashCard[]
+
+  @@index([accessCode])
+}
+
+model QuizQuestion {
+  id        String   @id @default(cuid())
+  question  String
+  options   String[]
+  answer    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  detailsQuizQuestions DetailsQuizQuestion[]
+}
+
+model DetailsQuizQuestion {
+  id                      String  @id @default(cuid())
+  quizSetId               String
+  quizQuestionId          String
+  historyGeneratedQuizzId String?
+
+  quizSet               QuizSet                @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+  quizQuestion          QuizQuestion           @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  historyGeneratedQuizz HistoryGeneratedQuizz? @relation(fields: [historyGeneratedQuizzId], references: [id], onDelete: SetNull)
+
+  @@unique([quizSetId, quizQuestionId])
+  @@index([quizSetId])
+  @@index([quizQuestionId])
+  @@index([historyGeneratedQuizzId])
+}
+
+model FlashCard {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  detailsFlashCards DetailsFlashCard[]
+}
+
+model DetailsFlashCard {
+  id                          String  @id @default(cuid())
+  flashCardSetId              String
+  flashCardId                 String
+  historyGeneratedFlashcardId String?
+
+  flashCardSet              FlashCardSet               @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
+  flashCard                 FlashCard                  @relation(fields: [flashCardId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  historyGeneratedFlashcard HistoryGeneratedFlashcard? @relation(fields: [historyGeneratedFlashcardId], references: [id], onDelete: SetNull)
+
+  @@unique([flashCardSetId, flashCardId])
+  @@index([flashCardSetId])
+  @@index([flashCardId])
+  @@index([historyGeneratedFlashcardId])
+}
+
+model ExamRoom {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  quizSetId   String
+  hostId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  createdBy   String?
+  updatedBy   String?
+
+  host    User    @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  quizSet QuizSet @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+
+  examSessions ExamSession[]
+}
+
+model ExamSession {
+  id                     String    @id @default(cuid())
+  examRoomId             String
+  status                 Int       @default(0) // 0: UPCOMING, 1: ONGOING, 2: ENDED
+  startTime              DateTime
+  endTime                DateTime?
+  autoJoinByLink         Boolean   @default(false)
+  // Security and access control fields (moved from ExamRoom)
+  assessType             Int       @default(0) // 0: PUBLIC, 1: PRIVATE
+  allowRetake            Boolean   @default(false)
+  maxAttempts            Int       @default(1)
+  accessCode             String? // 6-digit code for private access
+  whitelist              String[]  @default([]) // List of user IDs who can access
+  showAnswersAfterSubmit Boolean   @default(true) // Show detailed answers after submission
+  passingScore           Float     @default(0) // Minimum score percentage to pass (0 = no minimum)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @default(now()) @updatedAt
+  createdBy              String?
+  updatedBy              String?
+
+  examRoom     ExamRoom      @relation(fields: [examRoomId], references: [id], onDelete: Cascade)
+  examAttempts ExamAttempt[]
+
+  @@index([accessCode])
+}
+
+model ExamAttempt {
+  id             String    @id @default(cuid())
+  examSessionId  String
+  userId         String
+  score          Float
+  violationCount Int       @default(0)
+  startedAt      DateTime
+  finishedAt     DateTime?
+  status         Int       @default(0) // 0: IN_PROGRESS, 1: COMPLETED, 2: CANCELLED
+
+  // Answer tracking fields (similar to QuizPracticeAttempt)
+  answers         Json     @default("{}") // { questionId: selectedAnswer }
+  currentIndex    Int      @default(0) // Current question index
+  markedQuestions String[] @default([]) // Marked question IDs
+  totalQuestions  Int      @default(0)
+  correctAnswers  Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  createdBy String?
+  updatedBy String?
+
+  examSession  ExamSession   @relation(fields: [examSessionId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cheatingLogs CheatingLog[]
+}
+
+// Cheating log for exam attempts - tracks violations per type
+model CheatingLog {
+  id             String   @id @default(cuid())
+  examAttemptId  String
+  type           String // TAB_SWITCH, WINDOW_BLUR, DEVTOOLS_OPEN, COPY_PASTE, RIGHT_CLICK, FULLSCREEN_EXIT, PRINT_SCREEN
+  count          Int      @default(1)
+  description    String? // Human-readable description
+  lastOccurredAt DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  examAttempt ExamAttempt @relation(fields: [examAttemptId], references: [id], onDelete: Cascade)
+
+  @@unique([examAttemptId, type]) // Upsert by type - O(1) lookup
+  @@index([examAttemptId])
+}
+
+model HistoryGeneratedQuizz {
+  id            String   @id @default(cuid())
+  userId        String
+  userStorageId String
+  quizzes       Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userStorage          UserStorage           @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+  detailsQuizQuestions DetailsQuizQuestion[]
+}
+
+model HistoryGeneratedFlashcard {
+  id            String   @id @default(cuid())
+  userId        String
+  userStorageId String
+  flashcards    Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userStorage       UserStorage        @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+  detailsFlashCards DetailsFlashCard[]
+}
+
+model QuizPracticeAttempt {
+  id              String   @id @default(cuid())
+  quizSetId       String
+  userId          String
+  type            Int      @default(0) // 0: PRACTICE (thi thử), 1: REAL (thi thật)
+  answers         Json     @default("{}") // { questionId: selectedAnswer }
+  currentIndex    Int      @default(0) // Câu hỏi hiện tại
+  markedQuestions String[] @default([]) // Danh sách câu hỏi đánh dấu
+
+  // Thời gian làm bài
+  timeSpentSeconds Int  @default(0) // Thời gian đã làm (giây)
+  timeLimitMinutes Int? // Giới hạn thời gian (phút), null = không giới hạn
+
+  // Trạng thái
+  isSubmitted    Boolean @default(false)
+  score          Float? // Điểm sau khi nộp bài
+  totalQuestions Int     @default(0)
+  correctAnswers Int     @default(0)
+
+  // Timestamps
+  startedAt   DateTime  @default(now())
+  submittedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  createdBy   String?
+  updatedBy   String?
+
+  quizSet QuizSet @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Unique constraint: mỗi user chỉ có 1 bản ghi cho mỗi quizSet với mỗi type
+  @@unique([quizSetId, userId, type])
+  @@index([userId])
+  @@index([quizSetId])
+  @@index([userId, updatedAt(sort: Desc)])
+}
+
+model Payment {
+  id          String    @unique
+  userId      String
+  amount      Float
+  currency    String
+  status      Int // 0 = unpaid, 1 = paid, 2 = overdue, 3 = cancelled
+  paymentType String    @default("credits") // credits | subscription
+  expiresAt   DateTime? // Payment expires after 10 minutes, null for legacy
+  orderId     String? // SePay order ID for VA management
+  vaNumber    String? // SePay VA number for cleanup on cancel
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdBy   String?
+  updatedBy   String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, paymentType, status])
+}
+
+model Wallet {
+  id        String   @unique
+  userId    String   @unique
+  balance   Float    @default(0)
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id          String   @unique
+  walletId    String
+  updatedAt   DateTime @default(now()) @updatedAt
+  createdBy   String?
+  updatedBy   String?
+  amount      Float
+  type        Int // 0 = buy credits, 1 = buy subscription, 2 = refund, 3 = admin adjustment, 4 = use services
+  direction   String   @default("SUBTRACT") // ADD = cộng credits, SUBTRACT = trừ credits
+  description String?
+  createdAt   DateTime @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model UserStorage {
+  id               String   @unique
+  userId           String
+  filename         String
+  url              String
+  mimetype         String
+  size             Int
+  keyR2            String   @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+  processingStatus String   @default("COMPLETED") // PENDING | PROCESSING | COMPLETED | FAILED
+  creditCharged    Boolean  @default(false) // Track if OCR credit was already deducted
+
+  user                      User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents                 Document[]
+  historyGeneratedQuizz     HistoryGeneratedQuizz[]
+  historyGeneratedFlashcard HistoryGeneratedFlashcard[]
+  aiChatDocuments           AIChatDocument[]
+}
+
+model Document {
+  id            String                @unique
+  userStorageId String
+  pageRange     String
+  title         String?
+  content       String
+  embeddings    Unsupported("vector")
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @default(now()) @updatedAt
+  userStorage UserStorage @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id         String   @unique
+  email      String   @unique
+  username   String   @unique
+  name       String?
+  avatar     String?
+  banner     String?
+  bio        String?
+  isAdmin    Boolean  @default(false)
+  isVerified Boolean  @default(false)
+  password   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?
+  updatedBy  String?
+
+  verifyAccountCode         VerifyAccountCode?
+  resetPasswordCode         ResetPasswordCode?
+  userStorage               UserStorage[]
+  wallet                    Wallet?
+  payments                  Payment[]
+  quizSets                  QuizSet[]
+  flashCardSets             FlashCardSet[]
+  examRooms                 ExamRoom[]
+  examAttempts              ExamAttempt[]
+  historyGeneratedQuizz     HistoryGeneratedQuizz[]
+  historyGeneratedFlashcard HistoryGeneratedFlashcard[]
+  quizPracticeAttempts      QuizPracticeAttempt[]
+  aiChats                   AIChat[]
+  subscription              UserSubscription?
+  sessions                  UserSession[]
+  monthlyFileUploads        UserMonthlyFileUpload[]
+}
+
+// Subscription tiers: 0=none, 1=basic, 2=advanced, 3=vip
+model UserSubscription {
+  id              String    @unique
+  userId          String    @unique
+  tier            Int       @default(0) // 0=none, 1=basic, 2=advanced, 3=vip
+  billingCycle    String    @default("monthly") // monthly | yearly
+  lastPaymentDate DateTime?
+  nextPaymentDate DateTime?
+  isActive        Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  createdBy       String?
+  updatedBy       String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerifyAccountCode {
+  id        String   @unique
+  userId    String   @unique
+  code      String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ResetPasswordCode {
+  id        String   @unique
+  userId    String   @unique
+  code      String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Track monthly file uploads for subscription limits
+model UserMonthlyFileUpload {
+  id        String   @id @default(cuid())
+  userId    String
+  yearMonth String // Format: "2024-12" for efficient monthly grouping
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, yearMonth])
+  @@index([userId, yearMonth])
+}
+
+model UserSession {
+  id            String   @id
+  userId        String
+  sessionId     String   @unique
+  refreshToken  String   @unique
+  deviceId      String
+  deviceName    String?
+  browser       String?
+  os            String?
+  ipAddress     String?
+  country       String?
+  city          String?
+  isActive      Boolean  @default(true)
+  lastActivity  DateTime @default(now())
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@index([userId, deviceId])
+  @@index([refreshToken])
+}

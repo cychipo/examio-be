@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package auth;
+
+// Auth Service - Xác thực JWT từ các service khác
+service AuthService {
+    // Validate JWT token và trả về user info
+    rpc ValidateToken (ValidateTokenRequest) returns (ValidateTokenResponse);
+
+    // Lấy thông tin user theo ID
+    rpc GetUserInfo (GetUserInfoRequest) returns (GetUserInfoResponse);
+
+    // Kiểm tra quyền của user
+    rpc CheckPermission (CheckPermissionRequest) returns (CheckPermissionResponse);
+}
+
+// ==================== ValidateToken ====================
+
+message ValidateTokenRequest {
+    string token = 1;
+}
+
+message ValidateTokenResponse {
+    bool valid = 1;
+    string user_id = 2;
+    string email = 3;
+    string username = 4;
+    int32 role = 5;
+    string message = 6;
+}
+
+// ==================== GetUserInfo ====================
+
+message GetUserInfoRequest {
+    string user_id = 1;
+}
+
+message GetUserInfoResponse {
+    bool success = 1;
+    string user_id = 2;
+    string email = 3;
+    string username = 4;
+    string avatar = 5;
+    int32 role = 6;
+    bool is_verified = 7;
+    int64 created_at = 8;
+    string message = 9;
+}
+
+// ==================== CheckPermission ====================
+
+message CheckPermissionRequest {
+    string user_id = 1;
+    string resource = 2;  // e.g., "quizset", "examroom"
+    string action = 3;    // e.g., "read", "write", "delete"
+}
+
+message CheckPermissionResponse {
+    bool allowed = 1;
+    string message = 2;
+}
