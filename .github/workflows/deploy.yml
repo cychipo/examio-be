@@ -86,9 +86,13 @@ jobs:
             echo "🔄 Restarting services..."
 
             # Force cleanup ALL examio containers first (before compose down)
+            # Force cleanup ALL examio containers first (before compose down)
             echo "🧹 Stopping and removing all examio containers..."
-            docker ps -a --filter "name=examio-" --format "{{.Names}}" | xargs -r docker stop 2>/dev/null || true
-            docker ps -a --filter "name=examio-" --format "{{.Names}}" | xargs -r docker rm -f 2>/dev/null || true
+            IDS=$(docker ps -a -q --filter "name=examio-")
+            if [ -n "$IDS" ]; then
+              docker stop $IDS || true
+              docker rm -f $IDS || true
+            fi
 
             docker compose down --remove-orphans || true
             docker compose up -d

@@ -1,58 +1,62 @@
 # =============================================================================
-# Examio AI Service (Python) Multi-Stage Dockerfile
+# Examio AI Service - Production Optimized Dockerfile
+# Target: < 500MB
 # =============================================================================
 
-# Stage 1: Builder
-FROM python:3.13-slim AS builder
+# Stage 1: Builder with minimal deps
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
+# Install only essential build deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install packages to user directory
-# Copy requirements and install packages to user directory
 COPY requirements.txt .
 
-# Install torch CPU version first (saves ~700MB)
-RUN pip install --no-cache-dir --user torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
+# Install torch CPU first (much smaller than GPU version)
+RUN pip install --no-cache-dir --user \
+    torch==2.2.0+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining requirements
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Stage 2: Production
-FROM python:3.13-slim
+# Clean up pip cache and unnecessary files
+RUN find /root/.local -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local -type f -name "*.pyc" -delete 2>/dev/null || true && \
+    find /root/.local -type f -name "*.pyo" -delete 2>/dev/null || true
+
+# Stage 2: Minimal production image
+FROM python:3.12-slim AS production
 
 WORKDIR /app
 
-# Install runtime dependencies including curl for healthcheck
+# Only curl for healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
+# Copy only site-packages, not entire .local
+COPY --from=builder /root/.local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /root/.local/bin /usr/local/bin
 
-# Ensure scripts in PATH
-ENV PATH=/root/.local/bin:$PATH
+# Environment
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PORT=8000
 
-# Copy source code and data directories
-COPY src /app/src
-
-# Copy graph data if exists (may not exist on first build)
-COPY document_graph* /app/document_graph/
-COPY department_graphs* /app/department_graphs/
+# Copy only necessary source code
+COPY src/backend /app/src/backend
+COPY src/rag /app/src/rag
+COPY src/llm /app/src/llm
+COPY src/__init__.py /app/src/
 
 EXPOSE 8000
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=30s \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Start FastAPI with uvicorn
 CMD ["sh", "-c", "python -m uvicorn src.backend.main:app --host 0.0.0.0 --port ${PORT}"]

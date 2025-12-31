@@ -88,6 +88,7 @@ services:
       dockerfile: Dockerfile
       args:
         SERVICE_NAME: exam-service
+        ENABLE_OCR: "true"
     container_name: examio-exam
     environment:
       - NODE_ENV=production
