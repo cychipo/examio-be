@@ -69,9 +69,9 @@ class OCRProcessingService:
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create connection pool"""
         if self._pool is None or self._pool._closed:
-            postgres_uri = os.environ.get("POSTGRES_URI")
+            postgres_uri = os.environ.get("DATABASE_URL")
             if not postgres_uri:
-                raise ValueError("POSTGRES_URI environment variable not set")
+                raise ValueError("DATABASE_URL environment variable not set")
 
             self._pool = await asyncpg.create_pool(
                 postgres_uri,

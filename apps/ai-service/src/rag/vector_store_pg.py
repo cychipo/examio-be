@@ -36,7 +36,7 @@ class PgVectorStore:
     Vector Store sử dụng PostgreSQL với pgvector extension.
 
     Cấu hình:
-    - POSTGRES_URI: Connection string tới PostgreSQL
+    - DATABASE_URL: Connection string tới PostgreSQL
     """
 
     VECTOR_SEARCH_CONFIG = {
@@ -47,7 +47,7 @@ class PgVectorStore:
     }
 
     def __init__(self, connection_string: Optional[str] = None):
-        self.connection_string = connection_string or os.getenv("POSTGRES_URI")
+        self.connection_string = connection_string or os.getenv("DATABASE_URL")
         self._pool: Optional[asyncpg.Pool] = None
 
     async def _get_pool(self) -> asyncpg.Pool:

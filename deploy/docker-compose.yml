@@ -33,15 +33,16 @@ services:
         SERVICE_NAME: gateway-service
     container_name: examio-gateway
     ports:
-      - "6369:3000"
+      - "6369:7000"
     environment:
       - NODE_ENV=production
-      - PORT=3000
-      - AUTH_SERVICE_URL=http://auth:3001
-      - EXAM_SERVICE_URL=http://exam:3002
-      - FINANCE_SERVICE_URL=http://finance:3003
-      - AI_SERVICE_URL=http://ai:8000
+      - PORT=7000
+      - AUTH_SERVICE_URL=http://auth:7001
+      - EXAM_SERVICE_URL=http://exam:7002
+      - FINANCE_SERVICE_URL=http://finance:7003
+      - AI_SERVICE_URL=http://ai:7005
       - DATABASE_URL=${DATABASE_URL}
+      - AUTH_GRPC_URL=auth:50051
     env_file:
       - .env
     depends_on:
@@ -55,7 +56,7 @@ services:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7000/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -69,15 +70,17 @@ services:
     container_name: examio-auth
     environment:
       - NODE_ENV=production
-      - PORT=3001
+      - NODE_ENV=production
+      - PORT=7001
       - DATABASE_URL=${DATABASE_URL}
+      - GRPC_PORT=50051
     env_file:
       - .env
     networks:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7001/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -91,11 +94,13 @@ services:
     container_name: examio-exam
     environment:
       - NODE_ENV=production
-      - PORT=3002
-      - AI_SERVICE_URL=http://ai:8000
-      - R2_SERVICE_URL=r2:5050
+      - NODE_ENV=production
+      - PORT=7002
+      - AI_SERVICE_URL=http://ai:7005
+      - R2_SERVICE_URL=r2:7004
       - RABBITMQ_URL=${RABBITMQ_URL}
       - DATABASE_URL=${DATABASE_URL}
+      - R2_GRPC_URL=r2:50054
     env_file:
       - .env
     depends_on:
@@ -107,7 +112,7 @@ services:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3002/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7002/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -121,15 +126,17 @@ services:
     container_name: examio-finance
     environment:
       - NODE_ENV=production
-      - PORT=3003
+      - NODE_ENV=production
+      - PORT=7003
       - DATABASE_URL=${DATABASE_URL}
+      - GRPC_PORT=50053
     env_file:
       - .env
     networks:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3003/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7003/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -143,14 +150,16 @@ services:
     container_name: examio-r2
     environment:
       - NODE_ENV=production
-      - PORT=5050
+      - NODE_ENV=production
+      - PORT=7004
+      - GRPC_PORT=50054
     env_file:
       - .env
     networks:
       - examio-network
     healthcheck:
       <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5050/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7004/health"]
     restart: unless-stopped
     logging: *default-logging
 
@@ -162,9 +171,10 @@ services:
     container_name: examio-ai
     environment:
       - PYTHONUNBUFFERED=1
-      - PORT=8000
+      - PORT=7005
       - RABBITMQ_URL=${RABBITMQ_URL}
       - DATABASE_URL=${DATABASE_URL}
+      - GEMINI_API_KEYS=${GEMINI_API_KEYS}
     env_file:
       - .env
     depends_on:
@@ -173,7 +183,7 @@ services:
     networks:
       - examio-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:7005/health"]
       interval: 30s
       timeout: 10s
       retries: 3

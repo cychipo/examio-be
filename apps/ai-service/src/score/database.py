@@ -10,10 +10,10 @@ load_dotenv()
 class Database:
     def __init__(self):
         self.connection_pool = None
-        self._dsn = os.getenv("POSTGRES_URI")
+        self._dsn = os.getenv("DATABASE_URL")
         # self._dsn = os.getenv("POSTGRES_URI_DOCKER")
         if not self._dsn:
-            raise ValueError("POSTGRES_URI environment variable is not set")
+            raise ValueError("DATABASE_URL environment variable is not set")
 
     async def connect(self):
         """Connect to the PostgreSQL database"""
@@ -61,7 +61,7 @@ class Database:
         async with pool.acquire() as conn:
             # Build dynamic query based on filters
             query = """
-            SELECT s.*, st.student_name, st.student_class, 
+            SELECT s.*, st.student_name, st.student_class,
                   su.subject_name, su.subject_credits
             FROM scores s
             JOIN students st ON s.student_code = st.student_code
@@ -90,26 +90,26 @@ class Database:
 
             # Execute query
             score_records = await conn.fetch(query, *params)
-            
+
             # Process results
             results = []
             for record in score_records:
                 record_dict = dict(record)
-                
+
                 # Build Student object
                 student = Student(
                     student_code=record_dict["student_code"],
                     student_name=record_dict["student_name"],
                     student_class=record_dict["student_class"]
                 )
-                
+
                 # Build Subject object
                 subject = Subject(
                     subject_id=record_dict["subject_id"],
                     subject_name=record_dict["subject_name"],
                     subject_credits=record_dict["subject_credits"]
                 )
-                
+
                 # Build Score object
                 score = Score(
                     score_text=record_dict["score_text"],
@@ -121,14 +121,14 @@ class Database:
                     student_code=record_dict["student_code"],
                     subject_id=record_dict["subject_id"]
                 )
-                
+
                 # Combine into ScoreWithDetails
                 score_with_details = ScoreWithDetails(
                     **score.model_dump(),
                     student=student,
                     subject=subject
                 )
-                
+
                 results.append(score_with_details)
-                
-            return results 
+
+            return results
