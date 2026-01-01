@@ -131,7 +131,11 @@ async def stream_ai(request: ChatRequest):
         user_storage_id = request.user_storage_id
         model_type = request.model_type or "gemini"
 
-        logger.info(f"Stream AI: {query[:50]}... (RAG ID: {user_storage_id}, Model: {model_type})")
+        # Log mode: with document or general chat
+        if user_storage_id:
+            logger.info(f"Stream AI [RAG mode]: query='{query[:50]}...', doc_id={user_storage_id}, model={model_type}")
+        else:
+            logger.info(f"Stream AI [General chat]: query='{query[:50]}...', model={model_type}")
 
         # Use PostgreSQL vector search instead of in-memory FAISS
         # This uses pre-computed embeddings from database (no re-embedding!)
@@ -144,7 +148,7 @@ async def stream_ai(request: ChatRequest):
                 top_k=8,
                 max_content_length=8000
             )
-            logger.info(f"Got context from PostgreSQL: {len(pre_context) if pre_context else 0} chars")
+            logger.info(f"Retrieved {len(pre_context) if pre_context else 0} chars context from PostgreSQL")
 
         # Create agent with pre-fetched context (fast path - no retriever creation)
         agent = SimpleChatAgent(pre_context=pre_context, model_type=model_type)
