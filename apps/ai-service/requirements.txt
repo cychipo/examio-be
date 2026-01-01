@@ -10,7 +10,7 @@ grandalf>=0.8,<0.9
 langchain-ollama>=0.3.0,<0.4.0
 langchain-openai>=0.3.11,<0.4.0
 langchain-google-genai>=1.0.0,<2.0.0
-google-generativeai>=0.5.0,<1.0.0
+google-generativeai>=0.8.0
 
 # Web framework (API only)
 fastapi>=0.115.12,<0.116.0
