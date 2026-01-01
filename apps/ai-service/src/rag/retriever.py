@@ -13,7 +13,7 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
-from pydantic import Field, BaseModel
+from pydantic import Field
 from src.llm.config import get_llm  # Import get_llm thay vì get_gemini_llm
 
 # Set up logging
@@ -44,7 +44,7 @@ except ImportError:
 # sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
 
 
-class MetadataEnhancedHybridRetriever(BaseRetriever, BaseModel):
+class MetadataEnhancedHybridRetriever(BaseRetriever):
     vectorstore: FAISS = Field(description="FAISS vector store")
     bm25_retriever: BM25Retriever = Field(description="BM25 retriever")
     k: int = Field(default=4, description="Number of documents to retrieve")
