@@ -168,6 +168,7 @@ jobs:
 
               # Independent services
               echo "   → Updating r2, finance..."
+              docker stop examio-r2 examio-finance 2>/dev/null || true
               docker rm -f examio-r2 examio-finance 2>/dev/null || true
               docker compose up -d --no-deps --force-recreate r2 finance
 
