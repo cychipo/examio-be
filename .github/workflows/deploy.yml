@@ -146,56 +146,12 @@ jobs:
             echo "🔄 PHASE 3: ROLLING UPDATE"
             echo "────────────────────────────────────────────────────────────"
 
-            # Check if services are running
-            RUNNING_SERVICES=$(docker compose ps -q 2>/dev/null | wc -l || echo "0")
+            # Stop all containers first, then recreate with new images
+            echo "   → Stopping all services..."
+            docker compose down --remove-orphans 2>/dev/null || true
 
-            # Always remove one-shot migration container (it exits after running)
-            echo "   → Removing old migration container..."
-            docker rm -f examio-migration 2>/dev/null || true
-
-            if [ "$RUNNING_SERVICES" -gt 0 ]; then
-              echo "📊 Current running services: $RUNNING_SERVICES"
-              echo "🔄 Performing rolling update..."
-
-              # Rolling update: recreate containers one by one with new images
-              # --no-deps prevents restarting dependencies
-              # This minimizes downtime
-
-              # Infrastructure services first (no deps)
-              echo "   → Updating infrastructure..."
-              docker rm -f examio-rabbitmq 2>/dev/null || true
-              docker compose up -d --no-deps --force-recreate rabbitmq 2>/dev/null || true
-
-              # Independent services
-              echo "   → Updating r2, finance..."
-              docker stop examio-r2 examio-finance 2>/dev/null || true
-              docker rm -f examio-r2 examio-finance 2>/dev/null || true
-              docker compose up -d --no-deps --force-recreate r2 finance
-
-              # Wait for them to be healthy
-              echo "   → Waiting for base services..."
-              sleep 10
-
-              # Services with dependencies
-              echo "   → Updating auth..."
-              docker rm -f examio-auth 2>/dev/null || true
-              docker compose up -d --no-deps --force-recreate auth
-              sleep 5
-
-              echo "   → Updating ai, exam..."
-              docker rm -f examio-ai examio-exam 2>/dev/null || true
-              docker compose up -d --no-deps --force-recreate ai exam
-              sleep 5
-
-              # Gateway last (depends on all)
-              echo "   → Updating gateway..."
-              docker rm -f examio-gateway 2>/dev/null || true
-              docker compose up -d --no-deps --force-recreate gateway
-
-            else
-              echo "📊 No running services. Starting fresh..."
-              docker compose up -d --remove-orphans
-            fi
+            echo "   → Starting all services with new images..."
+            docker compose up -d --build --force-recreate --remove-orphans
 
             echo "✅ Services updated"
 
