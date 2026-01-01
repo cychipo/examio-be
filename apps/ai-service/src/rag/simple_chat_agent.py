@@ -225,21 +225,27 @@ Answer only YES or NO."""
 
             if self.pre_context:
                 # Use pre-fetched context from PostgreSQL (fast path - no re-embedding)
-                logger.info("Using pre-fetched context from PostgreSQL (no re-embedding)")
+                logger.info("Using RAG with pre-fetched context from PostgreSQL")
                 use_rag = True
                 context = self.pre_context
             elif self.retriever:
+                # Has retriever (local documents) - check if query needs RAG
                 use_rag = self.check_relevance(message)
+                if use_rag:
+                    logger.info("Query relevant to docs, using retriever RAG")
+                else:
+                    logger.info("Query not relevant to uploaded docs, using general chat")
 
-            # 3. NO RAG
+            # 3. NO RAG - Direct LLM chat (no documents provided or query not relevant)
             if not use_rag:
-                logger.info("Query not relevant to docs (or no docs), using general chat")
+                if not self.pre_context and not self.retriever:
+                    logger.info("No documents provided, using direct LLM chat")
                 lc_messages.append(HumanMessage(content=message))
                 yield from stream_with_retry(lc_messages)
                 return
 
             # 4. RAG with context
-            logger.info("Query relevant to docs, using context...")
+            logger.info("Generating response with document context...")
 
             # If no pre-context, retrieve using retriever
             if context is None:
