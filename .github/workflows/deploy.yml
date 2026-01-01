@@ -149,6 +149,10 @@ jobs:
             # Check if services are running
             RUNNING_SERVICES=$(docker compose ps -q 2>/dev/null | wc -l || echo "0")
 
+            # Always remove one-shot migration container (it exits after running)
+            echo "   → Removing old migration container..."
+            docker rm -f examio-migration 2>/dev/null || true
+
             if [ "$RUNNING_SERVICES" -gt 0 ]; then
               echo "📊 Current running services: $RUNNING_SERVICES"
               echo "🔄 Performing rolling update..."
