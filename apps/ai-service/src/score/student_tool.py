@@ -35,14 +35,12 @@ class GlobalDB:
 
 global_db = GlobalDB()
 
-@tool("get_student_info", args_schema=StudentInfoInput,
-      description=("Get KMA student information from the database. "
-                 "Useful for retrieving information for a specific student. "
-                 "The student code must be provided."))
-
+@tool("get_student_info", args_schema=StudentInfoInput)
 async def get_student_info(student_code: str) -> str:
     """
-    Get student information from the database.
+    Get KMA student information from the database.
+    Useful for retrieving information for a specific student.
+    The student code must be provided.
 
     Args:
         student_code: The student code to get information for

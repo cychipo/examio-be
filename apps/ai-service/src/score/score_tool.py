@@ -26,15 +26,13 @@ class ScoreInput(BaseModel):
         return value
 
 
-@tool("get_student_scores", args_schema=ScoreInput,
-      description=("Get KMA student scores from the database. "
-                    "Useful for retrieving scores for a specific student. "
-                    "The student code must be provided. Optionally, you can filter by semester in format ki1-2024-2025, k2-2024-2025, or some thing like that.")
-                    )
+@tool("get_student_scores", args_schema=ScoreInput)
 async def get_student_scores(student_code: str, semester: Optional[str] = None,
                              subject_id: Optional[int] = None) -> str:
     """
-    Get student scores from the database.
+    Get KMA student scores from the database.
+    Useful for retrieving scores for a specific student.
+    The student code must be provided. Optionally, you can filter by semester in format ki1-2024-2025, k2-2024-2025, or something like that.
 
     Args:
         student_code: The student code to get scores for
