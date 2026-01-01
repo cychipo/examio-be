@@ -24,12 +24,11 @@ def parse_scores_to_json(raw_text: str) -> dict:
     return {"scores": scores_list}
 
 
-@tool("calculate_average_scores", args_schema=ScoreCalculatorInput,
-      description=("Calculate average scores (GPA) from provided scores data. "
-                   "Input can be a JSON string with field 'scores' or raw text in format 'Tên môn (x tín chỉ): điểm'"))
+@tool("calculate_average_scores", args_schema=ScoreCalculatorInput)
 def calculate_average_scores(scores_json: str) -> str:
     """
-    Calculate average scores from provided scores data.
+    Calculate average scores (GPA) from provided scores data.
+    Input can be a JSON string with field 'scores' or raw text in format 'Tên môn (x tín chỉ): điểm'.
     Args:
         scores_json: JSON string OR raw text containing scores data
     Returns:

@@ -20,16 +20,15 @@ class KMARegulationInput(BaseModel):
     department: Optional[str] = Field(default=None, description="Optional department filter: 'phongdaotao', 'phongkhaothi', 'khoa', 'viennghiencuuvahoptacphattrien', 'thongtinhvktmm', or None for smart auto-detection")
 
 
-@tool("search_kma_regulations", args_schema=KMARegulationInput,
-      description=("Search for information in KMA documents using department-specific graphs. "
-                   "Each department has its own document graph to avoid cross-contamination. "
-                   "Automatically detects relevant department from query if not specified. "
-                   "Departments: phongdaotao (training), phongkhaothi (testing/quality), "
-                   "khoa (faculties), viennghiencuuvahoptacphattrien (research), thongtinhvktmm (academy info). "
-                   "ALWAYS use this tool for regulation/policy questions."))
+@tool("search_kma_regulations", args_schema=KMARegulationInput)
 def search_kma_regulations(query: str, department: str = None, user_role: str = "student", user_department: str = None) -> str:
     """
-    Enhanced search tool với semantic department detection
+    Search for information in KMA documents using department-specific graphs.
+    Each department has its own document graph to avoid cross-contamination.
+    Automatically detects relevant department from query if not specified.
+    Departments: phongdaotao (training), phongkhaothi (testing/quality),
+    khoa (faculties), viennghiencuuvahoptacphattrien (research), thongtinhvktmm (academy info).
+    ALWAYS use this tool for regulation/policy questions.
 
     Args:
         query: Câu hỏi cần tìm kiếm
