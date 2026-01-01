@@ -192,7 +192,7 @@ class MetadataEnhancedHybridRetriever(BaseRetriever):
 
 
 # Keep original class for backward compatibility
-class HybridRetriever(BaseRetriever, BaseModel):
+class HybridRetriever(BaseRetriever):
     vectorstore: FAISS = Field(description="FAISS vector store")
     bm25_retriever: BM25Retriever = Field(description="BM25 retriever")
     k: int = Field(default=4, description="Number of documents to retrieve")

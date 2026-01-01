@@ -8,7 +8,7 @@ import networkx as nx
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_ollama import OllamaEmbeddings
-from pydantic import Field, BaseModel
+from pydantic import Field
 import numpy as np
 import os
 from dotenv import load_dotenv
@@ -23,7 +23,7 @@ OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:l
 logger = logging.getLogger(__name__)
 
 
-class GraphRoutedRetriever(BaseRetriever, BaseModel):
+class GraphRoutedRetriever(BaseRetriever):
     """Graph-based retriever with routing strategies"""
     
     graph: Any = Field(description="Document graph")  # nx.Graph
