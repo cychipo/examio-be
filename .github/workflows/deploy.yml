@@ -159,10 +159,12 @@ jobs:
 
               # Infrastructure services first (no deps)
               echo "   → Updating infrastructure..."
+              docker rm -f examio-rabbitmq 2>/dev/null || true
               docker compose up -d --no-deps --force-recreate rabbitmq 2>/dev/null || true
 
               # Independent services
               echo "   → Updating r2, finance..."
+              docker rm -f examio-r2 examio-finance 2>/dev/null || true
               docker compose up -d --no-deps --force-recreate r2 finance
 
               # Wait for them to be healthy
@@ -171,15 +173,18 @@ jobs:
 
               # Services with dependencies
               echo "   → Updating auth..."
+              docker rm -f examio-auth 2>/dev/null || true
               docker compose up -d --no-deps --force-recreate auth
               sleep 5
 
               echo "   → Updating ai, exam..."
+              docker rm -f examio-ai examio-exam 2>/dev/null || true
               docker compose up -d --no-deps --force-recreate ai exam
               sleep 5
 
               # Gateway last (depends on all)
               echo "   → Updating gateway..."
+              docker rm -f examio-gateway 2>/dev/null || true
               docker compose up -d --no-deps --force-recreate gateway
 
             else
