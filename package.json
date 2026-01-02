@@ -6,6 +6,10 @@
     "scripts": {
         "build": "nest build",
         "start": "nest start",
+        "test": "jest",
+        "test:watch": "jest --watch",
+        "test:cov": "jest --coverage",
+        "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
         "dev:auth": "nest start auth-service --watch",
         "dev:exam": "nest start exam-service --watch",
         "dev:finance": "nest start finance-service --watch",
@@ -77,9 +81,11 @@
     "devDependencies": {
         "@nestjs/cli": "^11.0.7",
         "@nestjs/schematics": "^11.0.5",
+        "@nestjs/testing": "^11.1.11",
         "@types/cookie-parser": "^1.4.10",
         "@types/ejs": "^3.1.5",
         "@types/express": "^5.0.3",
+        "@types/jest": "^30.0.0",
         "@types/multer": "^2.0.0",
         "@types/node": "^24.0.13",
         "@types/node-cron": "^3.0.11",
@@ -88,8 +94,10 @@
         "@types/passport-github2": "^1.2.9",
         "@types/passport-google-oauth20": "^2.0.16",
         "concurrently": "^9.2.1",
+        "jest": "^30.2.0",
         "prettier": "^3.6.2",
         "prisma-merge": "^0.2.0",
+        "ts-jest": "^29.4.6",
         "ts-loader": "^9.5.4",
         "typescript": "^5.8.3"
     }

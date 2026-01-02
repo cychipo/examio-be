@@ -61,10 +61,20 @@ Sử dụng JWT Bearer token hoặc Cookie-based auth.
             },
             'access-token'
         )
+        .addApiKey(
+            {
+                type: 'apiKey',
+                in: 'header',
+                name: 'Authorization',
+                description: 'Sepay API Key (format: Apikey <key>)',
+            },
+            'sepay-apikey'
+        )
         .addCookieAuth('accessToken')
         .addTag('Auth', 'Authentication & User Management')
         .addTag('Exam', 'Quiz, Flashcard, Exam Room')
         .addTag('Finance', 'Wallet, Payment, Subscription')
+        .addTag('Webhook', 'External webhook callbacks (Sepay)')
         .addTag('Gateway', 'Health Check & Status')
         .build();
 

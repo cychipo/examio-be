@@ -37,6 +37,9 @@ import {
 // R2 Storage
 import { R2ProxyController } from './controllers/r2-proxy.controller';
 
+// Webhook (external callbacks)
+import { WebhookProxyController } from './controllers/webhook-proxy.controller';
+
 @Module({
     imports: [
         // Rate limiting: 100 requests per minute
@@ -74,6 +77,8 @@ import { R2ProxyController } from './controllers/r2-proxy.controller';
         CheatingLogProxyController,
         // R2 Storage
         R2ProxyController,
+        // Webhook (external callbacks)
+        WebhookProxyController,
     ],
     providers: [
         {
