@@ -293,12 +293,7 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const isLocalFE =
-            request.headers.origin?.includes('localhost') ||
-            request.headers.origin?.includes('127.0.0.1');
-        const frontendUrl = !isLocalFE
-            ? process.env.FRONTEND_URL
-            : 'http://localhost:3001';
+        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
         res.redirect(`${frontendUrl}/`);
     }
 
@@ -329,12 +324,7 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const isLocalFE =
-            request.headers.origin?.includes('localhost') ||
-            request.headers.origin?.includes('127.0.0.1');
-        const frontendUrl = !isLocalFE
-            ? process.env.FRONTEND_URL
-            : 'http://localhost:3001';
+        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
         res.redirect(`${frontendUrl}/`);
     }
 
@@ -365,12 +355,7 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const isLocalFE =
-            request.headers.origin?.includes('localhost') ||
-            request.headers.origin?.includes('127.0.0.1');
-        const frontendUrl = !isLocalFE
-            ? process.env.FRONTEND_URL
-            : 'http://localhost:3001';
+        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
         res.redirect(`${frontendUrl}/`);
     }
 
