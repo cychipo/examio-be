@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Union
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from src.llm import get_llm, LLMConfig
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class SimpleChatAgent:
     """Simplified chat agent without LangGraph to avoid recursion issues"""
 
-    def __init__(self, custom_retriever=None, model_name: str = None, model_type: str = "gemini", pre_context: str = None):
+    def __init__(self, custom_retriever=None, model_name: Optional[str] = None, model_type: str = "gemini", pre_context: Optional[str] = None, system_prompt: Optional[str] = None):
         """Initialize the Simple Chat Agent
 
         Args:
@@ -25,10 +25,12 @@ class SimpleChatAgent:
             model_type: AI model type - 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)
             pre_context: Pre-fetched context from PostgreSQL vector search (optional)
                         If provided, bypasses retriever-based RAG for faster responses.
+            system_prompt: Custom system prompt for specialized AI behavior (optional)
         """
         try:
             # Use LLMFactory to create model based on model_type
             self.model_type = model_type
+            self.system_prompt = system_prompt
             self.llm = self._create_llm_for_type(model_type)
             logger.info(f"Initialized LLM with model type: {model_type}")
         except Exception as e:
@@ -161,7 +163,7 @@ Answer only YES or NO."""
             logger.error(f"Relevance check failed: {e}")
             return True
 
-    def chat_stream(self, message: str, history: List[Dict[str, str]] = None):
+    def chat_stream(self, message: str, history: Optional[List[Dict[str, str]]] = None):
         """Process a chat message and yield response chunks with history, dynamic RAG, and retry rotation"""
         from src.llm.gemini_client import GeminiClient
         import time
@@ -209,7 +211,9 @@ Answer only YES or NO."""
 
             # 1. Convert history
             lc_messages = []
-            lc_messages.append(SystemMessage(content="Bạn là Sensei, một trợ lý AI thông minh hỗ trợ học tập. Hãy trả lời thân thiện, chính xác và hữu ích."))
+            # Use custom system prompt if provided, otherwise use default
+            system_content = self.system_prompt if self.system_prompt else "Bạn là Sensei, một trợ lý AI thông minh hỗ trợ học tập. Hãy trả lời thân thiện, chính xác và hữu ích."
+            lc_messages.append(SystemMessage(content=system_content))
 
             for msg in history:
                 role = msg.get('role')

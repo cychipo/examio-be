@@ -74,11 +74,24 @@ export class AIChatService implements OnModuleInit {
     }
 
     async createChat(user: User, title?: string, subjectId?: string) {
+        let chatTitle = title || '';
+
+        // If no custom title and has subject, use subject name as title
+        if (!chatTitle && subjectId) {
+            const subject = await this.prisma.subject.findUnique({
+                where: { id: subjectId },
+                select: { name: true },
+            });
+            if (subject) {
+                chatTitle = subject.name;
+            }
+        }
+
         const id = this.generateId();
         const chat = await this.chatRepository.createChat({
             id,
             userId: user.id,
-            title: title || '',
+            title: chatTitle,
             subjectId: subjectId || null,
         });
 
