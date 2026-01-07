@@ -1,15 +1,18 @@
 model AIChat {
     id        String   @id
     userId    String
+    subjectId String? // Giáo viên AI (môn học) - nullable để backward compatible
     title     String   @default("")
     createdAt DateTime @default(now())
     updatedAt DateTime @default(now()) @updatedAt
 
     user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+    subject   Subject?         @relation(fields: [subjectId], references: [id], onDelete: SetNull)
     messages  AIChatMessage[]
     documents AIChatDocument[] // Multi-file support
 
     @@index([userId, updatedAt(sort: Desc)])
+    @@index([subjectId])
 }
 
 model AIChatMessage {

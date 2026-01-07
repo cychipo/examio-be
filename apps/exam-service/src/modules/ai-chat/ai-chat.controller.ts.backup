@@ -65,7 +65,7 @@ export class AIChatController {
         @Param('chatId') chatId: string
     ) {
         return this.chatService.deleteChat(chatId, req.user);
-    }
+    },
 
     @Post(':chatId/clear')
     @ApiOperation({ summary: 'Xóa nội dung chat và tùy chọn xóa files' })
@@ -75,86 +75,6 @@ export class AIChatController {
         @Body() body: { deleteFiles?: boolean }
     ) {
         return this.chatService.clearChat(chatId, req.user, body.deleteFiles || false);
-    }
-
-    @Get(':chatId/exists')
-    @ApiOperation({ summary: 'Kiểm tra chat tồn tại' })
-    async chatExists(@Param('chatId') chatId: string) {
-        return this.chatService.chatExists(chatId);
-    }
-
-    // ==================== MESSAGES ====================
-
-    @Get(':chatId/messages')
-    @ApiOperation({ summary: 'Lấy messages của chat' })
-    async getChatMessages(
-        @Req() req: AuthenticatedRequest,
-        @Param('chatId') chatId: string
-    ) {
-        return this.chatService.getMessages(chatId, req.user);
-    }
-
-    @Post(':chatId/message')
-    @ApiOperation({ summary: 'Gửi message đến chat' })
-    async sendMessage(
-        @Req() req: AuthenticatedRequest,
-        @Param('chatId') chatId: string,
-        @Body()
-        body: {
-            message: string;
-            imageUrl?: string;
-            documentId?: string;
-            documentIds?: string[];
-            documentName?: string;
-        }
-    ) {
-        return this.chatService.sendMessage(chatId, req.user, body);
-    }
-
-    @Post(':chatId/stream')
-    @ApiOperation({ summary: 'Gửi message với streaming response (SSE)' })
-    async streamMessage(
-        @Req() req: AuthenticatedRequest,
-        @Res() res: Response,
-        @Param('chatId') chatId: string,
-        @Body()
-        body: {
-            message: string;
-            imageUrl?: string;
-            documentId?: string;
-            documentIds?: string[];
-            documentName?: string;
-            modelType?: string;
-        }
-    ) {
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-
-        const observable = await this.chatService.streamMessage(
-            chatId,
-            req.user,
-            body
-        );
-
-        const subscription = observable.subscribe({
-            next: (event) => {
-                res.write(`data: ${JSON.stringify(event)}\n\n`);
-            },
-            error: (err) => {
-                res.write(
-                    `data: ${JSON.stringify({ type: 'error', data: err.message })}\n\n`
-                );
-                res.end();
-            },
-            complete: () => {
-                res.end();
-            },
-        });
-
-        req.on('close', () => {
-            subscription.unsubscribe();
-        });
     }
 
     @Patch('message/:messageId')

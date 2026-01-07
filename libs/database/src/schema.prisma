@@ -13,15 +13,18 @@ datasource db {
 model AIChat {
     id        String   @id
     userId    String
+    subjectId String? // Giáo viên AI (môn học) - nullable để backward compatible
     title     String   @default("")
     createdAt DateTime @default(now())
     updatedAt DateTime @default(now()) @updatedAt
 
     user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+    subject   Subject?         @relation(fields: [subjectId], references: [id], onDelete: SetNull)
     messages  AIChatMessage[]
     documents AIChatDocument[] // Multi-file support
 
     @@index([userId, updatedAt(sort: Desc)])
+    @@index([subjectId])
 }
 
 model AIChatMessage {
@@ -429,6 +432,47 @@ model Document {
     createdAt   DateTime    @default(now())
     updatedAt   DateTime    @default(now()) @updatedAt
     userStorage UserStorage @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+}
+
+
+// Subject Category - Nhóm môn học (VD: Toán học, Khoa học Tự nhiên, ...)
+model SubjectCategory {
+    id          String   @id @default(cuid())
+    name        String   @unique // Tên nhóm (VD: "Toán học", "Khoa học Tự nhiên")
+    slug        String   @unique // URL-friendly slug
+    description String?
+    icon        String? // Icon/emoji cho nhóm
+    color       String? // Màu sắc đại diện (hex)
+    order       Int      @default(0) // Thứ tự hiển thị
+    isActive    Boolean  @default(true)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+
+    subjects Subject[]
+
+    @@index([isActive, order])
+}
+
+// Subject - Giáo viên AI (mỗi môn học = 1 giáo viên)
+model Subject {
+    id           String   @id @default(cuid())
+    categoryId   String
+    name         String   @unique // Tên môn (VD: "Toán Tiểu học", "Vật lý")
+    slug         String   @unique // URL-friendly slug
+    description  String? // Mô tả ngắn về môn học
+    icon         String? // Icon/emoji đại diện
+    color        String? // Màu sắc đại diện (hex)
+    systemPrompt String   @db.Text // System prompt cho LLM (bắt buộc)
+    order        Int      @default(0) // Thứ tự hiển thị trong category
+    isActive     Boolean  @default(true) // Trạng thái hoạt động
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @default(now()) @updatedAt
+
+    category SubjectCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+    aiChats  AIChat[]
+
+    @@index([categoryId, isActive, order])
+    @@index([isActive, order])
 }
 
 
