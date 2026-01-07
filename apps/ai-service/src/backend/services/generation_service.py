@@ -250,9 +250,17 @@ class ContentGenerationService:
                 )
 
                 # Call LLM with specified model type
-                response = await model_manager.generate_content_with_model(prompt, ai_model)
-                flashcards = self._parse_flashcard_response(response, chunk.page_range)
-                all_flashcards.extend(flashcards)
+                logger.info(f"Calling LLM for flashcard chunk {i+1}/{len(chunks)} with model {ai_model.value}")
+                try:
+                    response = await model_manager.generate_content_with_model(prompt, ai_model)
+                    logger.info(f"LLM response received for flashcard chunk {i+1}, length: {len(response)}")
+                    flashcards = self._parse_flashcard_response(response, chunk.page_range)
+                    logger.info(f"Parsed {len(flashcards)} flashcards from chunk {i+1}")
+                    all_flashcards.extend(flashcards)
+                except Exception as chunk_error:
+                    logger.error(f"Error generating flashcards for chunk {i+1}: {chunk_error}")
+                    # Continue with other chunks instead of failing completely
+                    continue
 
             if not all_flashcards:
                 return {"success": False, "error": "Failed to generate any flashcards"}

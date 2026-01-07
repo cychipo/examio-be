@@ -582,12 +582,62 @@ export class FlashcardsetService {
 
                 const flashcardSetIds = flashcardSets.map((fs) => fs.id);
 
+                // Handle label creation/assignment for each flashcardset
+                // Create a map of flashcardSetId -> labelId
+                const labelMap = new Map<string, string | null>();
+
+                for (const flashcardSetId of flashcardSetIds) {
+                    let labelId: string | null = null;
+
+                    // If labelId is provided, validate it belongs to this flashcardset
+                    if (dto.labelId) {
+                        const existingLabel = await tx.flashCardSetLabel.findFirst({
+                            where: { id: dto.labelId, flashCardSetId: flashcardSetId },
+                        });
+                        if (existingLabel) {
+                            labelId = existingLabel.id;
+                        }
+                    }
+                    // If labelName is provided but no labelId, create or find label
+                    else if (dto.labelName) {
+                        const existingLabel = await tx.flashCardSetLabel.findFirst({
+                            where: { flashCardSetId: flashcardSetId, name: dto.labelName },
+                        });
+
+                        if (existingLabel) {
+                            labelId = existingLabel.id;
+                        } else {
+                            // Get max order for this flashcardset
+                            const maxOrder = await tx.flashCardSetLabel.aggregate({
+                                where: { flashCardSetId: flashcardSetId },
+                                _max: { order: true },
+                            });
+                            const newOrder = (maxOrder._max.order ?? -1) + 1;
+
+                            const newLabel = await tx.flashCardSetLabel.create({
+                                data: {
+                                    id: this.generateIdService.generateId(),
+                                    flashCardSetId: flashcardSetId,
+                                    name: dto.labelName,
+                                    color: dto.labelColor,
+                                    order: newOrder,
+                                },
+                            });
+                            labelId = newLabel.id;
+                        }
+                    }
+
+                    labelMap.set(flashcardSetId, labelId);
+                }
+
                 const existingFlashcards = await tx.detailsFlashCard.findMany({
                     where: {
                         flashCardSetId: { in: flashcardSetIds },
                     },
                     select: {
                         flashCardSetId: true,
+                        flashCardId: true,
+                        labelId: true,
                         flashCard: {
                             select: {
                                 question: true,
@@ -611,9 +661,11 @@ export class FlashcardsetService {
 
                 const flashcardsToCreate: any[] = [];
                 const detailsToCreate: any[] = [];
+                const detailsToUpdate: any[] = []; // For updating labelId of existing flashcards
                 const flashcardIdMap = new Map<string, string>(); // hash -> flashcardId
 
                 let skippedCount = 0;
+                let updatedCount = 0;
 
                 for (const flashcard of flashcards) {
                     if (
@@ -649,9 +701,27 @@ export class FlashcardsetService {
 
                     for (const flashcardSetId of flashcardSetIds) {
                         const existingSet = existingMap.get(flashcardSetId);
+                        const targetLabelId = labelMap.get(flashcardSetId) || null;
 
                         if (existingSet && existingSet.has(hash)) {
-                            skippedCount++;
+                            // Check if labelId needs to be updated for existing flashcard
+                            const existingDetail = existingFlashcards.find(
+                                ef => ef.flashCardSetId === flashcardSetId &&
+                                      ef.flashCard.question === flashcard.question &&
+                                      ef.flashCard.answer === flashcard.answer
+                            );
+
+                            if (existingDetail && existingDetail.labelId !== targetLabelId) {
+                                // Update labelId for existing flashcard
+                                detailsToUpdate.push({
+                                    flashCardSetId: flashcardSetId,
+                                    flashCardId: existingDetail.flashCardId,
+                                    labelId: targetLabelId,
+                                });
+                                updatedCount++;
+                            } else {
+                                skippedCount++;
+                            }
                             continue;
                         }
 
@@ -660,6 +730,7 @@ export class FlashcardsetService {
                             flashCardSetId: flashcardSetId,
                             flashCardId: flashcardId,
                             historyGeneratedFlashcardId: history.id,
+                            labelId: targetLabelId,
                         });
 
                         // Update map để tránh duplicate trong cùng batch
@@ -688,8 +759,22 @@ export class FlashcardsetService {
                     });
                 }
 
+                // Update existing flashcards with new labelId
+                for (const update of detailsToUpdate) {
+                    await tx.detailsFlashCard.updateMany({
+                        where: {
+                            flashCardSetId: update.flashCardSetId,
+                            flashCardId: update.flashCardId,
+                        },
+                        data: {
+                            labelId: update.labelId,
+                        },
+                    });
+                }
+
                 return {
                     createdCount: detailsToCreate.length,
+                    updatedCount,
                     skippedCount,
                     totalFlashcards: flashcards.length,
                     affectedFlashcardSetsCount: flashcardSetIds.length,
@@ -707,8 +792,9 @@ export class FlashcardsetService {
             }
 
             return {
-                message: `Đã lưu ${result.createdCount} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ${result.skippedCount > 0 ? ` (${result.skippedCount} bỏ qua do trùng lặp)` : ''}`,
+                message: `Đã lưu ${result.createdCount} thẻ ghi nhớ vào ${result.affectedFlashcardSetsCount} bộ thẻ ghi nhớ${result.updatedCount > 0 ? ` (${result.updatedCount} đã cập nhật nhãn)` : ''}${result.skippedCount > 0 ? ` (${result.skippedCount} bỏ qua do trùng lặp)` : ''}`,
                 createdCount: result.createdCount,
+                updatedCount: result.updatedCount,
                 skippedCount: result.skippedCount,
                 affectedFlashcardSets: result.affectedFlashcardSetsCount,
             };

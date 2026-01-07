@@ -66,13 +66,14 @@ class ModelManager:
         }
 
         env_key = env_map.get(param_name)
-        if env_key and os.getenv(env_key):
+        if env_key:
             val = os.getenv(env_key)
-            try:
-                if param_name == "temperature": return float(val)
-                if param_name == "max_tokens": return int(val)
-            except:
-                pass
+            if val:
+                try:
+                    if param_name == "temperature": return float(val)
+                    if param_name == "max_tokens": return int(val)
+                except:
+                    pass
 
         return default_value
 
@@ -100,10 +101,12 @@ class ModelManager:
         }
 
     def get_temperature(self) -> float:
-        return self.get_model_parameter("temperature", 0.7)
+        val = self.get_model_parameter("temperature", 0.7)
+        return float(val) if val is not None else 0.7
 
     def get_max_tokens(self) -> int:
-        return self.get_model_parameter("max_tokens", 2048)
+        val = self.get_model_parameter("max_tokens", 2048)
+        return int(val) if val is not None else 2048
 
     def set_active_model_type(self, model_type: ModelType) -> None:
         self._runtime_model_type = model_type
@@ -141,6 +144,8 @@ class ModelManager:
 
         logger = logging.getLogger(__name__)
 
+        logger.info("Starting Gemini generation")
+
         # Get API key(s)
         api_keys_str = os.getenv("GEMINI_API_KEYS", "")
         api_keys = [k.strip() for k in api_keys_str.split(",") if k.strip()]
@@ -151,11 +156,16 @@ class ModelManager:
                 api_keys = [single_key]
 
         if not api_keys:
+            logger.error("No Gemini API key configured")
             raise ValueError("No Gemini API key configured")
+
+        logger.info(f"Found {len(api_keys)} API keys")
 
         # Get model names
         model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash,gemini-2.5-flash-lite,gemini-1.5-flash")
         model_names = [m.strip() for m in model_names_str.split(",") if m.strip()]
+
+        logger.info(f"Using models: {model_names}")
 
         # If runtime model is set, use it first
         if self._runtime_gemini_model and self._runtime_gemini_model not in model_names:
@@ -172,11 +182,18 @@ class ModelManager:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel(model_name)
 
+                    logger.info(f"Making API call to Gemini for model {model_name}")
+
+                    temperature_val = self.get_temperature()
+                    max_tokens_val = self.get_max_tokens()
+
+                    logger.info(f"Using temperature: {temperature_val}, max_tokens: {max_tokens_val}")
+
                     response = model.generate_content(
                         prompt,
-                        generation_config=genai.GenerationConfig(
-                            temperature=self.get_temperature(),
-                            max_output_tokens=self.get_max_tokens(),
+                        generation_config=genai.types.GenerationConfig(
+                            temperature=temperature_val,
+                            max_output_tokens=max_tokens_val,
                         )
                     )
 
@@ -189,10 +206,14 @@ class ModelManager:
                     continue
                 except Exception as e:
                     logger.error(f"Error with key {key_idx + 1}, model {model_name}: {e}")
+                    logger.error(f"Exception type: {type(e)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
                     last_error = e
                     continue
 
         # All combinations failed
+        logger.error(f"All combinations failed. Last error: {last_error}")
         raise last_error or ValueError("All API keys and models exhausted")
 
     async def _generate_with_ollama(self, prompt: str) -> str:
@@ -233,11 +254,17 @@ class ModelManager:
         Returns:
             Generated text response
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"Generating content with model type: {ai_model_type.value}")
         model_type = AIModelType.to_model_type(ai_model_type)
 
         if model_type == ModelType.GEMINI:
+            logger.info("Using Gemini model")
             return await self._generate_with_gemini(prompt)
         else:
+            logger.info("Using Ollama model")
             return await self._generate_with_ollama(prompt)
 
 

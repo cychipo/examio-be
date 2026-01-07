@@ -112,4 +112,13 @@ export class SetFlashcardsToFlashcardSetResponseDto {
 
     @ApiProperty({ description: 'Số lượng thẻ ghi nhớ đã tạo' })
     createdCount: number;
+
+    @ApiProperty({ description: 'Số lượng thẻ ghi nhớ đã cập nhật nhãn' })
+    updatedCount: number;
+
+    @ApiProperty({ description: 'Số lượng thẻ ghi nhớ đã bỏ qua do trùng lặp' })
+    skippedCount: number;
+
+    @ApiProperty({ description: 'Số lượng bộ thẻ ghi nhớ đã ảnh hưởng' })
+    affectedFlashcardSets: number;
 }
