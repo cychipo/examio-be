@@ -170,6 +170,13 @@ model ExamSession {
     whitelist              String[]  @default([]) // List of user IDs who can access
     showAnswersAfterSubmit Boolean   @default(true) // Show detailed answers after submission
     passingScore           Float     @default(0) // Minimum score percentage to pass (0 = no minimum)
+    
+    // Question selection configuration
+    questionCount          Int?      // Total number of questions for this session (null = all questions)
+    questionSelectionMode  Int       @default(0) // 0: ALL, 1: RANDOM_TOTAL, 2: RANDOM_BY_LABEL
+    labelQuestionConfig    Json?     // Array of { labelId: string, count: number } for RANDOM_BY_LABEL mode
+    shuffleQuestions       Boolean   @default(false) // Shuffle question order for each attempt
+    
     createdAt              DateTime  @default(now())
     updatedAt              DateTime  @default(now()) @updatedAt
     createdBy              String?
@@ -197,6 +204,9 @@ model ExamAttempt {
     markedQuestions String[] @default([]) // Marked question IDs
     totalQuestions  Int      @default(0)
     correctAnswers  Int      @default(0)
+    
+    // Selected questions for this attempt (stored to maintain consistency across attempts)
+    selectedQuestionIds String[] @default([]) // Question IDs selected for this specific attempt
 
     createdAt DateTime @default(now())
     updatedAt DateTime @default(now()) @updatedAt

@@ -27,6 +27,19 @@ export enum QUIZ_PRACTICE_TYPE {
     REAL = 1, // Thi thật
 }
 
+// Question selection modes for exam sessions
+export enum QUESTION_SELECTION_MODE {
+    ALL = 0, // Use all questions from the quiz set
+    RANDOM_TOTAL = 1, // Randomly select N questions from total
+    RANDOM_BY_LABEL = 2, // Randomly select questions based on label configuration
+}
+
+// Configuration for label-based question selection
+export interface LabelQuestionConfig {
+    labelId: string; // Label ID (use 'unlabeled' for questions without label)
+    count: number; // Number of questions to randomly select from this label
+}
+
 export interface Quizz {
     question: string;
     options: string[];

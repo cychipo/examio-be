@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { GenerateIdService, CryptoService } from '@examio/common';
 import { User } from '@prisma/client';
-import { EXAM_SESSION_STATUS, EXAM_ATTEMPT_STATUS } from '../../types';
+import { EXAM_SESSION_STATUS, EXAM_ATTEMPT_STATUS, QUESTION_SELECTION_MODE, LabelQuestionConfig } from '../../types';
 import { CreateExamAttemptDto } from './dto/create-examattempt.dto';
 import { GetExamAttemptsDto } from './dto/get-examattempt.dto';
 import { UpdateExamAttemptDto } from './dto/update-examattempt.dto';
@@ -48,8 +48,10 @@ export class ExamAttemptService {
                                 detailsQuizQuestions: {
                                     include: {
                                         quizQuestion: true,
+                                        label: true,
                                     },
                                 },
+                                labels: true,
                             },
                         },
                     },
@@ -123,9 +125,17 @@ export class ExamAttemptService {
             );
         }
 
-        // Calculate total questions
-        const totalQuestions =
-            examSession.examRoom.quizSet.detailsQuizQuestions?.length || 0;
+        // Select questions based on configuration
+        const allQuestions = examSession.examRoom.quizSet.detailsQuizQuestions || [];
+        const selectedQuestionIds = this.selectQuestionsForAttempt(
+            allQuestions,
+            examSession.questionSelectionMode,
+            examSession.questionCount,
+            examSession.labelQuestionConfig as LabelQuestionConfig[] | null,
+            examSession.shuffleQuestions
+        );
+
+        const totalQuestions = selectedQuestionIds.length;
 
         try {
             const newExamAttempt = await this.prisma.examAttempt.create({
@@ -142,6 +152,7 @@ export class ExamAttemptService {
                     markedQuestions: [],
                     totalQuestions,
                     correctAnswers: 0,
+                    selectedQuestionIds,
                 },
             });
 
@@ -153,6 +164,64 @@ export class ExamAttemptService {
         } catch (error) {
             throw new InternalServerErrorException('Bắt đầu làm bài thất bại');
         }
+    }
+
+    /**
+     * Select questions for an attempt based on the session configuration
+     */
+    private selectQuestionsForAttempt(
+        allQuestions: Array<{ id: string; labelId: string | null; quizQuestion: any }>,
+        selectionMode: number,
+        questionCount: number | null,
+        labelConfig: LabelQuestionConfig[] | null,
+        shuffleQuestions: boolean
+    ): string[] {
+        let selectedIds: string[] = [];
+
+        switch (selectionMode) {
+            case QUESTION_SELECTION_MODE.ALL:
+                // Use all questions
+                selectedIds = allQuestions.map(q => q.id);
+                break;
+
+            case QUESTION_SELECTION_MODE.RANDOM_TOTAL:
+                // Randomly select N questions from total
+                if (questionCount && questionCount > 0) {
+                    const shuffled = [...allQuestions].sort(() => Math.random() - 0.5);
+                    selectedIds = shuffled.slice(0, questionCount).map(q => q.id);
+                } else {
+                    selectedIds = allQuestions.map(q => q.id);
+                }
+                break;
+
+            case QUESTION_SELECTION_MODE.RANDOM_BY_LABEL:
+                // Select questions based on label configuration
+                if (labelConfig && labelConfig.length > 0) {
+                    for (const config of labelConfig) {
+                        const labelId = config.labelId === 'unlabeled' ? null : config.labelId;
+                        const questionsInLabel = allQuestions.filter(q => q.labelId === labelId);
+                        
+                        // Shuffle and take the required count
+                        const shuffled = [...questionsInLabel].sort(() => Math.random() - 0.5);
+                        const selected = shuffled.slice(0, config.count);
+                        selectedIds.push(...selected.map(q => q.id));
+                    }
+                } else {
+                    // Fallback to all questions if no config
+                    selectedIds = allQuestions.map(q => q.id);
+                }
+                break;
+
+            default:
+                selectedIds = allQuestions.map(q => q.id);
+        }
+
+        // Shuffle final order if enabled
+        if (shuffleQuestions) {
+            selectedIds = selectedIds.sort(() => Math.random() - 0.5);
+        }
+
+        return selectedIds;
     }
 
     /**
@@ -367,25 +436,36 @@ export class ExamAttemptService {
             attempt.status === EXAM_ATTEMPT_STATUS.COMPLETED &&
             attempt.examSession.showAnswersAfterSubmit;
 
-        const questions =
-            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
-                (d) => {
-                    const q = d.quizQuestion;
-                    if (isOwner || showAnswers) {
-                        return {
-                            id: q.id,
-                            question: q.question,
-                            options: q.options,
-                            answer: q.answer,
-                        };
-                    }
-                    return {
-                        id: q.id,
-                        question: q.question,
-                        options: q.options,
-                    };
-                }
-            );
+        // Get all questions from the quiz set
+        const allQuestionsMap = new Map(
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(d => [d.id, d])
+        );
+
+        // Filter questions based on selectedQuestionIds if available
+        let filteredQuestionDetails = attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
+        if (attempt.selectedQuestionIds && attempt.selectedQuestionIds.length > 0) {
+            // Maintain the order of selectedQuestionIds
+            filteredQuestionDetails = attempt.selectedQuestionIds
+                .map(id => allQuestionsMap.get(id))
+                .filter((d): d is typeof filteredQuestionDetails[0] => d !== undefined);
+        }
+
+        const questions = filteredQuestionDetails.map((d) => {
+            const q = d.quizQuestion;
+            if (isOwner || showAnswers) {
+                return {
+                    id: q.id,
+                    question: q.question,
+                    options: q.options,
+                    answer: q.answer,
+                };
+            }
+            return {
+                id: q.id,
+                question: q.question,
+                options: q.options,
+            };
+        });
 
         // Calculate time limit from session
         let timeLimitMinutes: number | null = null;
@@ -1355,40 +1435,51 @@ export class ExamAttemptService {
             attempt.examSession.endTime
         );
 
+        // Get all questions from the quiz set
+        const allQuestionsMap = new Map(
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(d => [d.id, d])
+        );
+
+        // Filter questions based on selectedQuestionIds if available
+        let filteredQuestionDetails = attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
+        if (attempt.selectedQuestionIds && attempt.selectedQuestionIds.length > 0) {
+            // Maintain the order of selectedQuestionIds
+            filteredQuestionDetails = attempt.selectedQuestionIds
+                .map(id => allQuestionsMap.get(id))
+                .filter((d): d is typeof filteredQuestionDetails[0] => d !== undefined);
+        }
+
         // Generate secure questions with JWT tokens and encrypted content
-        const secureQuestions =
-            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
-                (d, index) => {
-                    const q = d.quizQuestion;
+        const secureQuestions = filteredQuestionDetails.map((d, index) => {
+            const q = d.quizQuestion;
 
-                    // Sign JWT token for this question
-                    const token = this.cryptoService.signQuestionToken(
-                        {
-                            qid: q.id,
-                            aid: attemptId,
-                            uid: user.id,
-                            i: index,
-                            t: 'question',
-                        },
-                        expirySeconds
-                    );
-
-                    // Encrypt question content and options
-                    const questionEncrypted = this.cryptoService.encryptContent(
-                        q.question
-                    );
-                    const optionsEncrypted = this.cryptoService.encryptOptions(
-                        q.options
-                    );
-
-                    return {
-                        index,
-                        token,
-                        question_encrypted: questionEncrypted,
-                        options_encrypted: optionsEncrypted,
-                    };
-                }
+            // Sign JWT token for this question
+            const token = this.cryptoService.signQuestionToken(
+                {
+                    qid: q.id,
+                    aid: attemptId,
+                    uid: user.id,
+                    i: index,
+                    t: 'question',
+                },
+                expirySeconds
             );
+
+            // Encrypt question content and options
+            const questionEncrypted = this.cryptoService.encryptContent(
+                q.question
+            );
+            const optionsEncrypted = this.cryptoService.encryptOptions(
+                q.options
+            );
+
+            return {
+                index,
+                token,
+                question_encrypted: questionEncrypted,
+                options_encrypted: optionsEncrypted,
+            };
+        });
 
         // Calculate time limit from session
         let timeLimitMinutes: number | null = null;

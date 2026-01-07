@@ -1,7 +1,13 @@
 import { z } from 'zod';
 import { createZodDto } from 'nestjs-zod';
 import { ApiProperty } from '@nestjs/swagger';
-import { EXAM_SESSION_STATUS, ASSESS_TYPE } from '../../../types';
+import { EXAM_SESSION_STATUS, ASSESS_TYPE, QUESTION_SELECTION_MODE } from '../../../types';
+
+// Schema for label question configuration
+const LabelQuestionConfigSchema = z.object({
+    labelId: z.string().min(1, { message: 'Label ID is required' }),
+    count: z.number().int().min(1, { message: 'Count must be at least 1' }),
+});
 
 export const UpdateExamSessionDtoSchema = z.object({
     status: z.nativeEnum(EXAM_SESSION_STATUS).optional(),
@@ -16,6 +22,11 @@ export const UpdateExamSessionDtoSchema = z.object({
     whitelist: z.array(z.string()).optional(),
     showAnswersAfterSubmit: z.boolean().optional(),
     passingScore: z.number().min(0).max(100).optional(),
+    // Question selection configuration
+    questionCount: z.number().int().min(1).optional().nullable(),
+    questionSelectionMode: z.nativeEnum(QUESTION_SELECTION_MODE).optional(),
+    labelQuestionConfig: z.array(LabelQuestionConfigSchema).optional().nullable(),
+    shuffleQuestions: z.boolean().optional(),
 });
 
 export class UpdateExamSessionDto extends createZodDto(
@@ -99,4 +110,33 @@ export class UpdateExamSessionDto extends createZodDto(
         required: false,
     })
     passingScore?: number;
+
+    @ApiProperty({
+        description: 'Total number of questions for this session (null = all questions)',
+        example: 20,
+        required: false,
+    })
+    questionCount?: number | null;
+
+    @ApiProperty({
+        description: 'Question selection mode: ALL (0), RANDOM_TOTAL (1), RANDOM_BY_LABEL (2)',
+        example: QUESTION_SELECTION_MODE.ALL,
+        enum: QUESTION_SELECTION_MODE,
+        required: false,
+    })
+    questionSelectionMode?: QUESTION_SELECTION_MODE;
+
+    @ApiProperty({
+        description: 'Configuration for label-based question selection. Array of { labelId, count }',
+        example: [{ labelId: 'label_123', count: 5 }, { labelId: 'label_456', count: 10 }],
+        required: false,
+    })
+    labelQuestionConfig?: Array<{ labelId: string; count: number }> | null;
+
+    @ApiProperty({
+        description: 'Whether to shuffle question order for each attempt',
+        example: false,
+        required: false,
+    })
+    shuffleQuestions?: boolean;
 }

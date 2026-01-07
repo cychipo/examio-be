@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { GenerateIdService } from '@examio/common';
 import { User } from '@prisma/client';
-import { EXAM_SESSION_STATUS, ASSESS_TYPE } from '../../types';
+import { EXAM_SESSION_STATUS, ASSESS_TYPE, QUESTION_SELECTION_MODE, LabelQuestionConfig } from '../../types';
 import { CreateExamSessionDto } from './dto/create-examsession.dto';
 import { GetExamSessionsDto } from './dto/get-examsession.dto';
 import { UpdateExamSessionDto } from './dto/update-examsession.dto';
@@ -52,6 +52,14 @@ export class ExamSessionService {
         }
 
         try {
+            // Validate question selection configuration
+            await this.validateQuestionSelectionConfig(
+                dto.examRoomId,
+                dto.questionSelectionMode,
+                dto.questionCount,
+                dto.labelQuestionConfig
+            );
+
             const newExamSession = await this.examSessionRepository.create(
                 {
                     id: this.generateIdService.generateId(),
@@ -67,6 +75,11 @@ export class ExamSessionService {
                     accessCode: dto.accessCode || null,
                     whitelist: dto.whitelist || [],
                     showAnswersAfterSubmit: dto.showAnswersAfterSubmit ?? true,
+                    // Question selection configuration
+                    questionCount: dto.questionCount ?? null,
+                    questionSelectionMode: dto.questionSelectionMode ?? QUESTION_SELECTION_MODE.ALL,
+                    labelQuestionConfig: dto.labelQuestionConfig ?? null,
+                    shuffleQuestions: dto.shuffleQuestions ?? false,
                 },
                 user.id
             );
@@ -324,6 +337,41 @@ export class ExamSessionService {
 
         if (dto.showAnswersAfterSubmit !== undefined) {
             updateData.showAnswersAfterSubmit = dto.showAnswersAfterSubmit;
+        }
+
+        if (dto.passingScore !== undefined) {
+            updateData.passingScore = dto.passingScore;
+        }
+
+        // Question selection configuration
+        if (dto.questionCount !== undefined) {
+            updateData.questionCount = dto.questionCount;
+        }
+
+        if (dto.questionSelectionMode !== undefined) {
+            updateData.questionSelectionMode = dto.questionSelectionMode;
+        }
+
+        if (dto.labelQuestionConfig !== undefined) {
+            updateData.labelQuestionConfig = dto.labelQuestionConfig;
+        }
+
+        if (dto.shuffleQuestions !== undefined) {
+            updateData.shuffleQuestions = dto.shuffleQuestions;
+        }
+
+        // Validate question selection configuration if being updated
+        if (
+            dto.questionSelectionMode !== undefined ||
+            dto.questionCount !== undefined ||
+            dto.labelQuestionConfig !== undefined
+        ) {
+            await this.validateQuestionSelectionConfig(
+                examSession.examRoomId,
+                dto.questionSelectionMode ?? examSession.questionSelectionMode,
+                dto.questionCount !== undefined ? dto.questionCount : examSession.questionCount,
+                dto.labelQuestionConfig !== undefined ? dto.labelQuestionConfig : examSession.labelQuestionConfig as LabelQuestionConfig[] | null
+            );
         }
 
         try {
@@ -807,6 +855,9 @@ export class ExamSessionService {
                 passingScore: true,
                 allowRetake: true,
                 maxAttempts: true,
+                questionCount: true,
+                questionSelectionMode: true,
+                shuffleQuestions: true,
                 examRoom: {
                     select: {
                         id: true,
@@ -898,6 +949,184 @@ export class ExamSessionService {
             maxAttempts,
             // Progress
             progress,
+            // Question selection config
+            questionCount: examSession.questionCount,
+            questionSelectionMode: examSession.questionSelectionMode,
+            shuffleQuestions: examSession.shuffleQuestions,
+        };
+    }
+
+    /**
+     * Validate question selection configuration
+     * Ensures the configuration is valid before creating/updating an exam session
+     */
+    private async validateQuestionSelectionConfig(
+        examRoomId: string,
+        questionSelectionMode?: QUESTION_SELECTION_MODE,
+        questionCount?: number | null,
+        labelQuestionConfig?: LabelQuestionConfig[] | null
+    ): Promise<void> {
+        // Get the quiz set and its questions count
+        const examRoom = await this.prisma.examRoom.findUnique({
+            where: { id: examRoomId },
+            include: {
+                quizSet: {
+                    include: {
+                        _count: {
+                            select: { detailsQuizQuestions: true },
+                        },
+                        labels: {
+                            include: {
+                                _count: {
+                                    select: { detailsQuizQuestions: true },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!examRoom || !examRoom.quizSet) {
+            throw new NotFoundException('Phòng thi hoặc bộ đề không tồn tại');
+        }
+
+        const totalAvailableQuestions = examRoom.quizSet._count.detailsQuizQuestions;
+        const mode = questionSelectionMode ?? QUESTION_SELECTION_MODE.ALL;
+
+        // Validate RANDOM_TOTAL mode
+        if (mode === QUESTION_SELECTION_MODE.RANDOM_TOTAL) {
+            if (!questionCount || questionCount <= 0) {
+                throw new BadRequestException(
+                    'Phải chỉ định số câu hỏi khi sử dụng chế độ random từ tổng số câu'
+                );
+            }
+            if (questionCount > totalAvailableQuestions) {
+                throw new BadRequestException(
+                    `Số câu hỏi (${questionCount}) không được vượt quá tổng số câu trong bộ đề (${totalAvailableQuestions})`
+                );
+            }
+        }
+
+        // Validate RANDOM_BY_LABEL mode
+        if (mode === QUESTION_SELECTION_MODE.RANDOM_BY_LABEL) {
+            if (!labelQuestionConfig || labelQuestionConfig.length === 0) {
+                throw new BadRequestException(
+                    'Phải cấu hình số câu cho từng nhãn khi sử dụng chế độ random theo nhãn'
+                );
+            }
+
+            // Get unlabeled questions count
+            const unlabeledCount = await this.prisma.detailsQuizQuestion.count({
+                where: { quizSetId: examRoom.quizSetId, labelId: null },
+            });
+
+            // Create a map of label ID to available question count
+            const labelQuestionCounts = new Map<string, number>();
+            for (const label of examRoom.quizSet.labels) {
+                labelQuestionCounts.set(label.id, label._count.detailsQuizQuestions);
+            }
+            labelQuestionCounts.set('unlabeled', unlabeledCount);
+
+            let totalConfiguredCount = 0;
+            const usedLabelIds = new Set<string>();
+
+            for (const config of labelQuestionConfig) {
+                // Check for duplicate label IDs
+                if (usedLabelIds.has(config.labelId)) {
+                    throw new BadRequestException(
+                        `Nhãn "${config.labelId}" được cấu hình nhiều lần`
+                    );
+                }
+                usedLabelIds.add(config.labelId);
+
+                // Check if label exists (or is 'unlabeled')
+                const availableInLabel = labelQuestionCounts.get(config.labelId);
+                if (availableInLabel === undefined) {
+                    throw new BadRequestException(
+                        `Nhãn với ID "${config.labelId}" không tồn tại trong bộ đề`
+                    );
+                }
+
+                // Check if requested count doesn't exceed available
+                if (config.count > availableInLabel) {
+                    const labelName = config.labelId === 'unlabeled' 
+                        ? 'Chưa gán nhãn' 
+                        : examRoom.quizSet.labels.find(l => l.id === config.labelId)?.name || config.labelId;
+                    throw new BadRequestException(
+                        `Số câu yêu cầu cho nhãn "${labelName}" (${config.count}) vượt quá số câu có sẵn (${availableInLabel})`
+                    );
+                }
+
+                totalConfiguredCount += config.count;
+            }
+
+            // If questionCount is specified, validate total matches
+            if (questionCount !== null && questionCount !== undefined) {
+                if (totalConfiguredCount !== questionCount) {
+                    throw new BadRequestException(
+                        `Tổng số câu cấu hình theo nhãn (${totalConfiguredCount}) phải bằng tổng số câu của phiên thi (${questionCount})`
+                    );
+                }
+            }
+
+            // Ensure total configured doesn't exceed available
+            if (totalConfiguredCount > totalAvailableQuestions) {
+                throw new BadRequestException(
+                    `Tổng số câu cấu hình (${totalConfiguredCount}) vượt quá số câu có sẵn (${totalAvailableQuestions})`
+                );
+            }
+        }
+    }
+
+    /**
+     * Get available labels and their question counts for a quiz set linked to an exam room
+     * This is used by the frontend to display label options for configuration
+     */
+    async getAvailableLabelsForExamRoom(examRoomId: string, user: User) {
+        const examRoom = await this.prisma.examRoom.findUnique({
+            where: { id: examRoomId },
+            include: {
+                quizSet: {
+                    include: {
+                        labels: {
+                            include: {
+                                _count: {
+                                    select: { detailsQuizQuestions: true },
+                                },
+                            },
+                            orderBy: { order: 'asc' },
+                        },
+                        _count: {
+                            select: { detailsQuizQuestions: true },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!examRoom) {
+            throw new NotFoundException('Phòng thi không tồn tại');
+        }
+
+        if (examRoom.hostId !== user.id) {
+            throw new ForbiddenException('Bạn không có quyền truy cập phòng này');
+        }
+
+        // Get unlabeled questions count
+        const unlabeledCount = await this.prisma.detailsQuizQuestion.count({
+            where: { quizSetId: examRoom.quizSetId, labelId: null },
+        });
+
+        return {
+            totalQuestions: examRoom.quizSet._count.detailsQuizQuestions,
+            labels: examRoom.quizSet.labels.map((label) => ({
+                id: label.id,
+                name: label.name,
+                color: label.color,
+                questionCount: label._count.detailsQuizQuestions,
+            })),
+            unlabeledCount,
         };
     }
 }
