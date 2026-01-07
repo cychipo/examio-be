@@ -5,6 +5,7 @@ import { ApiProperty } from '@nestjs/swagger';
 export const GetFlashcardsSchema = z.object({
     page: z.coerce.number().min(1).default(1),
     limit: z.coerce.number().min(1).max(100).default(10),
+    labelId: z.string().optional(),
 });
 
 export class GetFlashcardsDto extends createZodDto(GetFlashcardsSchema) {
@@ -23,4 +24,11 @@ export class GetFlashcardsDto extends createZodDto(GetFlashcardsSchema) {
         default: 10,
     })
     limit: number;
+
+    @ApiProperty({
+        description: 'Label ID to filter flashcards (optional). Use "unlabeled" to show unlabeled flashcards',
+        example: 'label123',
+        required: false,
+    })
+    labelId?: string;
 }

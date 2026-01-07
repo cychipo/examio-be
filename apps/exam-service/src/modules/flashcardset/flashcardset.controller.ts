@@ -58,6 +58,11 @@ import {
     DeleteFlashcardResponseDto,
 } from './dto/flashcard.dto';
 import { GetFlashcardsDto } from './dto/get-flashcards.dto';
+import {
+    CreateFlashcardLabelDto,
+    UpdateFlashcardLabelDto,
+    AssignFlashcardsToLabelDto,
+} from './dto/flashcard-label.dto';
 
 @ApiTags('Flashcardsets')
 @ApiExtraModels(
@@ -165,7 +170,8 @@ export class FlashcardsetController {
             id,
             req.user,
             query.page,
-            query.limit
+            query.limit,
+            query.labelId
         );
     }
 
@@ -284,20 +290,164 @@ export class FlashcardsetController {
     @UseGuards(AuthGuard)
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({
-        summary: 'Save history generated flashcards to flashcard set',
+        summary: 'Lưu flashcards từ history vào flashcard sets với label',
     })
+    @ApiExtraModels(SaveHistoryToFlashcardsetDto)
     @ApiResponse({
-        status: 200,
-        description: 'Save history to flashcard set successfully',
+        status: 201,
         type: SetFlashcardsToFlashcardSetResponseDto,
     })
-    async saveHistoryToFlashcardset(
+    async saveHistoryToFlashcardSet(
         @Req() req: AuthenticatedRequest,
         @Body() dto: SaveHistoryToFlashcardsetDto
     ) {
-        return this.flashcardsetService.saveHistoryToFlashcardSet(
+        return this.flashcardsetService.saveHistoryToFlashcardSet(req.user, dto);
+    }
+
+    @Get(':flashcardSetId/labels')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get all labels for a flashcard set' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Labels retrieved successfully',
+    })
+    async getLabels(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string
+    ) {
+        return this.flashcardsetService.getLabels(flashcardSetId, req.user);
+    }
+
+    @Post(':flashcardSetId/labels')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Create a new label for a flashcard set' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiResponse({
+        status: 201,
+        description: 'Label created successfully',
+    })
+    async createLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Body() dto: CreateFlashcardLabelDto
+    ) {
+        return this.flashcardsetService.createLabel(flashcardSetId, req.user, dto);
+    }
+
+    @Put(':flashcardSetId/labels/:labelId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Update a label' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Label updated successfully',
+    })
+    async updateLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() dto: UpdateFlashcardLabelDto
+    ) {
+        return this.flashcardsetService.updateLabel(
+            flashcardSetId,
+            labelId,
             req.user,
             dto
+        );
+    }
+
+    @Delete(':flashcardSetId/labels/:labelId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Delete a label' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Label deleted successfully',
+    })
+    async deleteLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Param('labelId') labelId: string
+    ) {
+        return this.flashcardsetService.deleteLabel(flashcardSetId, labelId, req.user);
+    }
+
+    @Post(':flashcardSetId/labels/:labelId/flashcards')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Assign flashcards to a label' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcards assigned to label successfully',
+    })
+    async assignFlashcardsToLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() dto: AssignFlashcardsToLabelDto
+    ) {
+        return this.flashcardsetService.assignFlashcardsToLabel(
+            flashcardSetId,
+            labelId,
+            req.user,
+            dto.flashcardIds
+        );
+    }
+
+    @Delete(':flashcardSetId/labels/:labelId/flashcards')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Remove flashcards from a label' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcards removed from label successfully',
+    })
+    async removeFlashcardsFromLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() dto: AssignFlashcardsToLabelDto
+    ) {
+        return this.flashcardsetService.removeFlashcardsFromLabel(
+            flashcardSetId,
+            labelId,
+            req.user,
+            dto.flashcardIds
+        );
+    }
+
+    @Get(':flashcardSetId/labels/:labelId/flashcards')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get flashcards by label' })
+    @ApiParam({ name: 'flashcardSetId', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Flashcards retrieved successfully',
+    })
+    async getFlashcardsByLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('flashcardSetId') flashcardSetId: string,
+        @Param('labelId') labelId: string,
+        @Query() query: GetFlashcardsDto
+    ) {
+        return this.flashcardsetService.getFlashcardsByLabel(
+            flashcardSetId,
+            labelId,
+            req.user,
+            query
         );
     }
 

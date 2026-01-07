@@ -16,6 +16,11 @@ import { UpdateFlashcardSetDto } from './dto/update-flashcardset.dto';
 import { SetFlashcardToFlashcardsetDto } from './dto/set-flashcard-to-flashcardset-dto';
 import { SaveHistoryToFlashcardsetDto } from './dto/save-history-to-flashcardset.dto';
 import { FlashcardSetUpdateSharingSettingsDto } from './dto/sharing.dto';
+import {
+    CreateFlashcardLabelDto,
+    UpdateFlashcardLabelDto,
+    AssignFlashcardsToLabelDto,
+} from './dto/flashcard-label.dto';
 import { FlashCardSetRepository } from './flashcardset.repository';
 import { R2ClientService } from '@examio/common';
 
@@ -158,7 +163,8 @@ export class FlashcardsetService {
         id: string,
         user: User,
         page: number = 1,
-        limit: number = 10
+        limit: number = 10,
+        labelId?: string | null
     ) {
         // Ensure page and limit are numbers (query params come as strings)
         const pageNum = Number(page) || 1;
@@ -176,16 +182,25 @@ export class FlashcardsetService {
 
         const skip = (pageNum - 1) * limitNum;
 
+        // Build where condition for filtering
+        const whereCondition: any = { flashCardSetId: id };
+        if (labelId === 'unlabeled') {
+            whereCondition.labelId = null;
+        } else if (labelId) {
+            whereCondition.labelId = labelId;
+        }
+
         // Get total count
         const totalCount = await this.prisma.detailsFlashCard.count({
-            where: { flashCardSetId: id },
+            where: whereCondition,
         });
 
         // Get paginated flashcards - order by flashCard.createdAt
         const detailsFlashCards = await this.prisma.detailsFlashCard.findMany({
-            where: { flashCardSetId: id },
+            where: whereCondition,
             include: {
                 flashCard: true,
+                label: true,
             },
             skip,
             take: limitNum,
@@ -1325,5 +1340,291 @@ export class FlashcardsetService {
         });
 
         return users;
+    }
+
+    /**
+     * Get all labels for a flashcard set
+     */
+    async getLabels(flashcardSetId: string, user: User) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+            cache: true,
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const labels = await this.prisma.flashCardSetLabel.findMany({
+            where: { flashCardSetId: flashcardSetId },
+            include: {
+                _count: {
+                    select: { detailsFlashCards: true },
+                },
+            },
+            orderBy: { order: 'asc' },
+        });
+
+        // Also get count of unlabeled flashcards
+        const unlabeledCount = await this.prisma.detailsFlashCard.count({
+            where: { flashCardSetId: flashcardSetId, labelId: null },
+        });
+
+        return {
+            labels: labels.map((l) => ({
+                ...l,
+                flashcardCount: l._count.detailsFlashCards,
+            })),
+            unlabeledCount,
+        };
+    }
+
+    /**
+     * Create a new label for a flashcard set
+     */
+    async createLabel(
+        flashcardSetId: string,
+        user: User,
+        dto: CreateFlashcardLabelDto
+    ) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const label = await this.prisma.flashCardSetLabel.create({
+            data: {
+                flashCardSetId: flashcardSetId,
+                name: dto.name,
+                description: dto.description,
+                color: dto.color,
+                order: dto.order || 0,
+            },
+        });
+
+        return { label };
+    }
+
+    /**
+     * Update a label
+     */
+    async updateLabel(
+        flashcardSetId: string,
+        labelId: string,
+        user: User,
+        dto: UpdateFlashcardLabelDto
+    ) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const label = await this.prisma.flashCardSetLabel.findFirst({
+            where: { id: labelId, flashCardSetId: flashcardSetId },
+        });
+
+        if (!label) {
+            throw new NotFoundException('Nhãn không tồn tại');
+        }
+
+        const updatedLabel = await this.prisma.flashCardSetLabel.update({
+            where: { id: labelId },
+            data: {
+                name: dto.name,
+                description: dto.description,
+                color: dto.color,
+                order: dto.order,
+            },
+        });
+
+        return { label: updatedLabel };
+    }
+
+    /**
+     * Delete a label
+     */
+    async deleteLabel(flashcardSetId: string, labelId: string, user: User) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const label = await this.prisma.flashCardSetLabel.findFirst({
+            where: { id: labelId, flashCardSetId: flashcardSetId },
+        });
+
+        if (!label) {
+            throw new NotFoundException('Nhãn không tồn tại');
+        }
+
+        // Remove label from all flashcards
+        await this.prisma.detailsFlashCard.updateMany({
+            where: { labelId },
+            data: { labelId: null },
+        });
+
+        // Delete the label
+        await this.prisma.flashCardSetLabel.delete({
+            where: { id: labelId },
+        });
+
+        return { message: 'Nhãn đã được xóa thành công' };
+    }
+
+    /**
+     * Assign flashcards to a label
+     */
+    async assignFlashcardsToLabel(
+        flashcardSetId: string,
+        labelId: string,
+        user: User,
+        flashcardIds: string[]
+    ) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const label = await this.prisma.flashCardSetLabel.findFirst({
+            where: { id: labelId, flashCardSetId: flashcardSetId },
+        });
+
+        if (!label) {
+            throw new NotFoundException('Nhãn không tồn tại');
+        }
+
+        // Verify all flashcards belong to this flashcard set
+        const flashcards = await this.prisma.detailsFlashCard.findMany({
+            where: {
+                id: { in: flashcardIds },
+                flashCardSetId: flashcardSetId,
+            },
+        });
+
+        if (flashcards.length !== flashcardIds.length) {
+            throw new BadRequestException('Một số thẻ ghi nhớ không tồn tại hoặc không thuộc bộ này');
+        }
+
+        // Assign label to flashcards
+        await this.prisma.detailsFlashCard.updateMany({
+            where: { id: { in: flashcardIds } },
+            data: { labelId },
+        });
+
+        return { message: 'Thẻ ghi nhớ đã được gán nhãn thành công' };
+    }
+
+    /**
+     * Remove flashcards from a label
+     */
+    async removeFlashcardsFromLabel(
+        flashcardSetId: string,
+        labelId: string,
+        user: User,
+        flashcardIds: string[]
+    ) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const label = await this.prisma.flashCardSetLabel.findFirst({
+            where: { id: labelId, flashCardSetId: flashcardSetId },
+        });
+
+        if (!label) {
+            throw new NotFoundException('Nhãn không tồn tại');
+        }
+
+        // Remove label from flashcards
+        await this.prisma.detailsFlashCard.updateMany({
+            where: { id: { in: flashcardIds } },
+            data: { labelId: null },
+        });
+
+        return { message: 'Đã gỡ nhãn khỏi thẻ ghi nhớ thành công' };
+    }
+
+    /**
+     * Get flashcards by label
+     */
+    async getFlashcardsByLabel(
+        flashcardSetId: string,
+        labelId: string,
+        user: User,
+        query: any
+    ) {
+        // Check ownership
+        const flashcardSet = await this.flashcardSetRepository.findOne({
+            where: { id: flashcardSetId, userId: user.id },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        const label = await this.prisma.flashCardSetLabel.findFirst({
+            where: { id: labelId, flashCardSetId: flashcardSetId },
+        });
+
+        if (!label) {
+            throw new NotFoundException('Nhãn không tồn tại');
+        }
+
+        const page = query.page || 1;
+        const limit = query.limit || 10;
+        const skip = (page - 1) * limit;
+
+        const [flashcards, total] = await Promise.all([
+            this.prisma.detailsFlashCard.findMany({
+                where: { flashCardSetId: flashcardSetId, labelId },
+                include: {
+                    flashCard: true,
+                    label: true,
+                },
+                skip,
+                take: limit,
+                orderBy: { id: 'asc' },
+            }),
+            this.prisma.detailsFlashCard.count({
+                where: { flashCardSetId: flashcardSetId, labelId },
+            }),
+        ]);
+
+        const flashCards = flashcards.map((detail) => ({
+            ...detail.flashCard,
+            label: detail.label,
+        }));
+
+        return {
+            flashCards: flashCards,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
     }
 }
