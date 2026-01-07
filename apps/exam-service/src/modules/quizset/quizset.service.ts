@@ -135,7 +135,11 @@ export class QuizsetService {
                 detailsQuizQuestions: {
                     include: {
                         quizQuestion: true,
+                        label: true,
                     },
+                },
+                labels: {
+                    orderBy: { order: 'asc' },
                 },
             },
             cache: true, // Enable cache
@@ -145,13 +149,15 @@ export class QuizsetService {
             throw new NotFoundException('Bộ câu hỏi không tồn tại');
         }
 
-        // Transform để trả về questions như cũ
-        const { detailsQuizQuestions, ...quizSetData } = quizSet as any;
+        // Transform để trả về questions với label info
+        const { detailsQuizQuestions, labels, ...quizSetData } = quizSet as any;
         return {
             ...quizSetData,
-            questions: detailsQuizQuestions.map(
-                (detail: any) => detail.quizQuestion
-            ),
+            labels: labels || [],
+            questions: detailsQuizQuestions.map((detail: any) => ({
+                ...detail.quizQuestion,
+                label: detail.label,
+            })),
         };
     }
 
@@ -662,6 +668,55 @@ export class QuizsetService {
                 }
 
                 const quizSetIds = quizSets.map((qs) => qs.id);
+
+                // Handle label creation/assignment for each quizset
+                // Create a map of quizSetId -> labelId
+                const labelMap = new Map<string, string | null>();
+
+                for (const quizSetId of quizSetIds) {
+                    let labelId: string | null = null;
+
+                    // If labelId is provided, validate it belongs to this quizset
+                    if (dto.labelId) {
+                        const existingLabel = await tx.quizSetLabel.findFirst({
+                            where: { id: dto.labelId, quizSetId },
+                        });
+                        if (existingLabel) {
+                            labelId = existingLabel.id;
+                        }
+                    }
+                    // If labelName is provided but no labelId, create or find label
+                    else if (dto.labelName) {
+                        const existingLabel = await tx.quizSetLabel.findFirst({
+                            where: { quizSetId, name: dto.labelName },
+                        });
+
+                        if (existingLabel) {
+                            labelId = existingLabel.id;
+                        } else {
+                            // Get max order for this quizset
+                            const maxOrder = await tx.quizSetLabel.aggregate({
+                                where: { quizSetId },
+                                _max: { order: true },
+                            });
+                            const newOrder = (maxOrder._max.order ?? -1) + 1;
+
+                            const newLabel = await tx.quizSetLabel.create({
+                                data: {
+                                    id: this.generateIdService.generateId(),
+                                    quizSetId,
+                                    name: dto.labelName,
+                                    color: dto.labelColor,
+                                    order: newOrder,
+                                },
+                            });
+                            labelId = newLabel.id;
+                        }
+                    }
+
+                    labelMap.set(quizSetId, labelId);
+                }
+
                 const existingQuestions = await tx.detailsQuizQuestion.findMany(
                     {
                         where: {
@@ -693,9 +748,11 @@ export class QuizsetService {
 
                 const questionsToCreate: any[] = [];
                 const detailsToCreate: any[] = [];
+                const detailsToUpdate: any[] = []; // For updating labelId of existing questions
                 const questionIdMap = new Map<string, string>(); // hash -> questionId
 
                 let skippedCount = 0;
+                let updatedCount = 0;
 
                 for (const quiz of quizzes) {
                     if (
@@ -733,9 +790,27 @@ export class QuizsetService {
 
                     for (const quizSetId of quizSetIds) {
                         const existingSet = existingMap.get(quizSetId);
+                        const targetLabelId = labelMap.get(quizSetId) || null;
 
                         if (existingSet && existingSet.has(hash)) {
-                            skippedCount++;
+                            // Question already exists in this quizset
+                            // Check if labelId needs to be updated
+                            const existingDetail = existingQuestions.find(
+                                eq => eq.quizSetId === quizSetId &&
+                                      this.hashQuestion(eq.quizQuestion.question, eq.quizQuestion.answer) === hash
+                            );
+
+                            if (existingDetail && existingDetail.labelId !== targetLabelId) {
+                                // Update labelId for existing question
+                                detailsToUpdate.push({
+                                    quizSetId,
+                                    quizQuestionId: existingDetail.quizQuestionId,
+                                    labelId: targetLabelId,
+                                });
+                                updatedCount++;
+                            } else {
+                                skippedCount++;
+                            }
                             continue;
                         }
 
@@ -744,6 +819,7 @@ export class QuizsetService {
                             quizSetId,
                             quizQuestionId: questionId,
                             historyGeneratedQuizzId: history.id,
+                            labelId: targetLabelId,
                         });
 
                         if (!existingSet) {
@@ -770,8 +846,22 @@ export class QuizsetService {
                     });
                 }
 
+                // Update existing questions with new labelId
+                for (const update of detailsToUpdate) {
+                    await tx.detailsQuizQuestion.updateMany({
+                        where: {
+                            quizSetId: update.quizSetId,
+                            quizQuestionId: update.quizQuestionId,
+                        },
+                        data: {
+                            labelId: update.labelId,
+                        },
+                    });
+                }
+
                 return {
                     createdCount: detailsToCreate.length,
+                    updatedCount,
                     skippedCount,
                     totalQuizzes: quizzes.length,
                     affectedQuizSetsCount: quizSetIds.length,
@@ -786,8 +876,9 @@ export class QuizsetService {
             }
 
             return {
-                message: `Đã lưu ${result.totalQuizzes} câu hỏi vào ${result.affectedQuizSetsCount} bộ câu hỏi${result.skippedCount > 0 ? ` (${result.skippedCount} đã tồn tại)` : ''}`,
+                message: `Đã lưu ${result.totalQuizzes} câu hỏi vào ${result.affectedQuizSetsCount} bộ câu hỏi${result.updatedCount > 0 ? ` (${result.updatedCount} đã cập nhật nhãn)` : ''}${result.skippedCount > 0 ? ` (${result.skippedCount} đã tồn tại)` : ''}`,
                 createdCount: result.createdCount,
+                updatedCount: result.updatedCount,
                 skippedCount: result.skippedCount,
                 affectedQuizSets: result.affectedQuizSetsCount,
             };
@@ -818,7 +909,7 @@ export class QuizsetService {
     async addQuestionToQuizSet(
         quizSetId: string,
         user: User,
-        dto: { question: string; options: string[]; answer: string }
+        dto: { question: string; options: string[]; answer: string; labelId?: string | null }
     ) {
         // Check ownership
         const quizSet = await this.quizSetRepository.findOne({
@@ -849,6 +940,7 @@ export class QuizsetService {
                     id: this.generateIdService.generateId(),
                     quizSetId: quizSetId,
                     quizQuestionId: questionId,
+                    labelId: dto.labelId || null,
                 },
             });
 
@@ -958,6 +1050,300 @@ export class QuizsetService {
 
         return {
             message: 'Xóa câu hỏi thành công',
+        };
+    }
+
+    // ==================== LABEL CRUD METHODS ====================
+
+    /**
+     * Get all labels for a quiz set
+     */
+    async getLabels(quizSetId: string, user: User) {
+        // Check ownership
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: true,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        const labels = await this.prisma.quizSetLabel.findMany({
+            where: { quizSetId },
+            include: {
+                _count: {
+                    select: { detailsQuizQuestions: true },
+                },
+            },
+            orderBy: { order: 'asc' },
+        });
+
+        // Also get count of unlabeled questions
+        const unlabeledCount = await this.prisma.detailsQuizQuestion.count({
+            where: { quizSetId, labelId: null },
+        });
+
+        return {
+            labels: labels.map((l) => ({
+                ...l,
+                questionCount: l._count.detailsQuizQuestions,
+            })),
+            unlabeledCount,
+        };
+    }
+
+    /**
+     * Create a new label for a quiz set
+     */
+    async createLabel(
+        quizSetId: string,
+        user: User,
+        dto: { name: string; description?: string; color?: string; order?: number }
+    ) {
+        // Check ownership
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        // Check if label with same name exists
+        const existingLabel = await this.prisma.quizSetLabel.findFirst({
+            where: { quizSetId, name: dto.name },
+        });
+
+        if (existingLabel) {
+            throw new ConflictException('Nhãn với tên này đã tồn tại');
+        }
+
+        const label = await this.prisma.quizSetLabel.create({
+            data: {
+                id: this.generateIdService.generateId(),
+                quizSetId,
+                name: dto.name,
+                description: dto.description,
+                color: dto.color,
+                order: dto.order ?? 0,
+            },
+        });
+
+        return {
+            message: 'Tạo nhãn thành công',
+            label,
+        };
+    }
+
+    /**
+     * Update a label
+     */
+    async updateLabel(
+        quizSetId: string,
+        labelId: string,
+        user: User,
+        dto: {
+            name?: string;
+            description?: string | null;
+            color?: string | null;
+            order?: number;
+        }
+    ) {
+        // Check ownership
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        // Check label exists
+        const label = await this.prisma.quizSetLabel.findFirst({
+            where: { id: labelId, quizSetId },
+        });
+
+        if (!label) {
+            throw new NotFoundException('Nhãn không tồn tại');
+        }
+
+        // Check name uniqueness if updating name
+        if (dto.name && dto.name !== label.name) {
+            const existingLabel = await this.prisma.quizSetLabel.findFirst({
+                where: { quizSetId, name: dto.name, id: { not: labelId } },
+            });
+
+            if (existingLabel) {
+                throw new ConflictException('Nhãn với tên này đã tồn tại');
+            }
+        }
+
+        const updatedLabel = await this.prisma.quizSetLabel.update({
+            where: { id: labelId },
+            data: {
+                ...(dto.name && { name: dto.name }),
+                ...(dto.description !== undefined && {
+                    description: dto.description,
+                }),
+                ...(dto.color !== undefined && { color: dto.color }),
+                ...(dto.order !== undefined && { order: dto.order }),
+            },
+        });
+
+        return {
+            message: 'Cập nhật nhãn thành công',
+            label: updatedLabel,
+        };
+    }
+
+    /**
+     * Delete a label (questions will have labelId set to null)
+     */
+    async deleteLabel(quizSetId: string, labelId: string, user: User) {
+        // Check ownership
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        // Check label exists
+        const label = await this.prisma.quizSetLabel.findFirst({
+            where: { id: labelId, quizSetId },
+        });
+
+        if (!label) {
+            throw new NotFoundException('Nhãn không tồn tại');
+        }
+
+        await this.prisma.quizSetLabel.delete({
+            where: { id: labelId },
+        });
+
+        return {
+            message: 'Xóa nhãn thành công',
+        };
+    }
+
+    /**
+     * Assign questions to a label
+     */
+    async assignQuestionsToLabel(
+        quizSetId: string,
+        labelId: string,
+        user: User,
+        questionIds: string[]
+    ) {
+        // Check ownership
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: false,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        // Check label exists (or allow null to remove label)
+        if (labelId) {
+            const label = await this.prisma.quizSetLabel.findFirst({
+                where: { id: labelId, quizSetId },
+            });
+
+            if (!label) {
+                throw new NotFoundException('Nhãn không tồn tại');
+            }
+        }
+
+        // Update questions
+        const result = await this.prisma.detailsQuizQuestion.updateMany({
+            where: {
+                quizSetId,
+                quizQuestionId: { in: questionIds },
+            },
+            data: {
+                labelId: labelId || null,
+            },
+        });
+
+        return {
+            message: `Đã gán ${result.count} câu hỏi vào nhãn`,
+            updatedCount: result.count,
+        };
+    }
+
+    /**
+     * Remove label from questions (set labelId to null)
+     */
+    async removeQuestionsFromLabel(
+        quizSetId: string,
+        labelId: string,
+        user: User,
+        questionIds: string[]
+    ) {
+        return this.assignQuestionsToLabel(quizSetId, '', user, questionIds);
+    }
+
+    /**
+     * Get questions by label (with pagination)
+     */
+    async getQuestionsByLabel(
+        quizSetId: string,
+        labelId: string | null,
+        user: User,
+        page: number = 1,
+        limit: number = 10
+    ) {
+        // Check ownership
+        const quizSet = await this.quizSetRepository.findOne({
+            where: { id: quizSetId, userId: user.id },
+            cache: true,
+        });
+
+        if (!quizSet) {
+            throw new NotFoundException('Bộ câu hỏi không tồn tại');
+        }
+
+        const pageNum = Number(page) || 1;
+        const limitNum = Number(limit) || 10;
+        const skip = (pageNum - 1) * limitNum;
+
+        const where = {
+            quizSetId,
+            labelId: labelId || null,
+        };
+
+        const [questions, totalCount] = await Promise.all([
+            this.prisma.detailsQuizQuestion.findMany({
+                where,
+                include: {
+                    quizQuestion: true,
+                    label: true,
+                },
+                skip,
+                take: limitNum,
+                orderBy: { quizQuestion: { createdAt: 'asc' } },
+            }),
+            this.prisma.detailsQuizQuestion.count({ where }),
+        ]);
+
+        return {
+            questions: questions.map((d) => ({
+                ...d.quizQuestion,
+                label: d.label,
+            })),
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total: totalCount,
+                totalPages: Math.ceil(totalCount / limitNum),
+            },
         };
     }
 }

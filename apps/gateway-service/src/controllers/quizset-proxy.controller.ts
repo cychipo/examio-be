@@ -281,6 +281,142 @@ export class QuizsetProxyController {
         );
     }
 
+    // ==================== LABEL CRUD ====================
+
+    @Get(':quizSetId/labels')
+    @ApiOperation({ summary: 'Lấy danh sách labels' })
+    async getLabels(
+        @Param('quizSetId') quizSetId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/quizsets/${quizSetId}/labels`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':quizSetId/labels')
+    @ApiOperation({ summary: 'Tạo label mới' })
+    async createLabel(
+        @Param('quizSetId') quizSetId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/quizsets/${quizSetId}/labels`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Put(':quizSetId/labels/:labelId')
+    @ApiOperation({ summary: 'Cập nhật label' })
+    async updateLabel(
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'PUT',
+                path: `/api/v1/quizsets/${quizSetId}/labels/${labelId}`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete(':quizSetId/labels/:labelId')
+    @ApiOperation({ summary: 'Xóa label' })
+    async deleteLabel(
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/quizsets/${quizSetId}/labels/${labelId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':quizSetId/labels/:labelId/questions')
+    @ApiOperation({ summary: 'Gán câu hỏi vào label' })
+    async assignQuestionsToLabel(
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/quizsets/${quizSetId}/labels/${labelId}/questions`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete(':quizSetId/labels/:labelId/questions')
+    @ApiOperation({ summary: 'Gỡ câu hỏi khỏi label' })
+    async removeQuestionsFromLabel(
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/quizsets/${quizSetId}/labels/${labelId}/questions`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get(':quizSetId/labels/:labelId/questions')
+    @ApiOperation({ summary: 'Lấy câu hỏi theo label' })
+    async getQuestionsByLabel(
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Query() query: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/quizsets/${quizSetId}/labels/${labelId}/questions`,
+                query,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     private h(req: Request) {
         return { 'user-agent': req.headers['user-agent'] || '' };
     }

@@ -45,6 +45,11 @@ import {
     DeleteQuestionResponseDto,
 } from './dto/question.dto';
 import { GetQuestionsDto } from './dto/get-questions.dto';
+import {
+    CreateLabelDto,
+    UpdateLabelDto,
+    AssignQuestionsToLabelDto,
+} from './dto/label.dto';
 
 @ApiTags('Quizsets')
 @ApiExtraModels(
@@ -360,6 +365,161 @@ export class QuizsetController {
             quizSetId,
             questionId,
             req.user
+        );
+    }
+
+    // ==================== LABEL CRUD ENDPOINTS ====================
+
+    @Get(':quizSetId/labels')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get all labels for a quiz set' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Labels retrieved successfully',
+    })
+    async getLabels(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string
+    ) {
+        return this.quizsetService.getLabels(quizSetId, req.user);
+    }
+
+    @Post(':quizSetId/labels')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Create a new label for a quiz set' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiResponse({
+        status: 201,
+        description: 'Label created successfully',
+    })
+    async createLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Body() dto: CreateLabelDto
+    ) {
+        return this.quizsetService.createLabel(quizSetId, req.user, dto);
+    }
+
+    @Put(':quizSetId/labels/:labelId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Update a label' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Label updated successfully',
+    })
+    async updateLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() dto: UpdateLabelDto
+    ) {
+        return this.quizsetService.updateLabel(
+            quizSetId,
+            labelId,
+            req.user,
+            dto
+        );
+    }
+
+    @Delete(':quizSetId/labels/:labelId')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Delete a label' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Label deleted successfully',
+    })
+    async deleteLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string
+    ) {
+        return this.quizsetService.deleteLabel(quizSetId, labelId, req.user);
+    }
+
+    @Post(':quizSetId/labels/:labelId/questions')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Assign questions to a label' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Questions assigned to label successfully',
+    })
+    async assignQuestionsToLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() dto: AssignQuestionsToLabelDto
+    ) {
+        return this.quizsetService.assignQuestionsToLabel(
+            quizSetId,
+            labelId,
+            req.user,
+            dto.questionIds
+        );
+    }
+
+    @Delete(':quizSetId/labels/:labelId/questions')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Remove questions from a label' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Questions removed from label successfully',
+    })
+    async removeQuestionsFromLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Body() dto: AssignQuestionsToLabelDto
+    ) {
+        return this.quizsetService.removeQuestionsFromLabel(
+            quizSetId,
+            labelId,
+            req.user,
+            dto.questionIds
+        );
+    }
+
+    @Get(':quizSetId/labels/:labelId/questions')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Get questions by label' })
+    @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
+    @ApiParam({
+        name: 'labelId',
+        description: 'Label ID (use "unlabeled" for questions without label)',
+    })
+    @ApiResponse({
+        status: 200,
+        description: 'Questions retrieved successfully',
+    })
+    async getQuestionsByLabel(
+        @Req() req: AuthenticatedRequest,
+        @Param('quizSetId') quizSetId: string,
+        @Param('labelId') labelId: string,
+        @Query() query: GetQuestionsDto
+    ) {
+        // Handle special "unlabeled" value
+        const actualLabelId = labelId === 'unlabeled' ? null : labelId;
+        return this.quizsetService.getQuestionsByLabel(
+            quizSetId,
+            actualLabelId,
+            req.user,
+            query.page,
+            query.limit
         );
     }
 }

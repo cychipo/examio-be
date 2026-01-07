@@ -16,6 +16,25 @@ model QuizSet {
     detailsQuizQuestions DetailsQuizQuestion[]
     examRooms            ExamRoom[]
     practiceAttempts     QuizPracticeAttempt[]
+    labels               QuizSetLabel[]
+}
+
+// Label for organizing questions within a QuizSet (e.g., Chapter 1, Chapter 2, etc.)
+model QuizSetLabel {
+    id          String   @id @default(cuid())
+    quizSetId   String
+    name        String   // Label name (e.g., "Chương 1", "Phần A")
+    description String?  // Optional description
+    color       String?  // Optional color for UI display (hex code)
+    order       Int      @default(0) // For ordering labels in UI
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+
+    quizSet              QuizSet               @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+    detailsQuizQuestions DetailsQuizQuestion[]
+
+    @@unique([quizSetId, name]) // Unique label name per quizset
+    @@index([quizSetId])
 }
 
 model FlashCardSet {
@@ -57,15 +76,18 @@ model DetailsQuizQuestion {
     quizSetId               String
     quizQuestionId          String
     historyGeneratedQuizzId String?
+    labelId                 String? // Optional: link to QuizSetLabel for categorization
 
     quizSet               QuizSet                @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
     quizQuestion          QuizQuestion           @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
     historyGeneratedQuizz HistoryGeneratedQuizz? @relation(fields: [historyGeneratedQuizzId], references: [id], onDelete: SetNull)
+    label                 QuizSetLabel?          @relation(fields: [labelId], references: [id], onDelete: SetNull)
 
     @@unique([quizSetId, quizQuestionId])
     @@index([quizSetId])
     @@index([quizQuestionId])
     @@index([historyGeneratedQuizzId])
+    @@index([labelId])
 }
 
 model FlashCard {
