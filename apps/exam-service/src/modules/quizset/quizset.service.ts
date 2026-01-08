@@ -724,6 +724,8 @@ export class QuizsetService {
                         },
                         select: {
                             quizSetId: true,
+                            quizQuestionId: true,
+                            labelId: true,
                             quizQuestion: {
                                 select: {
                                     question: true,

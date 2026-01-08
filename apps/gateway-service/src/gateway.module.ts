@@ -16,6 +16,7 @@ import { FlashcardsetProxyController } from './controllers/flashcardset-proxy.co
 import { ExamRoomProxyController } from './controllers/examroom-proxy.controller';
 import { ExamSessionProxyController } from './controllers/examsession-proxy.controller';
 import { ExamAttemptProxyController } from './controllers/examattempt-proxy.controller';
+import { SubjectProxyController } from './controllers/subject-proxy.controller';
 
 // Finance & Profile
 import {
@@ -64,6 +65,7 @@ import { WebhookProxyController } from './controllers/webhook-proxy.controller';
         ExamRoomProxyController,
         ExamSessionProxyController,
         ExamAttemptProxyController,
+        SubjectProxyController,
         // Finance & Profile
         WalletProxyController,
         PaymentProxyController,

@@ -275,9 +275,29 @@ export class ExamSessionProxyController {
         );
     }
 
+    // ==================== QUESTION SELECTION CONFIG ====================
+
+    @Get('room/:roomId/available-labels')
+    @ApiOperation({ summary: 'Get available labels for question config' })
+    async getAvailableLabels(
+        @Param('roomId') roomId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/examsessions/room/${roomId}/available-labels`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     private h(req: Request) {
         return { 'user-agent': req.headers['user-agent'] || '' };
     }
+
     private t(req: Request) {
         const a = req.headers.authorization;
         return a?.startsWith('Bearer ')

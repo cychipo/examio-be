@@ -37,6 +37,24 @@ model QuizSetLabel {
     @@index([quizSetId])
 }
 
+// Label for organizing flashcards within a FlashCardSet (e.g., Chapter 1, Chapter 2, etc.)
+model FlashCardSetLabel {
+    id             String   @id @default(cuid())
+    flashCardSetId String
+    name           String   // Label name (e.g., "Chương 1", "Phần A")
+    description    String?  // Optional description
+    color          String?  // Optional color for UI display (hex code)
+    order          Int      @default(0) // For ordering labels in UI
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @default(now()) @updatedAt
+
+    flashCardSet       FlashCardSet       @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
+    detailsFlashCards DetailsFlashCard[]
+
+    @@unique([flashCardSetId, name]) // Unique label name per flashcardset
+    @@index([flashCardSetId])
+}
+
 model FlashCardSet {
     id          String   @id @default(cuid())
     title       String
@@ -56,6 +74,7 @@ model FlashCardSet {
 
     user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
     detailsFlashCard DetailsFlashCard[]
+    labels           FlashCardSetLabel[]
 
     @@index([accessCode])
 }
@@ -105,15 +124,18 @@ model DetailsFlashCard {
     flashCardSetId              String
     flashCardId                 String
     historyGeneratedFlashcardId String?
+    labelId                     String? // Optional: link to FlashCardSetLabel for categorization
 
     flashCardSet              FlashCardSet               @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
     flashCard                 FlashCard                  @relation(fields: [flashCardId], references: [id], onDelete: Cascade, onUpdate: Cascade)
     historyGeneratedFlashcard HistoryGeneratedFlashcard? @relation(fields: [historyGeneratedFlashcardId], references: [id], onDelete: SetNull)
+    label                     FlashCardSetLabel?         @relation(fields: [labelId], references: [id], onDelete: SetNull)
 
     @@unique([flashCardSetId, flashCardId])
     @@index([flashCardSetId])
     @@index([flashCardId])
     @@index([historyGeneratedFlashcardId])
+    @@index([labelId])
 }
 
 model ExamRoom {
@@ -148,6 +170,13 @@ model ExamSession {
     whitelist              String[]  @default([]) // List of user IDs who can access
     showAnswersAfterSubmit Boolean   @default(true) // Show detailed answers after submission
     passingScore           Float     @default(0) // Minimum score percentage to pass (0 = no minimum)
+    
+    // Question selection configuration
+    questionCount          Int?      // Total number of questions for this session (null = all questions)
+    questionSelectionMode  Int       @default(0) // 0: ALL, 1: RANDOM_TOTAL, 2: RANDOM_BY_LABEL
+    labelQuestionConfig    Json?     // Array of { labelId: string, count: number } for RANDOM_BY_LABEL mode
+    shuffleQuestions       Boolean   @default(false) // Shuffle question order for each attempt
+    
     createdAt              DateTime  @default(now())
     updatedAt              DateTime  @default(now()) @updatedAt
     createdBy              String?
@@ -175,6 +204,9 @@ model ExamAttempt {
     markedQuestions String[] @default([]) // Marked question IDs
     totalQuestions  Int      @default(0)
     correctAnswers  Int      @default(0)
+    
+    // Selected questions for this attempt (stored to maintain consistency across attempts)
+    selectedQuestionIds String[] @default([]) // Question IDs selected for this specific attempt
 
     createdAt DateTime @default(now())
     updatedAt DateTime @default(now()) @updatedAt

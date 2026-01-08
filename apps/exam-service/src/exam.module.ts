@@ -6,6 +6,7 @@ import { ExamSessionModule } from './modules/examsession/examsession.module';
 import { ExamAttemptModule } from './modules/examattempt/examattempt.module';
 import { QuizPracticeAttemptModule } from './modules/quizpracticeattempt/quiz-practice-attempt.module';
 import { CheatingLogModule } from './modules/cheatinglog/cheatinglog.module';
+import { SubjectModule } from './modules/subject/subject.module';
 
 @Module({
     imports: [
@@ -16,6 +17,7 @@ import { CheatingLogModule } from './modules/cheatinglog/cheatinglog.module';
         ExamAttemptModule,
         QuizPracticeAttemptModule,
         CheatingLogModule,
+        SubjectModule,
     ],
     exports: [
         QuizsetModule,
@@ -25,6 +27,7 @@ import { CheatingLogModule } from './modules/cheatinglog/cheatinglog.module';
         ExamAttemptModule,
         QuizPracticeAttemptModule,
         CheatingLogModule,
+        SubjectModule,
     ],
 })
 export class ExamModule {}

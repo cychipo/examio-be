@@ -6,6 +6,9 @@ export const WALLET_SERVICE = 'WALLET_SERVICE';
 export const R2_SERVICE = 'R2_SERVICE';
 export const AUTH_SERVICE = 'AUTH_SERVICE';
 
+// Max message size for gRPC - 50MB for file uploads
+const MAX_MESSAGE_SIZE = 500 * 1024 * 1024;
+
 // Use project root + relative path to protos directory
 // This works correctly with webpack bundling
 const getProtoPath = (protoName: string) =>
@@ -55,6 +58,8 @@ export class GrpcClientsModule {
                             package: 'r2',
                             protoPath: getProtoPath('r2.proto'),
                             url: process.env.R2_GRPC_URL || 'localhost:50054',
+                            maxReceiveMessageLength: MAX_MESSAGE_SIZE,
+                            maxSendMessageLength: MAX_MESSAGE_SIZE,
                         },
                     },
                 ]),
@@ -122,6 +127,8 @@ export class GrpcClientsModule {
                             package: 'r2',
                             protoPath: getProtoPath('r2.proto'),
                             url: process.env.R2_GRPC_URL || 'localhost:50054',
+                            maxReceiveMessageLength: MAX_MESSAGE_SIZE,
+                            maxSendMessageLength: MAX_MESSAGE_SIZE,
                         },
                     },
                 ]),

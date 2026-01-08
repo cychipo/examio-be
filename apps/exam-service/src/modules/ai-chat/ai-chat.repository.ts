@@ -19,6 +19,15 @@ export class AIChatRepository {
                     take: 1,
                     select: { content: true },
                 },
+                subject: {
+                    select: {
+                        id: true,
+                        name: true,
+                        slug: true,
+                        icon: true,
+                        color: true,
+                    },
+                },
                 _count: { select: { messages: true } },
             },
         });
@@ -27,15 +36,32 @@ export class AIChatRepository {
     async findChatById(chatId: string) {
         return this.prisma.aIChat.findUnique({
             where: { id: chatId },
+            include: {
+                subject: {
+                    select: {
+                        id: true,
+                        name: true,
+                        slug: true,
+                        icon: true,
+                        color: true,
+                    },
+                },
+            },
         });
     }
 
-    async createChat(data: { id: string; userId: string; title?: string }) {
+    async createChat(data: {
+        id: string;
+        userId: string;
+        title?: string;
+        subjectId?: string | null;
+    }) {
         return this.prisma.aIChat.create({
             data: {
                 id: data.id,
                 userId: data.userId,
                 title: data.title || '',
+                subjectId: data.subjectId || null,
             },
         });
     }

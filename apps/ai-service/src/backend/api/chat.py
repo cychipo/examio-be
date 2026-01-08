@@ -38,6 +38,11 @@ class ChatRequest(BaseModel):
         alias="modelType",
         description="AI model to use: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)"
     )
+    system_prompt: Optional[str] = Field(
+        default=None,
+        alias="systemPrompt",
+        description="Custom system prompt for the AI model"
+    )
 
     class Config:
         populate_by_name = True
@@ -97,7 +102,7 @@ async def query_ai(request: ChatRequest):
         # 2. Use Agent to answer with specified model type
         # Note: In a stateless model, we pass history to the agent if supported,
         # or we prefix the query with context.
-        agent = SimpleChatAgent(custom_retriever=retriever, model_type=model_type)
+        agent = SimpleChatAgent(custom_retriever=retriever, model_type=model_type, system_prompt=None)
 
         # If we have history, we should ideally use it.
         # For SimpleChatAgent, we might need to modify it to accept history or just use a generic LangChain chain.
@@ -151,7 +156,7 @@ async def stream_ai(request: ChatRequest):
             logger.info(f"Retrieved {len(pre_context) if pre_context else 0} chars context from PostgreSQL")
 
         # Create agent with pre-fetched context (fast path - no retriever creation)
-        agent = SimpleChatAgent(pre_context=pre_context, model_type=model_type)
+        agent = SimpleChatAgent(pre_context=pre_context, model_type=model_type, system_prompt=request.system_prompt)
 
         # History setup
         history_dicts = []

@@ -319,4 +319,42 @@ export class ExamSessionController {
             req.user.id
         );
     }
+
+    @Get('room/:roomId/available-labels')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({
+        summary: 'Get available labels and question counts for an exam room',
+        description: 'Returns labels from the linked quiz set with question counts for configuring question selection',
+    })
+    @ApiParam({ name: 'roomId', description: 'Exam room ID' })
+    @ApiResponse({
+        status: 200,
+        description: 'Available labels with question counts',
+        schema: {
+            type: 'object',
+            properties: {
+                totalQuestions: { type: 'number' },
+                labels: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string' },
+                            name: { type: 'string' },
+                            color: { type: 'string', nullable: true },
+                            questionCount: { type: 'number' },
+                        },
+                    },
+                },
+                unlabeledCount: { type: 'number' },
+            },
+        },
+    })
+    async getAvailableLabelsForExamRoom(
+        @Param('roomId') roomId: string,
+        @Req() req: AuthenticatedRequest
+    ) {
+        return this.examSessionService.getAvailableLabelsForExamRoom(roomId, req.user);
+    }
 }

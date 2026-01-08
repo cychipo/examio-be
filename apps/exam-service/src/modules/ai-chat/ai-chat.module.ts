@@ -4,6 +4,7 @@ import { AuthModule } from '@examio/common';
 import { AIChatController } from './ai-chat.controller';
 import { AIChatService } from './ai-chat.service';
 import { AIChatRepository } from './ai-chat.repository';
+import { R2Module } from '../r2/r2.module';
 
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { join } from 'path';
@@ -12,6 +13,7 @@ import { join } from 'path';
     imports: [
         HttpModule,
         AuthModule,
+        R2Module,
         ClientsModule.register([
             {
                 name: 'FINANCE_PACKAGE',

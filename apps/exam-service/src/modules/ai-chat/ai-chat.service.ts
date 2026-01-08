@@ -10,6 +10,7 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom, Observable, Subject } from 'rxjs';
 import { ClientGrpc } from '@nestjs/microservices';
 import { AIChatRepository } from './ai-chat.repository';
+import { R2UploadService } from '../r2/r2-upload.service';
 import { User } from '@prisma/client';
 import { PrismaService } from '@examio/database';
 
@@ -33,6 +34,7 @@ export class AIChatService implements OnModuleInit {
     constructor(
         private readonly chatRepository: AIChatRepository,
         private readonly httpService: HttpService,
+        private readonly r2UploadService: R2UploadService,
         @Inject('FINANCE_PACKAGE') private client: ClientGrpc,
         private readonly prisma: PrismaService
     ) {}
@@ -51,23 +53,63 @@ export class AIChatService implements OnModuleInit {
             chats: chats.map((chat) => ({
                 id: chat.id,
                 userId: chat.userId,
+                subjectId: chat.subjectId,
                 title: chat.title,
                 createdAt: chat.createdAt,
                 updatedAt: chat.updatedAt,
                 lastMessage: chat.messages[0]?.content || '',
                 messageCount: chat._count.messages,
+                subject: chat.subject
+                    ? {
+                          id: chat.subject.id,
+                          name: chat.subject.name,
+                          slug: chat.subject.slug,
+                          icon: chat.subject.icon,
+                          color: chat.subject.color,
+                      }
+                    : null,
             })),
             total: chats.length,
         };
     }
 
-    async createChat(user: User, title?: string) {
+    async createChat(user: User, title?: string, subjectId?: string) {
+        let chatTitle = title || '';
+
+        // If no custom title and has subject, use subject name as title
+        if (!chatTitle && subjectId) {
+            const subject = await this.prisma.subject.findUnique({
+                where: { id: subjectId },
+                select: { name: true },
+            });
+            if (subject) {
+                chatTitle = subject.name;
+            }
+        }
+
         const id = this.generateId();
-        return this.chatRepository.createChat({
+        const chat = await this.chatRepository.createChat({
             id,
             userId: user.id,
-            title: title || '',
+            title: chatTitle,
+            subjectId: subjectId || null,
         });
+
+        // Return with subject info if available
+        if (subjectId) {
+            const subject = await this.prisma.subject.findUnique({
+                where: { id: subjectId },
+                select: {
+                    id: true,
+                    name: true,
+                    slug: true,
+                    icon: true,
+                    color: true,
+                },
+            });
+            return { ...chat, subject };
+        }
+        return chat;
     }
 
     async updateChat(chatId: string, user: User, title: string) {
@@ -202,6 +244,18 @@ export class AIChatService implements OnModuleInit {
         // Check subscription limits
         await this.checkLimits(user.id, chatId);
 
+        // Get subject system prompt if chat has a subject
+        let systemPrompt: string | null = null;
+        if (chat.subjectId) {
+            const subject = await this.prisma.subject.findUnique({
+                where: { id: chat.subjectId },
+                select: { systemPrompt: true },
+            });
+            if (subject) {
+                systemPrompt = subject.systemPrompt;
+            }
+        }
+
         // Collect all document IDs: from DTO + from chat's linked documents
         let effectiveDocumentIds: string[] = [];
         if (data.documentIds && Array.isArray(data.documentIds)) {
@@ -252,6 +306,7 @@ export class AIChatService implements OnModuleInit {
             history: historyForAI,
             user_storage_id: userStorageId,
             model_type: data.modelType || 'gemini',
+            system_prompt: systemPrompt, // Subject-specific system prompt
         };
 
         this.logger.log(
@@ -582,5 +637,53 @@ export class AIChatService implements OnModuleInit {
                 );
             }
         }
+    }
+
+    async clearChat(chatId: string, user: User, deleteFiles: boolean = false) {
+        // Validate chat ownership
+        await this.getChatByIdAndValidateOwner(chatId, user);
+
+        const deletedFiles: string[] = [];
+
+        if (deleteFiles) {
+            // Get all document IDs associated with this chat
+            const documentIds = await this.chatRepository.getDocumentIds(chatId);
+
+            // Delete each file from R2 and database
+            for (const docId of documentIds) {
+                try {
+                    // Get file info
+                    const userStorage = await this.prisma.userStorage.findUnique({
+                        where: { id: docId },
+                        select: { id: true, filename: true, keyR2: true }
+                    });
+
+                    if (userStorage) {
+                        // Delete from R2
+                        await this.r2UploadService.deleteImage(userStorage.keyR2);
+
+                        // Delete from database (cascade will handle related records)
+                        await this.prisma.userStorage.delete({
+                            where: { id: docId }
+                        });
+
+                        deletedFiles.push(userStorage.filename);
+                        this.logger.log(`[clearChat] Deleted file: ${userStorage.filename}`);
+                    }
+                } catch (error) {
+                    this.logger.error(`[clearChat] Error deleting file ${docId}:`, error);
+                    // Continue with other files even if one fails
+                }
+            }
+        }
+
+        // Delete the chat (this will cascade delete messages and document links)
+        await this.chatRepository.deleteChat(chatId);
+
+        return {
+            success: true,
+            message: deleteFiles ? 'Chat và files đã được xóa' : 'Chat đã được xóa',
+            deletedFiles: deleteFiles ? deletedFiles : undefined
+        };
     }
 }

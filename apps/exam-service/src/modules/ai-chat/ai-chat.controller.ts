@@ -43,9 +43,9 @@ export class AIChatController {
     @ApiResponse({ status: 201, description: 'Chat đã tạo' })
     async createChat(
         @Req() req: AuthenticatedRequest,
-        @Body() body: { title?: string }
+        @Body() body: { title?: string; subjectId?: string }
     ) {
-        return this.chatService.createChat(req.user, body?.title);
+        return this.chatService.createChat(req.user, body?.title, body?.subjectId);
     }
 
     @Patch(':chatId')
@@ -65,6 +65,16 @@ export class AIChatController {
         @Param('chatId') chatId: string
     ) {
         return this.chatService.deleteChat(chatId, req.user);
+    }
+
+    @Post(':chatId/clear')
+    @ApiOperation({ summary: 'Xóa nội dung chat và tùy chọn xóa files' })
+    async clearChat(
+        @Req() req: AuthenticatedRequest,
+        @Param('chatId') chatId: string,
+        @Body() body: { deleteFiles?: boolean }
+    ) {
+        return this.chatService.clearChat(chatId, req.user, body.deleteFiles || false);
     }
 
     @Get(':chatId/exists')

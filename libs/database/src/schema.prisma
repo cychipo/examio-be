@@ -13,15 +13,18 @@ datasource db {
 model AIChat {
     id        String   @id
     userId    String
+    subjectId String? // Giáo viên AI (môn học) - nullable để backward compatible
     title     String   @default("")
     createdAt DateTime @default(now())
     updatedAt DateTime @default(now()) @updatedAt
 
     user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+    subject   Subject?         @relation(fields: [subjectId], references: [id], onDelete: SetNull)
     messages  AIChatMessage[]
     documents AIChatDocument[] // Multi-file support
 
     @@index([userId, updatedAt(sort: Desc)])
+    @@index([subjectId])
 }
 
 model AIChatMessage {
@@ -76,6 +79,43 @@ model QuizSet {
     detailsQuizQuestions DetailsQuizQuestion[]
     examRooms            ExamRoom[]
     practiceAttempts     QuizPracticeAttempt[]
+    labels               QuizSetLabel[]
+}
+
+// Label for organizing questions within a QuizSet (e.g., Chapter 1, Chapter 2, etc.)
+model QuizSetLabel {
+    id          String   @id @default(cuid())
+    quizSetId   String
+    name        String   // Label name (e.g., "Chương 1", "Phần A")
+    description String?  // Optional description
+    color       String?  // Optional color for UI display (hex code)
+    order       Int      @default(0) // For ordering labels in UI
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+
+    quizSet              QuizSet               @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+    detailsQuizQuestions DetailsQuizQuestion[]
+
+    @@unique([quizSetId, name]) // Unique label name per quizset
+    @@index([quizSetId])
+}
+
+// Label for organizing flashcards within a FlashCardSet (e.g., Chapter 1, Chapter 2, etc.)
+model FlashCardSetLabel {
+    id             String   @id @default(cuid())
+    flashCardSetId String
+    name           String   // Label name (e.g., "Chương 1", "Phần A")
+    description    String?  // Optional description
+    color          String?  // Optional color for UI display (hex code)
+    order          Int      @default(0) // For ordering labels in UI
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @default(now()) @updatedAt
+
+    flashCardSet       FlashCardSet       @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
+    detailsFlashCards DetailsFlashCard[]
+
+    @@unique([flashCardSetId, name]) // Unique label name per flashcardset
+    @@index([flashCardSetId])
 }
 
 model FlashCardSet {
@@ -97,6 +137,7 @@ model FlashCardSet {
 
     user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
     detailsFlashCard DetailsFlashCard[]
+    labels           FlashCardSetLabel[]
 
     @@index([accessCode])
 }
@@ -117,15 +158,18 @@ model DetailsQuizQuestion {
     quizSetId               String
     quizQuestionId          String
     historyGeneratedQuizzId String?
+    labelId                 String? // Optional: link to QuizSetLabel for categorization
 
     quizSet               QuizSet                @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
     quizQuestion          QuizQuestion           @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
     historyGeneratedQuizz HistoryGeneratedQuizz? @relation(fields: [historyGeneratedQuizzId], references: [id], onDelete: SetNull)
+    label                 QuizSetLabel?          @relation(fields: [labelId], references: [id], onDelete: SetNull)
 
     @@unique([quizSetId, quizQuestionId])
     @@index([quizSetId])
     @@index([quizQuestionId])
     @@index([historyGeneratedQuizzId])
+    @@index([labelId])
 }
 
 model FlashCard {
@@ -143,15 +187,18 @@ model DetailsFlashCard {
     flashCardSetId              String
     flashCardId                 String
     historyGeneratedFlashcardId String?
+    labelId                     String? // Optional: link to FlashCardSetLabel for categorization
 
     flashCardSet              FlashCardSet               @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
     flashCard                 FlashCard                  @relation(fields: [flashCardId], references: [id], onDelete: Cascade, onUpdate: Cascade)
     historyGeneratedFlashcard HistoryGeneratedFlashcard? @relation(fields: [historyGeneratedFlashcardId], references: [id], onDelete: SetNull)
+    label                     FlashCardSetLabel?         @relation(fields: [labelId], references: [id], onDelete: SetNull)
 
     @@unique([flashCardSetId, flashCardId])
     @@index([flashCardSetId])
     @@index([flashCardId])
     @@index([historyGeneratedFlashcardId])
+    @@index([labelId])
 }
 
 model ExamRoom {
@@ -186,6 +233,13 @@ model ExamSession {
     whitelist              String[]  @default([]) // List of user IDs who can access
     showAnswersAfterSubmit Boolean   @default(true) // Show detailed answers after submission
     passingScore           Float     @default(0) // Minimum score percentage to pass (0 = no minimum)
+    
+    // Question selection configuration
+    questionCount          Int?      // Total number of questions for this session (null = all questions)
+    questionSelectionMode  Int       @default(0) // 0: ALL, 1: RANDOM_TOTAL, 2: RANDOM_BY_LABEL
+    labelQuestionConfig    Json?     // Array of { labelId: string, count: number } for RANDOM_BY_LABEL mode
+    shuffleQuestions       Boolean   @default(false) // Shuffle question order for each attempt
+    
     createdAt              DateTime  @default(now())
     updatedAt              DateTime  @default(now()) @updatedAt
     createdBy              String?
@@ -213,6 +267,9 @@ model ExamAttempt {
     markedQuestions String[] @default([]) // Marked question IDs
     totalQuestions  Int      @default(0)
     correctAnswers  Int      @default(0)
+    
+    // Selected questions for this attempt (stored to maintain consistency across attempts)
+    selectedQuestionIds String[] @default([]) // Question IDs selected for this specific attempt
 
     createdAt DateTime @default(now())
     updatedAt DateTime @default(now()) @updatedAt
@@ -385,6 +442,47 @@ model Document {
     createdAt   DateTime    @default(now())
     updatedAt   DateTime    @default(now()) @updatedAt
     userStorage UserStorage @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+}
+
+
+// Subject Category - Nhóm môn học (VD: Toán học, Khoa học Tự nhiên, ...)
+model SubjectCategory {
+    id          String   @id @default(cuid())
+    name        String   @unique // Tên nhóm (VD: "Toán học", "Khoa học Tự nhiên")
+    slug        String   @unique // URL-friendly slug
+    description String?
+    icon        String? // Icon/emoji cho nhóm
+    color       String? // Màu sắc đại diện (hex)
+    order       Int      @default(0) // Thứ tự hiển thị
+    isActive    Boolean  @default(true)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+
+    subjects Subject[]
+
+    @@index([isActive, order])
+}
+
+// Subject - Giáo viên AI (mỗi môn học = 1 giáo viên)
+model Subject {
+    id           String   @id @default(cuid())
+    categoryId   String
+    name         String   @unique // Tên môn (VD: "Toán Tiểu học", "Vật lý")
+    slug         String   @unique // URL-friendly slug
+    description  String? // Mô tả ngắn về môn học
+    icon         String? // Icon/emoji đại diện
+    color        String? // Màu sắc đại diện (hex)
+    systemPrompt String   @db.Text // System prompt cho LLM (bắt buộc)
+    order        Int      @default(0) // Thứ tự hiển thị trong category
+    isActive     Boolean  @default(true) // Trạng thái hoạt động
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @default(now()) @updatedAt
+
+    category SubjectCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+    aiChats  AIChat[]
+
+    @@index([categoryId, isActive, order])
+    @@index([isActive, order])
 }
 
 

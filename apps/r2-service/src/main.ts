@@ -23,13 +23,16 @@ async function bootstrap() {
     );
     console.log(`📄 Using proto file: ${protoPath}`);
 
-    // gRPC microservice
+    // gRPC microservice with increased message size limit for file uploads
+    const MAX_MESSAGE_SIZE = 500 * 1024 * 1024; // 50MB limit for file uploads
     app.connectMicroservice<MicroserviceOptions>({
         transport: Transport.GRPC,
         options: {
             package: 'r2',
             protoPath,
             url: `0.0.0.0:${process.env.GRPC_PORT || 50054}`,
+            maxReceiveMessageLength: MAX_MESSAGE_SIZE,
+            maxSendMessageLength: MAX_MESSAGE_SIZE,
         },
     });
 

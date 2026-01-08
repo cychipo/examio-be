@@ -16,6 +16,7 @@ import {
     ApiOperation,
     ApiBearerAuth,
     ApiQuery,
+    ApiParam,
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -99,13 +100,156 @@ export class FlashcardsetProxyController {
     }
 
     @Get(':id')
-    @ApiOperation({ summary: 'Lấy chi tiết flashcard set' })
+    @ApiOperation({ summary: 'Lấy flashcard set theo ID' })
     async getById(@Param('id') id: string, @Req() req: Request) {
         return this.proxyService.forwardWithAuth(
             'exam',
             {
                 method: 'GET',
                 path: `/api/v1/flashcardsets/${id}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get(':id/labels')
+    @ApiOperation({ summary: 'Lấy tất cả nhãn của flashcard set' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    async getLabels(@Param('id') id: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/flashcardsets/${id}/labels`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':id/labels')
+    @ApiOperation({ summary: 'Tạo nhãn mới cho flashcard set' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    async createLabel(
+        @Param('id') id: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/flashcardsets/${id}/labels`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Put(':id/labels/:labelId')
+    @ApiOperation({ summary: 'Cập nhật nhãn' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    async updateLabel(
+        @Param('id') id: string,
+        @Param('labelId') labelId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'PUT',
+                path: `/api/v1/flashcardsets/${id}/labels/${labelId}`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete(':id/labels/:labelId')
+    @ApiOperation({ summary: 'Xóa nhãn' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    async deleteLabel(
+        @Param('id') id: string,
+        @Param('labelId') labelId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/flashcardsets/${id}/labels/${labelId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post(':id/labels/:labelId/flashcards')
+    @ApiOperation({ summary: 'Gán flashcards cho nhãn' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    async assignFlashcardsToLabel(
+        @Param('id') id: string,
+        @Param('labelId') labelId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/flashcardsets/${id}/labels/${labelId}/flashcards`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete(':id/labels/:labelId/flashcards')
+    @ApiOperation({ summary: 'Gỡ flashcards khỏi nhãn' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    async removeFlashcardsFromLabel(
+        @Param('id') id: string,
+        @Param('labelId') labelId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/flashcardsets/${id}/labels/${labelId}/flashcards`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get(':id/labels/:labelId/flashcards')
+    @ApiOperation({ summary: 'Lấy flashcards theo nhãn' })
+    @ApiParam({ name: 'id', description: 'Flashcard set ID' })
+    @ApiParam({ name: 'labelId', description: 'Label ID' })
+    async getFlashcardsByLabel(
+        @Param('id') id: string,
+        @Param('labelId') labelId: string,
+        @Query() query: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/flashcardsets/${id}/labels/${labelId}/flashcards`,
+                query,
                 headers: this.h(req),
             },
             this.t(req)
