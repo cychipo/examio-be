@@ -9,6 +9,7 @@ import {
     Body,
     Query,
     Req,
+    UseGuards,
     UseInterceptors,
     UploadedFile,
     Logger,
@@ -21,6 +22,7 @@ import {
     ApiBearerAuth,
     ApiQuery,
     ApiConsumes,
+    ApiCookieAuth,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
@@ -28,12 +30,16 @@ import { ProxyService } from '../services/proxy.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import * as FormData from 'form-data';
+import { AuthGuard, Roles, RolesGuard } from '@examio/common';
 
 // ==================== AI ====================
 
 @ApiTags('AI')
 @Controller('ai')
+@UseGuards(AuthGuard, RolesGuard)
+@Roles('teacher', 'student')
 @ApiBearerAuth('access-token')
+@ApiCookieAuth('cookie-auth')
 export class AIProxyController {
     private readonly logger = new Logger(AIProxyController.name);
 
@@ -312,7 +318,10 @@ export class AIProxyController {
 
 @ApiTags('AI Chat')
 @Controller('ai-chat')
+@UseGuards(AuthGuard, RolesGuard)
+@Roles('teacher', 'student')
 @ApiBearerAuth('access-token')
+@ApiCookieAuth('cookie-auth')
 export class AIChatProxyController {
     constructor(private readonly proxyService: ProxyService) {}
 

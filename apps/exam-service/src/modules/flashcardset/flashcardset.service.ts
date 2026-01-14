@@ -1627,4 +1627,39 @@ export class FlashcardsetService {
             },
         };
     }
+
+    async generateShareLink(flashcardSetId: string, user: any) {
+        // Verify ownership or access
+        const flashcardSet = await this.prisma.flashCardSet.findUnique({
+            where: { id: flashcardSetId },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ flashcard không tồn tại');
+        }
+
+        // Only owner can generate share link for private sets
+        if (!flashcardSet.isPublic && flashcardSet.userId !== user.id) {
+            throw new ForbiddenException('Bạn không có quyền chia sẻ bộ flashcard này');
+        }
+
+        // Generate 6-digit access code if not exists
+        let accessCode = flashcardSet.accessCode;
+        if (!accessCode) {
+            accessCode = this.generateIdService.generate6DigitCode();
+            await this.prisma.flashCardSet.update({
+                where: { id: flashcardSetId },
+                data: { accessCode },
+            });
+        }
+
+        // Generate share URL
+        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const shareUrl = `${baseUrl}/k/manage-flashcard-set/${flashcardSetId}?code=${accessCode}`;
+
+        return {
+            shareUrl,
+            accessCode,
+        };
+    }
 }

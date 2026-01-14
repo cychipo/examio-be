@@ -261,6 +261,21 @@ export class FlashcardsetController {
         return this.flashcardsetService.deleteFlashcardSet(id, req.user);
     }
 
+    @Post(':id/share')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Generate share link and access code for flashcard set' })
+    @ApiResponse({
+        status: 200,
+        description: 'Share link generated successfully',
+    })
+    async generateShareLink(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string
+    ) {
+        return this.flashcardsetService.generateShareLink(id, req.user);
+    }
+
     @Get('public/:id')
     @ApiOperation({ summary: 'Get a public flashcard set by ID' })
     @ApiResponse({

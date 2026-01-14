@@ -41,11 +41,11 @@ export class AIController {
 
     @Post('quick-upload')
     @UseGuards(AuthGuard, RolesGuard)
-    @Roles('teacher')
+    @Roles('teacher', 'student')
     @UseInterceptors(FileInterceptor('file'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({
-        summary: 'Quick upload file cho AI Teacher (Teacher only)',
+        summary: 'Quick upload file cho AI Teacher (Teacher & Student)',
     })
     @ApiConsumes('multipart/form-data')
     @ApiResponse({ status: 201, description: 'File đã được upload' })
@@ -109,9 +109,10 @@ export class AIController {
     }
 
     @Get('recent-uploads')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Lấy danh sách file đã upload' })
+    @ApiOperation({ summary: 'Lấy danh sách file đã upload (Teacher & Student)' })
     @ApiQuery({ name: 'page', required: false, type: Number })
     @ApiQuery({ name: 'size', required: false, type: Number })
     @ApiResponse({ status: 200, description: 'Danh sách uploads' })
@@ -128,9 +129,10 @@ export class AIController {
     }
 
     @Get('upload/:uploadId')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher', 'student')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Lấy chi tiết file đã upload' })
+    @ApiOperation({ summary: 'Lấy chi tiết file đã upload (Teacher & Student)' })
     @ApiParam({ name: 'uploadId', description: 'ID của upload' })
     @ApiResponse({ status: 200, description: 'Chi tiết upload' })
     async getUploadDetail(
@@ -142,9 +144,9 @@ export class AIController {
 
     @Delete('upload/:uploadId')
     @UseGuards(AuthGuard, RolesGuard)
-    @Roles('teacher')
+    @Roles('teacher', 'student')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Xóa file upload (Teacher only)' })
+    @ApiOperation({ summary: 'Xóa file upload (Teacher & Student)' })
     @ApiParam({ name: 'uploadId', description: 'ID của upload' })
     @ApiResponse({ status: 200, description: 'Xóa thành công' })
     async deleteUpload(
@@ -156,9 +158,9 @@ export class AIController {
 
     @Post('upload')
     @UseGuards(AuthGuard, RolesGuard)
-    @Roles('teacher')
+    @Roles('teacher', 'student')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Tạo upload mới và trigger OCR (Teacher only)' })
+    @ApiOperation({ summary: 'Tạo upload mới và trigger OCR (Teacher & Student)' })
     @ApiResponse({ status: 201, description: 'Upload đã được tạo' })
     async createUpload(
         @Req() req: AuthenticatedRequest,
@@ -169,9 +171,9 @@ export class AIController {
 
     @Post('upload-image')
     @UseGuards(AuthGuard, RolesGuard)
-    @Roles('teacher')
+    @Roles('teacher', 'student')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Upload image cho AI chat (Teacher only)' })
+    @ApiOperation({ summary: 'Upload image cho AI chat (Teacher & Student)' })
     @ApiResponse({ status: 201, description: 'Image đã được upload' })
     async uploadImage(
         @Req() req: AuthenticatedRequest,
@@ -200,9 +202,10 @@ export class AIController {
     }
 
     @Get('job/:jobId')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher', 'student')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Lấy trạng thái job' })
+    @ApiOperation({ summary: 'Lấy trạng thái job (Teacher & Student)' })
     @ApiParam({ name: 'jobId', description: 'ID của job (userStorageId)' })
     @ApiResponse({ status: 200, description: 'Trạng thái job' })
     async getJobStatus(
@@ -222,9 +225,9 @@ export class AIController {
 
     @Delete('job/:jobId')
     @UseGuards(AuthGuard, RolesGuard)
-    @Roles('teacher')
+    @Roles('teacher', 'student')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Hủy job đang xử lý (Teacher only)' })
+    @ApiOperation({ summary: 'Hủy job đang xử lý (Teacher & Student)' })
     @ApiParam({ name: 'jobId', description: 'ID của job (userStorageId)' })
     @ApiResponse({ status: 200, description: 'Job đã được hủy' })
     async cancelJob(
@@ -243,10 +246,11 @@ export class AIController {
     }
 
     @Get('upload/:uploadId/history')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher', 'student')
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({
-        summary: 'Lấy lịch sử quiz và flashcard đã tạo cho một file',
+        summary: 'Lấy lịch sử quiz và flashcard đã tạo cho một file (Teacher & Student)',
     })
     @ApiParam({ name: 'uploadId', description: 'ID của UserStorage' })
     @ApiResponse({ status: 200, description: 'Lịch sử quiz và flashcard' })
