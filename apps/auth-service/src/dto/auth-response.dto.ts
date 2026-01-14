@@ -58,6 +58,12 @@ export class RegisterResponseDto {
 
     @ApiProperty({ description: 'Trạng thái thành công' })
     success: boolean;
+
+    @ApiProperty({ description: 'JWT token' })
+    token: string;
+
+    @ApiProperty({ description: 'Device ID', required: false })
+    deviceId?: string;
 }
 
 export class LogoutResponseDto {

@@ -23,7 +23,7 @@ import {
     ApiConsumes,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { AuthGuard, AuthenticatedRequest } from '@examio/common';
+import { AuthGuard, AuthenticatedRequest, Roles, RolesGuard } from '@examio/common';
 import { AIService } from './ai.service';
 import {
     UploadFileDto,
@@ -40,11 +40,12 @@ export class AIController {
     constructor(private readonly aiService: AIService) {}
 
     @Post('quick-upload')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @UseInterceptors(FileInterceptor('file'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({
-        summary: 'Quick upload file cho AI Teacher (không chờ OCR)',
+        summary: 'Quick upload file cho AI Teacher (Teacher only)',
     })
     @ApiConsumes('multipart/form-data')
     @ApiResponse({ status: 201, description: 'File đã được upload' })
@@ -75,11 +76,12 @@ export class AIController {
     }
 
     @Post('generate-from-file')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @UseInterceptors(FileInterceptor('file'))
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({
-        summary: 'Upload file và tạo quiz/flashcard',
+        summary: 'Upload file và tạo quiz/flashcard (Teacher only)',
     })
     @ApiConsumes('multipart/form-data')
     @ApiResponse({ status: 201, description: 'Job đã được tạo' })
@@ -139,9 +141,10 @@ export class AIController {
     }
 
     @Delete('upload/:uploadId')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Xóa file upload' })
+    @ApiOperation({ summary: 'Xóa file upload (Teacher only)' })
     @ApiParam({ name: 'uploadId', description: 'ID của upload' })
     @ApiResponse({ status: 200, description: 'Xóa thành công' })
     async deleteUpload(
@@ -152,9 +155,10 @@ export class AIController {
     }
 
     @Post('upload')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Tạo upload mới và trigger OCR' })
+    @ApiOperation({ summary: 'Tạo upload mới và trigger OCR (Teacher only)' })
     @ApiResponse({ status: 201, description: 'Upload đã được tạo' })
     async createUpload(
         @Req() req: AuthenticatedRequest,
@@ -164,9 +168,10 @@ export class AIController {
     }
 
     @Post('upload-image')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Upload image cho AI chat' })
+    @ApiOperation({ summary: 'Upload image cho AI chat (Teacher only)' })
     @ApiResponse({ status: 201, description: 'Image đã được upload' })
     async uploadImage(
         @Req() req: AuthenticatedRequest,
@@ -180,9 +185,10 @@ export class AIController {
     }
 
     @Post('regenerate/:uploadId')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Tạo lại quiz/flashcard từ file' })
+    @ApiOperation({ summary: 'Tạo lại quiz/flashcard từ file (Teacher only)' })
     @ApiParam({ name: 'uploadId', description: 'ID của upload' })
     @ApiResponse({ status: 200, description: 'Regenerate request' })
     async regenerate(
@@ -215,9 +221,10 @@ export class AIController {
     }
 
     @Delete('job/:jobId')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Hủy job đang xử lý' })
+    @ApiOperation({ summary: 'Hủy job đang xử lý (Teacher only)' })
     @ApiParam({ name: 'jobId', description: 'ID của job (userStorageId)' })
     @ApiResponse({ status: 200, description: 'Job đã được hủy' })
     async cancelJob(

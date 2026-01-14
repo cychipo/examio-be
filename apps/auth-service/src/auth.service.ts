@@ -108,8 +108,8 @@ export class AuthService {
         }
     }
 
-    async register(registerDto: RegisterDto) {
-        const { username, email, password } = registerDto;
+    async register(registerDto: RegisterDto, deviceInfo?: DeviceInfo) {
+        const { username, email, password, role } = registerDto;
         if (!username || !email || !password) {
             throw new BadRequestException('Thông tin đăng ký không hợp lệ');
         }
@@ -138,6 +138,7 @@ export class AuthService {
                         username,
                         email,
                         password: hashedPassword,
+                        role: role || 'student', // Default to student if not provided
                     },
                 });
 
@@ -155,11 +156,13 @@ export class AuthService {
                 return user;
             });
 
-            // Publish USER_CREATED event for other services
-            await this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
+            // Publish USER_CREATED event for other services (fire-and-forget to avoid timeout)
+            this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
                 userId: newUser.id,
                 email: newUser.email,
                 username: newUser.username,
+            }).catch(error => {
+                console.error(`Failed to publish USER_CREATED event for user ${newUser.id}:`, error);
             });
 
             // Send welcome email
@@ -174,10 +177,28 @@ export class AuthService {
                 }
             );
 
+            // Auto-login: Generate token and create session
+            const token = this.jwtService.sign({ userId: newUser.id });
+            let sessionId: string | undefined;
+            let refreshToken: string | undefined;
+
+            if (deviceInfo) {
+                const session = await this.createSession(
+                    newUser.id,
+                    deviceInfo
+                );
+                sessionId = session.sessionId;
+                refreshToken = session.refreshToken;
+            }
+
             return {
                 message: 'Đăng ký thành công',
+                token,
                 user: sanitizeUser(newUser),
                 success: true,
+                sessionId,
+                refreshToken,
+                deviceId: deviceInfo?.deviceId,
             };
         } catch (error) {
             if (error instanceof ConflictException) {
@@ -502,11 +523,13 @@ export class AuthService {
                 return user;
             });
 
-            // Publish USER_CREATED event for wallet creation and other services
-            await this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
+            // Publish USER_CREATED event for wallet creation and other services (fire-and-forget to avoid timeout)
+            this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
                 userId: existingUser.id,
                 email: existingUser.email,
                 username: existingUser.username,
+            }).catch(error => {
+                console.error(`Failed to publish USER_CREATED event for user ${existingUser?.id}:`, error);
             });
         }
 

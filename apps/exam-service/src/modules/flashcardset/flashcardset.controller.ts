@@ -27,6 +27,8 @@ import {
     AuthGuard,
     OptionalAuthGuard,
     AuthenticatedRequest,
+    Roles,
+    RolesGuard,
 } from '@examio/common';
 import { FlashcardsetService } from './flashcardset.service';
 import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
@@ -81,10 +83,11 @@ export class FlashcardsetController {
     constructor(private readonly flashcardsetService: FlashcardsetService) {}
 
     @Post()
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Create a new flashcard set' })
+    @ApiOperation({ summary: 'Create a new flashcard set (Teacher only)' })
     @ApiResponse({
         status: 201,
         description: 'Flashcard set created successfully',
@@ -176,10 +179,11 @@ export class FlashcardsetController {
     }
 
     @Put(':id')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Update a flashcard set by ID' })
+    @ApiOperation({ summary: 'Update a flashcard set by ID (Teacher only)' })
     @ApiResponse({
         status: 200,
         description: 'Flashcard set updated successfully',
@@ -241,9 +245,10 @@ export class FlashcardsetController {
     }
 
     @Delete(':id')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Delete a flashcard set by ID' })
+    @ApiOperation({ summary: 'Delete a flashcard set by ID (Teacher only)' })
     @ApiResponse({
         status: 200,
         description: 'Flashcard set deleted successfully',
