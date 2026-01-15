@@ -78,6 +78,7 @@ model QuizSet {
     user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
     detailsQuizQuestions DetailsQuizQuestion[]
     examRooms            ExamRoom[]
+    practiceAttempts     QuizPracticeAttempt[]
     labels               QuizSetLabel[]
 }
 
@@ -234,13 +235,13 @@ model ExamSession {
     whitelist              String[]  @default([]) // List of user IDs who can access
     showAnswersAfterSubmit Boolean   @default(true) // Show detailed answers after submission
     passingScore           Float     @default(0) // Minimum score percentage to pass (0 = no minimum)
-    
+
     // Question selection configuration
     questionCount          Int?      // Total number of questions for this session (null = all questions)
     questionSelectionMode  Int       @default(0) // 0: ALL, 1: RANDOM_TOTAL, 2: RANDOM_BY_LABEL
     labelQuestionConfig    Json?     // Array of { labelId: string, count: number } for RANDOM_BY_LABEL mode
     shuffleQuestions       Boolean   @default(false) // Shuffle question order for each attempt
-    
+
     createdAt              DateTime  @default(now())
     updatedAt              DateTime  @default(now()) @updatedAt
     createdBy              String?
@@ -325,6 +326,42 @@ model HistoryGeneratedFlashcard {
     detailsFlashCards DetailsFlashCard[]
 }
 
+model QuizPracticeAttempt {
+    id              String   @id @default(cuid())
+    quizSetId       String
+    userId          String
+    type            Int      @default(0) // 0: PRACTICE (thi thử), 1: REAL (thi thật)
+    answers         Json     @default("{}") // { questionId: selectedAnswer }
+    currentIndex    Int      @default(0) // Câu hỏi hiện tại
+    markedQuestions String[] @default([]) // Danh sách câu hỏi đánh dấu
+
+    // Thời gian làm bài
+    timeSpentSeconds Int  @default(0) // Thời gian đã làm (giây)
+    timeLimitMinutes Int? // Giới hạn thời gian (phút), null = không giới hạn
+
+    // Trạng thái
+    isSubmitted    Boolean @default(false)
+    score          Float? // Điểm sau khi nộp bài
+    totalQuestions Int     @default(0)
+    correctAnswers Int     @default(0)
+
+    // Timestamps
+    startedAt   DateTime  @default(now())
+    submittedAt DateTime?
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @default(now()) @updatedAt
+    createdBy   String?
+    updatedBy   String?
+
+    quizSet QuizSet @relation(fields: [quizSetId], references: [id], onDelete: Cascade)
+    user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    // Unique constraint: mỗi user chỉ có 1 bản ghi cho mỗi quizSet với mỗi type
+    @@unique([quizSetId, userId, type])
+    @@index([userId])
+    @@index([quizSetId])
+    @@index([userId, updatedAt(sort: Desc)])
+}
 
 model FlashCardViewHistory {
     id             String   @id @default(cuid())
@@ -494,11 +531,12 @@ model User {
     examAttempts              ExamAttempt[]
     historyGeneratedQuizz     HistoryGeneratedQuizz[]
     historyGeneratedFlashcard HistoryGeneratedFlashcard[]
-    flashCardViewHistories    FlashCardViewHistory[]
+    quizPracticeAttempts      QuizPracticeAttempt[]
     aiChats                   AIChat[]
     subscription              UserSubscription?
     sessions                  UserSession[]
     monthlyFileUploads        UserMonthlyFileUpload[]
+    flashCardViewHistories    FlashCardViewHistory[]
 }
 
 // Subscription tiers: 0=none, 1=basic, 2=advanced, 3=vip
