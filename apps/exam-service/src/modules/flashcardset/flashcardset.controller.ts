@@ -27,6 +27,8 @@ import {
     AuthGuard,
     OptionalAuthGuard,
     AuthenticatedRequest,
+    Roles,
+    RolesGuard,
 } from '@examio/common';
 import { FlashcardsetService } from './flashcardset.service';
 import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
@@ -81,10 +83,11 @@ export class FlashcardsetController {
     constructor(private readonly flashcardsetService: FlashcardsetService) {}
 
     @Post()
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Create a new flashcard set' })
+    @ApiOperation({ summary: 'Create a new flashcard set (Teacher only)' })
     @ApiResponse({
         status: 201,
         description: 'Flashcard set created successfully',
@@ -176,10 +179,11 @@ export class FlashcardsetController {
     }
 
     @Put(':id')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Update a flashcard set by ID' })
+    @ApiOperation({ summary: 'Update a flashcard set by ID (Teacher only)' })
     @ApiResponse({
         status: 200,
         description: 'Flashcard set updated successfully',
@@ -241,9 +245,10 @@ export class FlashcardsetController {
     }
 
     @Delete(':id')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Delete a flashcard set by ID' })
+    @ApiOperation({ summary: 'Delete a flashcard set by ID (Teacher only)' })
     @ApiResponse({
         status: 200,
         description: 'Flashcard set deleted successfully',
@@ -256,15 +261,31 @@ export class FlashcardsetController {
         return this.flashcardsetService.deleteFlashcardSet(id, req.user);
     }
 
+    @Post(':id/share')
+    @UseGuards(AuthGuard)
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Generate share link and access code for flashcard set' })
+    @ApiResponse({
+        status: 200,
+        description: 'Share link generated successfully',
+    })
+    async generateShareLink(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string
+    ) {
+        return this.flashcardsetService.generateShareLink(id, req.user);
+    }
+
     @Get('public/:id')
+    @UseGuards(OptionalAuthGuard)
     @ApiOperation({ summary: 'Get a public flashcard set by ID' })
     @ApiResponse({
         status: 200,
         description: 'Public flashcard set retrieved successfully',
         type: FlashCardSetDto,
     })
-    async getPublicFlashcardSetById(@Param('id') id: string) {
-        return this.flashcardsetService.getFlashcardSetPublicById(id);
+    async getPublicFlashcardSetById(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+        return this.flashcardsetService.getFlashcardSetPublicById(id, req.user?.id);
     }
 
     @Post('set-flashcards-to-flashcardset')
@@ -588,6 +609,7 @@ export class FlashcardsetController {
     }
 
     @Post('study/:id/with-code')
+    @UseGuards(OptionalAuthGuard)
     @ApiOperation({ summary: 'Get flashcard set using access code' })
     @ApiParam({ name: 'id', description: 'Flashcard set ID' })
     @ApiResponse({
@@ -597,11 +619,13 @@ export class FlashcardsetController {
     })
     async getWithCode(
         @Param('id') id: string,
-        @Body() dto: FlashcardSetVerifyAccessCodeDto
+        @Body() dto: FlashcardSetVerifyAccessCodeDto,
+        @Req() req: AuthenticatedRequest
     ) {
         return this.flashcardsetService.getFlashcardSetWithCode(
             id,
-            dto.accessCode
+            dto.accessCode,
+            req.user?.id
         );
     }
 

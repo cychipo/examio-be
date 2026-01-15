@@ -15,6 +15,9 @@ export const RegisterSchema = z.object({
         .string()
         .min(6, { message: 'Password must be at least 6 characters long' })
         .max(100, { message: 'Password must not exceed 100 characters' }),
+    role: z
+        .enum(['teacher', 'student'])
+        .default('student'),
 });
 
 export class RegisterDto extends createZodDto(RegisterSchema) {
@@ -35,4 +38,12 @@ export class RegisterDto extends createZodDto(RegisterSchema) {
         example: 'password123',
     })
     password: string;
+
+    @ApiProperty({
+        description: 'Role of the user',
+        example: 'student',
+        enum: ['teacher', 'student'],
+        default: 'student',
+    })
+    role: string;
 }

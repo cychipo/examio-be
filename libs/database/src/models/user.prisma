@@ -6,6 +6,7 @@ model User {
     avatar     String?
     banner     String?
     bio        String?
+    role       String   @default("student") // teacher | student
     isAdmin    Boolean  @default(false)
     isVerified Boolean  @default(false)
     password   String?

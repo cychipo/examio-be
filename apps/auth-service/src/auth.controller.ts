@@ -62,8 +62,35 @@ export class AuthController {
         description: 'User registered successfully',
         type: RegisterResponseDto,
     })
-    async register(@Body() registerDto: RegisterDto) {
-        return this.authService.register(registerDto);
+    async register(
+        @Body() registerDto: RegisterDto,
+        @Res({ passthrough: true }) res: ExpressResponse,
+        @Req() request: Request
+    ) {
+        // Extract device info from request
+        const deviceInfo = this.extractDeviceInfo(request);
+
+        const { token, user, success, sessionId, deviceId, message } =
+            await this.authService.register(registerDto, deviceInfo);
+
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
+
+        // Set cookies like login does
+        res.cookie('token', token, cookieConfig);
+        if (sessionId) {
+            res.cookie('session_id', sessionId, cookieConfig);
+        }
+
+        return {
+            message,
+            user,
+            success,
+            token,
+            deviceId,
+        };
     }
 
     @Post('login')

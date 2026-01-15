@@ -12,7 +12,6 @@ import { ExamServiceService } from './exam-service.service';
 
 // Import sub-modules
 import { QuizsetModule } from './modules/quizset/quizset.module';
-import { QuizPracticeAttemptModule } from './modules/quizpracticeattempt/quiz-practice-attempt.module';
 import { ExamRoomModule } from './modules/examroom/examroom.module';
 import { ExamSessionModule } from './modules/examsession/examsession.module';
 import { ExamAttemptModule } from './modules/examattempt/examattempt.module';
@@ -23,6 +22,8 @@ import { AIModule } from './modules/ai/ai.module';
 import { AIChatModule } from './modules/ai-chat/ai-chat.module';
 import { FinanceClientModule } from './modules/finance-client/finance-client.module';
 import { R2Module } from './modules/r2/r2.module';
+import { StatisticsModule } from './modules/statistics/statistics.module';
+import { StudentModule } from './modules/student/student.module';
 
 @Module({
     imports: [
@@ -32,7 +33,6 @@ import { R2Module } from './modules/r2/r2.module';
         GrpcClientsModule.registerR2Client(),
         FinanceClientModule,
         QuizsetModule,
-        QuizPracticeAttemptModule,
         ExamRoomModule,
         ExamSessionModule,
         ExamAttemptModule,
@@ -42,6 +42,8 @@ import { R2Module } from './modules/r2/r2.module';
         AIModule,
         AIChatModule,
         R2Module,
+        StatisticsModule,
+        StudentModule,
     ],
     controllers: [ExamServiceController],
     providers: [

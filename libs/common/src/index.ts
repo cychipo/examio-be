@@ -16,6 +16,8 @@ export * from './guard/optional-auth.guard';
 export * from './guard/google-auth.guard';
 export * from './guard/facebook-auth.guard';
 export * from './guard/github-auth.guard';
+export * from './guard/roles.guard';
+export * from './guard/roles.decorator';
 
 // Auth Module (includes JwtModule + Guards)
 export * from './auth/auth.module';

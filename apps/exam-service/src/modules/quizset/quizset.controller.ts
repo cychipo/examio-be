@@ -22,7 +22,7 @@ import {
     ApiCookieAuth,
     ApiParam,
 } from '@nestjs/swagger';
-import { AuthGuard, AuthenticatedRequest } from '@examio/common';
+import { AuthGuard, AuthenticatedRequest, Roles, RolesGuard } from '@examio/common';
 import { QuizsetService } from './quizset.service';
 import { CreateQuizsetDto } from './dto/create-quizset.dto';
 import { UpdateQuizSetDto } from './dto/update-quizset.dto';
@@ -68,10 +68,11 @@ export class QuizsetController {
     constructor(private readonly quizsetService: QuizsetService) {}
 
     @Post()
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Create a new quiz set' })
+    @ApiOperation({ summary: 'Create a new quiz set (Teacher only)' })
     @ApiResponse({
         status: 201,
         description: 'Quiz set created successfully',
@@ -162,10 +163,11 @@ export class QuizsetController {
     }
 
     @Put(':id')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @UseInterceptors(FileInterceptor('thumbnail'))
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Update a quiz set by ID' })
+    @ApiOperation({ summary: 'Update a quiz set by ID (Teacher only)' })
     @ApiResponse({
         status: 200,
         description: 'Quiz set updated successfully',
@@ -238,9 +240,10 @@ export class QuizsetController {
     }
 
     @Delete(':id')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Delete a quiz set by ID' })
+    @ApiOperation({ summary: 'Delete a quiz set by ID (Teacher only)' })
     @ApiResponse({
         status: 200,
         description: 'Quiz set deleted successfully',
@@ -299,9 +302,10 @@ export class QuizsetController {
     // ==================== QUESTION CRUD ENDPOINTS ====================
 
     @Post(':quizSetId/questions')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Add a question to a quiz set' })
+    @ApiOperation({ summary: 'Add a question to a quiz set (Teacher only)' })
     @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
     @ApiResponse({
         status: 201,
@@ -321,9 +325,10 @@ export class QuizsetController {
     }
 
     @Put(':quizSetId/questions/:questionId')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Update a question in a quiz set' })
+    @ApiOperation({ summary: 'Update a question in a quiz set (Teacher only)' })
     @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
     @ApiParam({ name: 'questionId', description: 'Question ID' })
     @ApiResponse({
@@ -346,9 +351,10 @@ export class QuizsetController {
     }
 
     @Delete(':quizSetId/questions/:questionId')
-    @UseGuards(AuthGuard)
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
     @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Delete a question from a quiz set' })
+    @ApiOperation({ summary: 'Delete a question from a quiz set (Teacher only)' })
     @ApiParam({ name: 'quizSetId', description: 'Quiz set ID' })
     @ApiParam({ name: 'questionId', description: 'Question ID' })
     @ApiResponse({

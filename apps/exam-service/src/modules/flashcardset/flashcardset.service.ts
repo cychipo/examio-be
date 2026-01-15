@@ -209,6 +209,17 @@ export class FlashcardsetService {
             },
         });
 
+        // Track usage if first page is accessed
+        if (pageNum === 1 && user.id) {
+            await this.prisma.flashCardViewHistory.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    userId: user.id,
+                    flashCardSetId: id,
+                },
+            }).catch(() => {});
+        }
+
         const flashCards = detailsFlashCards.map((detail) => detail.flashCard);
 
         return {
@@ -243,7 +254,7 @@ export class FlashcardsetService {
         return { message: 'Xóa bộ thẻ ghi nhớ thành công' };
     }
 
-    async getFlashcardSetPublicById(id: string) {
+    async getFlashcardSetPublicById(id: string, userId?: string) {
         const flashcardSet = await this.flashcardSetRepository.findOne({
             where: { id, isPublic: true },
             include: {
@@ -258,6 +269,17 @@ export class FlashcardsetService {
 
         if (!flashcardSet) {
             throw new NotFoundException('Bộ thẻ ghi nhớ không tồn tại');
+        }
+
+        // Track usage if userId is provided
+        if (userId) {
+            await this.prisma.flashCardViewHistory.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    userId: userId,
+                    flashCardSetId: id,
+                },
+            }).catch(() => {});
         }
 
         // Transform để trả về flashCards như cũ và map 'tag' to 'tags'
@@ -1111,6 +1133,17 @@ export class FlashcardsetService {
             },
         });
 
+        // Record view history if userId is provided
+        if (userId) {
+            await this.prisma.flashCardViewHistory.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    userId: userId,
+                    flashCardSetId: id,
+                },
+            }).catch(err => console.error('Failed to record flashcard view history:', err));
+        }
+
         const { detailsFlashCard, user, _count, ...flashcardSetData } =
             flashcardSet;
 
@@ -1125,7 +1158,7 @@ export class FlashcardsetService {
     /**
      * Get flashcard set after code verification
      */
-    async getFlashcardSetWithCode(id: string, accessCode: string) {
+    async getFlashcardSetWithCode(id: string, accessCode: string, userId?: string) {
         // Verify code first
         await this.verifyAccessCode(id, accessCode);
 
@@ -1152,6 +1185,17 @@ export class FlashcardsetService {
                 },
             },
         });
+
+        // Record view history if userId is provided
+        if (userId) {
+            await this.prisma.flashCardViewHistory.create({
+                data: {
+                    id: this.generateIdService.generateId(),
+                    userId: userId,
+                    flashCardSetId: id,
+                },
+            }).catch(err => console.error('Failed to record flashcard view history:', err));
+        }
 
         const { detailsFlashCard, user, _count, ...flashcardSetData } =
             flashcardSet;
@@ -1625,6 +1669,41 @@ export class FlashcardsetService {
                 total,
                 totalPages: Math.ceil(total / limit),
             },
+        };
+    }
+
+    async generateShareLink(flashcardSetId: string, user: any) {
+        // Verify ownership or access
+        const flashcardSet = await this.prisma.flashCardSet.findUnique({
+            where: { id: flashcardSetId },
+        });
+
+        if (!flashcardSet) {
+            throw new NotFoundException('Bộ flashcard không tồn tại');
+        }
+
+        // Only owner can generate share link for private sets
+        if (!flashcardSet.isPublic && flashcardSet.userId !== user.id) {
+            throw new ForbiddenException('Bạn không có quyền chia sẻ bộ flashcard này');
+        }
+
+        // Generate 6-digit access code if not exists
+        let accessCode = flashcardSet.accessCode;
+        if (!accessCode) {
+            accessCode = this.generateIdService.generate6DigitCode();
+            await this.prisma.flashCardSet.update({
+                where: { id: flashcardSetId },
+                data: { accessCode },
+            });
+        }
+
+        // Generate share URL
+        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const shareUrl = `${baseUrl}/k/manage-flashcard-set/${flashcardSetId}?code=${accessCode}`;
+
+        return {
+            shareUrl,
+            accessCode,
         };
     }
 }

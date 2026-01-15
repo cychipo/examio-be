@@ -2,6 +2,7 @@ import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { HttpModule } from '@nestjs/axios';
+import { AuthModule } from '@examio/common';
 
 import { GatewayController } from './gateway.controller';
 import { ProxyMiddleware } from './middleware/proxy.middleware';
@@ -40,9 +41,12 @@ import { R2ProxyController } from './controllers/r2-proxy.controller';
 
 // Webhook (external callbacks)
 import { WebhookProxyController } from './controllers/webhook-proxy.controller';
+import { StatisticsProxyController } from './controllers/statistics-proxy.controller';
+import { StudentProxyController } from './controllers/student-proxy.controller';
 
 @Module({
     imports: [
+        AuthModule,
         // Rate limiting: 100 requests per minute
         ThrottlerModule.forRoot([
             {
@@ -81,6 +85,10 @@ import { WebhookProxyController } from './controllers/webhook-proxy.controller';
         R2ProxyController,
         // Webhook (external callbacks)
         WebhookProxyController,
+        // Statistics
+        StatisticsProxyController,
+        // Student
+        StudentProxyController,
     ],
     providers: [
         {

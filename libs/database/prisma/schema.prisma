@@ -73,7 +73,6 @@ model QuizSet {
   user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   detailsQuizQuestions DetailsQuizQuestion[]
   examRooms            ExamRoom[]
-  practiceAttempts     QuizPracticeAttempt[]
   labels               QuizSetLabel[]
 }
 
@@ -197,6 +196,7 @@ model ExamSession {
   status                 Int       @default(0) // 0: UPCOMING, 1: ONGOING, 2: ENDED
   startTime              DateTime
   endTime                DateTime?
+  timeLimitMinutes       Int? // Giới hạn thời gian (phút), null = không giới hạn
   autoJoinByLink         Boolean   @default(false)
   // Security and access control fields (moved from ExamRoom)
   assessType             Int       @default(0) // 0: PUBLIC, 1: PRIVATE
@@ -318,10 +318,6 @@ model QuizPracticeAttempt {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Unique constraint: mỗi user chỉ có 1 bản ghi cho mỗi quizSet với mỗi type
-  @@unique([quizSetId, userId, type])
-  @@index([userId])
-  @@index([quizSetId])
-  @@index([userId, updatedAt(sort: Desc)])
 }
 
 model Payment {
@@ -432,7 +428,6 @@ model User {
   examAttempts              ExamAttempt[]
   historyGeneratedQuizz     HistoryGeneratedQuizz[]
   historyGeneratedFlashcard HistoryGeneratedFlashcard[]
-  quizPracticeAttempts      QuizPracticeAttempt[]
   aiChats                   AIChat[]
   subscription              UserSubscription?
   sessions                  UserSession[]
