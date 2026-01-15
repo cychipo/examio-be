@@ -10,7 +10,6 @@ import {
 } from '@examio/common';
 import { RedisService } from '@examio/redis';
 import { QuizSetRepository } from './quizset.repository';
-import { QuizPracticeAttemptRepository } from '../quizpracticeattempt/quiz-practice-attempt.repository';
 
 @Module({
     imports: [AuthModule, GrpcClientsModule.registerR2Client()],
@@ -21,7 +20,6 @@ import { QuizPracticeAttemptRepository } from '../quizpracticeattempt/quiz-pract
         GenerateIdService,
         R2ClientService,
         QuizSetRepository,
-        QuizPracticeAttemptRepository,
     ],
     controllers: [QuizsetController],
     exports: [QuizsetService, QuizSetRepository],

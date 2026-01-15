@@ -12,7 +12,6 @@ import { ExamServiceService } from './exam-service.service';
 
 // Import sub-modules
 import { QuizsetModule } from './modules/quizset/quizset.module';
-import { QuizPracticeAttemptModule } from './modules/quizpracticeattempt/quiz-practice-attempt.module';
 import { ExamRoomModule } from './modules/examroom/examroom.module';
 import { ExamSessionModule } from './modules/examsession/examsession.module';
 import { ExamAttemptModule } from './modules/examattempt/examattempt.module';
@@ -34,7 +33,6 @@ import { StudentModule } from './modules/student/student.module';
         GrpcClientsModule.registerR2Client(),
         FinanceClientModule,
         QuizsetModule,
-        QuizPracticeAttemptModule,
         ExamRoomModule,
         ExamSessionModule,
         ExamAttemptModule,

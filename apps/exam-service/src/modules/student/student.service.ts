@@ -87,30 +87,9 @@ export class StudentService {
             take: limit,
         });
 
-        // Get practice attempts
-        const practiceAttempts = await this.prisma.quizPracticeAttempt.findMany({
-            where: {
-                userId,
-            },
-            include: {
-                quizSet: {
-                    select: {
-                        id: true,
-                        title: true,
-                        description: true,
-                        thumbnail: true,
-                    },
-                },
-            },
-            orderBy: {
-                createdAt: 'desc',
-            },
-            take: limit,
-        });
-
         const formattedExamAttempts = examAttempts.map((attempt) => {
             const timeLimitMinutes = attempt.examSession.timeLimitMinutes;
-            let timeRemaining = null;
+            let timeRemaining: number | null = null;
 
             if (attempt.status === 0 && timeLimitMinutes) {
                 // IN_PROGRESS
@@ -142,25 +121,9 @@ export class StudentService {
             };
         });
 
-        const formattedPracticeAttempts = practiceAttempts.map((attempt) => ({
-            id: attempt.id,
-            quizSetId: attempt.quizSetId,
-            type: attempt.type,
-            isSubmitted: attempt.isSubmitted,
-            score: attempt.score,
-            totalQuestions: attempt.totalQuestions,
-            correctAnswers: attempt.correctAnswers,
-            timeSpentSeconds: attempt.timeSpentSeconds,
-            timeLimitMinutes: attempt.timeLimitMinutes,
-            startedAt: attempt.createdAt.toISOString(),
-            submittedAt: attempt.submittedAt?.toISOString() || null,
-            quizSet: attempt.quizSet,
-        }));
-
         return {
             examAttempts: formattedExamAttempts,
-            practiceAttempts: formattedPracticeAttempts,
-            total: formattedExamAttempts.length + formattedPracticeAttempts.length,
+            total: formattedExamAttempts.length,
         };
     }
 }

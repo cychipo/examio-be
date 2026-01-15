@@ -15,7 +15,7 @@ model QuizSet {
     user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
     detailsQuizQuestions DetailsQuizQuestion[]
     examRooms            ExamRoom[]
-    practiceAttempts     QuizPracticeAttempt[]
+    labels               QuizSetLabel[]
 }
 
 model FlashCardSet {
@@ -37,8 +37,7 @@ model FlashCardSet {
 
     user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
     detailsFlashCard DetailsFlashCard[]
-
-    @@index([accessCode])
+    viewHistories    FlashCardViewHistory[]
 }
 
 model QuizQuestion {
@@ -117,6 +116,7 @@ model ExamSession {
     status                 Int       @default(0) // 0: UPCOMING, 1: ONGOING, 2: ENDED
     startTime              DateTime
     endTime                DateTime?
+    timeLimitMinutes       Int? // Giới hạn thời gian (phút), null = không giới hạn
     autoJoinByLink         Boolean   @default(false)
     // Security and access control fields (moved from ExamRoom)
     assessType             Int       @default(0) // 0: PUBLIC, 1: PRIVATE
@@ -207,6 +207,25 @@ model HistoryGeneratedFlashcard {
     detailsFlashCards DetailsFlashCard[]
 }
 
+
+model FlashCardViewHistory {
+    id             String   @id @default(cuid())
+    userId         String
+    flashCardSetId String
+    viewedAt       DateTime @default(now())
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @default(now()) @updatedAt
+
+    user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+    flashCardSet FlashCardSet @relation(fields: [flashCardSetId], references: [id], onDelete: Cascade)
+
+    @@index([userId, viewedAt])
+    @@index([flashCardSetId])
+}
+
+
+model Payment {
+
 model QuizPracticeAttempt {
     id              String   @id @default(cuid())
     quizSetId       String
@@ -238,8 +257,5 @@ model QuizPracticeAttempt {
     user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     // Unique constraint: mỗi user chỉ có 1 bản ghi cho mỗi quizSet với mỗi type
-    @@unique([quizSetId, userId, type])
-    @@index([userId])
-    @@index([quizSetId])
-    @@index([userId, updatedAt(sort: Desc)])
 }
+

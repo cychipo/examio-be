@@ -314,10 +314,22 @@ export class ExamAttemptService {
         }
 
         // Calculate score
-        const questions =
-            attempt.examSession.examRoom.quizSet.detailsQuizQuestions
+        // Get all questions map for efficient lookup
+        const allQuestionsMap = new Map(
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(d => [d.id, d.quizQuestion])
+        );
+
+        // Filter questions based on selectedQuestionIds
+        let questions: any[] = [];
+        if (attempt.selectedQuestionIds && attempt.selectedQuestionIds.length > 0) {
+            questions = attempt.selectedQuestionIds
+                .map(id => allQuestionsMap.get(id))
+                .filter(q => q != null);
+        } else {
+            questions = attempt.examSession.examRoom.quizSet.detailsQuizQuestions
                 ?.map((d) => d.quizQuestion)
                 .filter((q) => q != null) || [];
+        }
 
         const answers = attempt.answers as Record<string, string>;
         let correctCount = 0;
@@ -1107,6 +1119,18 @@ export class ExamAttemptService {
             throw new ForbiddenException('Bạn không có quyền xem bài làm này');
         }
 
+        // Filter questions based on selectedQuestionIds if available
+        const attemptData = examAttempt as any;
+        if (attemptData.selectedQuestionIds && attemptData.selectedQuestionIds.length > 0) {
+            const allQuestionsMap = new Map(
+                attemptData.examSession.examRoom.quizSet.detailsQuizQuestions.map((d: any) => [d.id, d])
+            );
+            
+            attemptData.examSession.examRoom.quizSet.detailsQuizQuestions = attemptData.selectedQuestionIds
+                .map((id: string) => allQuestionsMap.get(id))
+                .filter((d: any) => d !== undefined);
+        }
+
         return examAttempt;
     }
 
@@ -1328,6 +1352,16 @@ export class ExamAttemptService {
      * Optimized with COUNT queries (O(1) with indexed fields) and Redis caching
      */
     async getHistoryStats(user: User) {
+        // Only return stats for teachers
+        if (user.role !== 'teacher') {
+            return {
+                totalPDFs: 0,
+                examsCreated: 0,
+                flashcardSets: 0,
+                totalStudyHours: 0,
+            };
+        }
+
         const cacheKey = getUserCacheKey('QUIZ_STATS', user.id) + ':history';
 
         // Check cache first
@@ -1546,11 +1580,25 @@ export class ExamAttemptService {
         }
 
         // Build question map for lookup
+        // Get all questions from the quiz set
+        const allQuestionsMap = new Map(
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(d => [d.id, d])
+        );
+
+        // Filter questions based on selectedQuestionIds if available
+        let filteredQuestionDetails = attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
+        if (attempt.selectedQuestionIds && attempt.selectedQuestionIds.length > 0) {
+            // Maintain the order of selectedQuestionIds
+            filteredQuestionDetails = attempt.selectedQuestionIds
+                .map(id => allQuestionsMap.get(id))
+                .filter((d): d is typeof filteredQuestionDetails[0] => d !== undefined);
+        }
+
         const questionMap = new Map<
             string,
             { id: string; answer: string; index: number }
         >();
-        attempt.examSession.examRoom.quizSet.detailsQuizQuestions.forEach(
+        filteredQuestionDetails.forEach(
             (d, index) => {
                 questionMap.set(d.quizQuestion.id, {
                     id: d.quizQuestion.id,
@@ -1655,7 +1703,7 @@ export class ExamAttemptService {
             // Only include answers if allowed
             if (showAnswers) {
                 response.questions =
-                    attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                    filteredQuestionDetails.map(
                         (d) => ({
                             id: d.quizQuestion.id,
                             question: d.quizQuestion.question,

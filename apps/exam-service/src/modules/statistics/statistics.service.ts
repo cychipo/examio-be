@@ -12,7 +12,7 @@ export class StatisticsService {
     ) {}
 
     async getTeacherDashboardStats(user: User, range: '7d' | '30d' = '7d') {
-        const cacheKey = `statistics:teacher:${user.id}:${range}`;
+        const cacheKey = `statistics:v2:teacher:${user.id}:${range}`;
         
         // Try to get from cache
         const cachedData = await this.redisService.get(cacheKey);
@@ -65,7 +65,7 @@ export class StatisticsService {
                 updatedAt: now.toISOString(),
             };
 
-            // Cache for 1 minute instead of 10 during debug/initial phase
+            // Cache for 1 minute during verification phase
             await this.redisService.set(cacheKey, result, 60); 
 
             return result;
@@ -110,40 +110,47 @@ export class StatisticsService {
 
     private async getActivityStats(userId: string, intervalDays: Date[], startDate: Date, endDate: Date) {
         // Exam attempts in rooms hosted by this teacher
-        const examAttempts = await this.prisma.examAttempt.findMany({
-            where: {
-                examSession: {
-                    examRoom: {
-                        hostId: userId,
+        const [examAttempts, flashcardViews] = await Promise.all([
+            this.prisma.examAttempt.findMany({
+                where: {
+                    examSession: {
+                        examRoom: {
+                            hostId: userId,
+                        },
+                    },
+                    createdAt: {
+                        gte: startDate,
+                        lte: endDate,
                     },
                 },
-                createdAt: {
-                    gte: startDate,
-                    lte: endDate,
+                select: { createdAt: true },
+            }),
+            this.prisma.flashCardViewHistory.findMany({
+                where: {
+                    flashCardSet: {
+                        userId: userId,
+                    },
+                    viewedAt: {
+                        gte: startDate,
+                        lte: endDate,
+                    },
                 },
-            },
-            select: { createdAt: true },
-        });
-
-        const practiceAttempts = await this.prisma.quizPracticeAttempt.findMany({
-            where: {
-                quizSet: {
-                    userId: userId
-                },
-                createdAt: {
-                    gte: startDate,
-                    lte: endDate,
-                }
-            },
-            select: { createdAt: true }
-        });
+                select: { viewedAt: true },
+            }),
+        ]);
 
         return intervalDays.map(day => {
             const dayStr = format(day, 'dd/MM');
             return {
                 day: dayStr,
-                examAttempts: examAttempts.filter(a => format(a.createdAt, 'dd/MM') === dayStr).length,
-                practiceAttempts: practiceAttempts.filter(a => format(a.createdAt, 'dd/MM') === dayStr).length,
+                examAttempts: examAttempts.filter(a => {
+                    const createdAt = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+                    return format(createdAt, 'dd/MM') === dayStr;
+                }).length,
+                flashcardViews: flashcardViews.filter(v => {
+                    const viewedAt = v.viewedAt instanceof Date ? v.viewedAt : new Date(v.viewedAt);
+                    return format(viewedAt, 'dd/MM') === dayStr;
+                }).length,
             };
         });
     }
@@ -244,7 +251,7 @@ export class StatisticsService {
     }
 
     async getStudentDashboardStats(user: User, range: '7d' | '30d' = '7d') {
-        const cacheKey = `statistics:student:${user.id}:${range}`;
+        const cacheKey = `statistics:v2:student:${user.id}:${range}`;
 
         // Try to get from cache
         const cachedData = await this.redisService.get(cacheKey);
@@ -289,8 +296,8 @@ export class StatisticsService {
                 updatedAt: now.toISOString(),
             };
 
-            // Cache for 10 minutes
-            await this.redisService.set(cacheKey, result, 600);
+            // Cache for 1 minute during verification phase
+            await this.redisService.set(cacheKey, result, 60);
 
             return result;
         } catch (error) {
@@ -312,58 +319,58 @@ export class StatisticsService {
             select: { createdAt: true },
         });
 
-        // Get practice attempts
-        const practiceAttempts = await this.prisma.quizPracticeAttempt.findMany({
-            where: {
-                userId,
-                createdAt: {
-                    gte: startDate,
-                    lte: endDate,
-                },
-            },
-            select: { createdAt: true },
-        });
-
         return intervalDays.map(day => {
             const dayStr = format(day, 'dd/MM');
             return {
                 day: dayStr,
-                examAttempts: examAttempts.filter(a => format(a.createdAt, 'dd/MM') === dayStr).length,
-                practiceAttempts: practiceAttempts.filter(a => format(a.createdAt, 'dd/MM') === dayStr).length,
+                examAttempts: examAttempts.filter(a => {
+                    const createdAt = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+                    return format(createdAt, 'dd/MM') === dayStr;
+                }).length,
             };
         });
     }
 
     private async getStudentFlashcardStats(userId: string, intervalDays: Date[], startDate: Date, endDate: Date) {
-        // Since we don't have a FlashCardPracticeAttempt table,
-        // we'll use FlashCardSet viewCount increments as a proxy
-        // For now, we'll create a simplified version based on the data we have
+        // Get flashcard view history and generation history for this user
+        const [viewHistories, generationHistory] = await Promise.all([
+            this.prisma.flashCardViewHistory.findMany({
+                where: {
+                    userId,
+                    viewedAt: {
+                        gte: startDate,
+                        lte: endDate,
+                    },
+                },
+                select: { viewedAt: true },
+            }),
+            this.prisma.historyGeneratedFlashcard.findMany({
+                where: {
+                    userId,
+                    createdAt: {
+                        gte: startDate,
+                        lte: endDate,
+                    },
+                },
+                select: { createdAt: true },
+            }),
+        ]);
 
-        // We can track flashcard views by checking when user accessed flashcard sets
-        // If there's no tracking table, we'll return estimated data based on available info
-        // This is a placeholder - in production, you'd want to implement proper tracking
-
-        const flashcardSets = await this.prisma.flashCardSet.findMany({
-            where: {
-                userId: { not: userId }, // Sets created by others that this user might have viewed
-                isPublic: true,
-            },
-            select: {
-                id: true,
-                viewCount: true,
-                updatedAt: true,
-            },
-        });
-
-        // For now, return daily counts based on interval
-        // This is simplified - ideally you'd have a FlashCardViewHistory table
         return intervalDays.map(day => {
             const dayStr = format(day, 'dd/MM');
-            // Placeholder: distribute views evenly or return 0
-            // In production, implement proper view tracking
+            const views = viewHistories.filter(v => {
+                const viewedAt = v.viewedAt instanceof Date ? v.viewedAt : new Date(v.viewedAt);
+                return format(viewedAt, 'dd/MM') === dayStr;
+            }).length;
+            
+            const gens = generationHistory.filter(g => {
+                const createdAt = g.createdAt instanceof Date ? g.createdAt : new Date(g.createdAt);
+                return format(createdAt, 'dd/MM') === dayStr;
+            }).length;
+
             return {
                 day: dayStr,
-                viewCount: 0, // TODO: Implement proper flashcard view tracking
+                viewCount: views + gens,
             };
         });
     }
@@ -387,35 +394,13 @@ export class StatisticsService {
             },
         });
 
-        // Also get practice attempts
-        const recentPractice = await this.prisma.quizPracticeAttempt.findMany({
-            where: {
-                userId,
-                isSubmitted: true,
-            },
-            orderBy: {
-                updatedAt: 'desc',
-            },
-            take: limit,
-            select: {
-                score: true,
-                updatedAt: true,
-            },
-        });
-
         // Combine and sort by date
         const combined = [
             ...recentAttempts
                 .filter(a => a.score !== null && a.finishedAt !== null)
                 .map(a => ({
                     score: a.score,
-                    date: a.finishedAt,
-                })),
-            ...recentPractice
-                .filter(a => a.score !== null)
-                .map(a => ({
-                    score: a.score || 0,
-                    date: a.updatedAt,
+                    date: a.finishedAt!,
                 })),
         ].sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, limit);
 
@@ -427,7 +412,7 @@ export class StatisticsService {
 
     private async getStudentSummaryTotals(userId: string, startDate: Date, endDate: Date) {
         // Get counts for the selected range
-        const [examCount, practiceCount] = await Promise.all([
+        const [examCount, flashcardCount, generationCount] = await Promise.all([
             this.prisma.examAttempt.count({
                 where: {
                     userId,
@@ -437,7 +422,16 @@ export class StatisticsService {
                     },
                 },
             }),
-            this.prisma.quizPracticeAttempt.count({
+            this.prisma.flashCardViewHistory.count({
+                where: {
+                    userId,
+                    viewedAt: {
+                        gte: startDate,
+                        lte: endDate,
+                    },
+                },
+            }),
+            this.prisma.historyGeneratedFlashcard.count({
                 where: {
                     userId,
                     createdAt: {
@@ -461,34 +455,17 @@ export class StatisticsService {
             select: { score: true },
         });
 
-        const completedPractice = await this.prisma.quizPracticeAttempt.findMany({
-            where: {
-                userId,
-                isSubmitted: true,
-                createdAt: {
-                    gte: startDate,
-                    lte: endDate,
-                },
-            },
-            select: { score: true },
-        });
-
         const allScores = [
             ...completedExams.map(e => e.score),
-            ...completedPractice.map(p => p.score || 0),
         ].filter(score => score !== null && score !== undefined);
 
         const averageScore = allScores.length > 0
             ? allScores.reduce((sum, score) => sum + score, 0) / allScores.length
             : 0;
 
-        // For flashcard views, return 0 for now until proper tracking is implemented
-        const flashcardViews = 0;
-
         return {
             totalExamAttempts: examCount,
-            totalPracticeAttempts: practiceCount,
-            totalFlashcardViews: flashcardViews,
+            totalFlashcardViews: flashcardCount + generationCount,
             averageScore: Math.round(averageScore * 10) / 10,
         };
     }

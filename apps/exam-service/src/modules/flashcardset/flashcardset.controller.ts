@@ -277,14 +277,15 @@ export class FlashcardsetController {
     }
 
     @Get('public/:id')
+    @UseGuards(OptionalAuthGuard)
     @ApiOperation({ summary: 'Get a public flashcard set by ID' })
     @ApiResponse({
         status: 200,
         description: 'Public flashcard set retrieved successfully',
         type: FlashCardSetDto,
     })
-    async getPublicFlashcardSetById(@Param('id') id: string) {
-        return this.flashcardsetService.getFlashcardSetPublicById(id);
+    async getPublicFlashcardSetById(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+        return this.flashcardsetService.getFlashcardSetPublicById(id, req.user?.id);
     }
 
     @Post('set-flashcards-to-flashcardset')
@@ -608,6 +609,7 @@ export class FlashcardsetController {
     }
 
     @Post('study/:id/with-code')
+    @UseGuards(OptionalAuthGuard)
     @ApiOperation({ summary: 'Get flashcard set using access code' })
     @ApiParam({ name: 'id', description: 'Flashcard set ID' })
     @ApiResponse({
@@ -617,11 +619,13 @@ export class FlashcardsetController {
     })
     async getWithCode(
         @Param('id') id: string,
-        @Body() dto: FlashcardSetVerifyAccessCodeDto
+        @Body() dto: FlashcardSetVerifyAccessCodeDto,
+        @Req() req: AuthenticatedRequest
     ) {
         return this.flashcardsetService.getFlashcardSetWithCode(
             id,
-            dto.accessCode
+            dto.accessCode,
+            req.user?.id
         );
     }
 

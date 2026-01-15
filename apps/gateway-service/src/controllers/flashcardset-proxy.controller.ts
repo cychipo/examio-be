@@ -333,6 +333,20 @@ export class FlashcardsetProxyController {
         );
     }
 
+    @Post(':id/share')
+    @ApiOperation({ summary: 'Tạo link chia sẻ và mã truy cập' })
+    async generateShareLink(@Param('id') id: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/flashcardsets/${id}/share`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     @Post('set-flashcards-to-flashcardset')
     @ApiOperation({ summary: 'Thêm flashcards vào sets' })
     async setFlashcards(@Body() body: any, @Req() req: Request) {
