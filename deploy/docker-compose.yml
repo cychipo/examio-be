@@ -2,8 +2,14 @@
 # =============================================================================
 # Usage:
 #   1. Copy this file to docker-compose.yml at project root on your VPS
-#   2. Create .env file with required environment variables
+#   2. Create .env file with required environment variables (see .env.example)
 #   3. docker compose build && docker compose up -d
+#
+# This configuration includes:
+#   - PostgreSQL database (containerized)
+#   - Redis cache (containerized)
+#   - RabbitMQ message queue (containerized)
+#   - All microservices (gateway, auth, exam, finance, r2, ai)
 # =============================================================================
 
 # Shared logging configuration
@@ -40,10 +46,17 @@ services:
       - FINANCE_SERVICE_URL=http://finance:7003
       - AI_SERVICE_URL=http://ai:7005/api
       - DATABASE_URL=${DATABASE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - AUTH_GRPC_URL=auth:50051
     env_file:
       - .env
     depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       auth:
         condition: service_healthy
       exam:
@@ -71,12 +84,19 @@ services:
       - NODE_ENV=production
       - PORT=7001
       - DATABASE_URL=${DATABASE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - GRPC_PORT=50051
       - WALLET_GRPC_URL=finance:50053
       - R2_GRPC_URL=r2:50054
     env_file:
       - .env
     depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       finance:
         condition: service_healthy
       r2:
@@ -106,11 +126,18 @@ services:
       - R2_SERVICE_URL=r2:7004
       - RABBITMQ_URL=${RABBITMQ_URL}
       - DATABASE_URL=${DATABASE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - R2_GRPC_URL=r2:50054
       - FINANCE_SERVICE_GRPC_URL=finance:50053
     env_file:
       - .env
     depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       r2:
@@ -138,9 +165,17 @@ services:
       - NODE_ENV=production
       - PORT=7003
       - DATABASE_URL=${DATABASE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - GRPC_PORT=50053
     env_file:
       - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - examio-network
     healthcheck:
@@ -183,11 +218,18 @@ services:
       - PORT=7005
       - RABBITMQ_URL=${RABBITMQ_URL}
       - DATABASE_URL=${DATABASE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - GEMINI_API_KEYS=${GEMINI_API_KEYS}
       - GEMINI_MODEL_NAMES=${GEMINI_MODEL_NAMES}
     env_file:
       - .env
     depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     networks:
@@ -223,11 +265,49 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  # ==================== REDIS (External) ====================
-  # Removed per request (User has existing Redis)
+  # ==================== POSTGRESQL ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: examio-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-examio}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-examio_password}
+      - POSTGRES_DB=${POSTGRES_DB:-examio}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - examio-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-examio} -d ${POSTGRES_DB:-examio}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
 
-  # ==================== POSTGRESQL (External) ====================
-  # Removed per request (User has existing Postgres)
+  # ==================== REDIS ====================
+  redis:
+    image: redis:7-alpine
+    container_name: examio-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    networks:
+      - examio-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
 
   # ==================== MIGRATION ====================
   # Runs prisma migrate deploy and exits
@@ -240,7 +320,9 @@ services:
       - DATABASE_URL=${DATABASE_URL}
     env_file:
       - .env
-    # depends_on: postgres (Removed - external DB)
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - examio-network
     restart: "no"
@@ -252,3 +334,5 @@ networks:
 
 volumes:
   rabbitmq_data:
+  postgres_data:
+  redis_data:
