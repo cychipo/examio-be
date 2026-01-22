@@ -25,16 +25,32 @@ The deployment consists of the following containers:
 
 ## Deployment Steps
 
-### 1. Copy Deployment Files
+### 1. Setup Environment File
 
-Copy the deployment files to your server:
+**Option A: Automatic (Recommended)**
+
+Run the setup script to automatically copy the `.env` file:
 
 ```bash
-# Copy docker-compose.yml
-cp examio-be/deploy/docker-compose.yml ./docker-compose.yml
+# For Linux/Mac
+cd examio-be/deploy
+./setup-env.sh
 
-# Copy and configure environment
-cp examio-be/.env.example .env
+# For Windows (PowerShell)
+cd examio-be\deploy
+.\setup-env.ps1
+```
+
+**Option B: Manual**
+
+```bash
+# Copy .env from parent directory
+cd examio-be/deploy
+cp ../.env .env
+
+# Or create from example
+cp ../.env.example .env
+# Then edit .env with your configuration
 ```
 
 ### 2. Configure Environment Variables
