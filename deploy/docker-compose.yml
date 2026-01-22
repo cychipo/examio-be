@@ -210,8 +210,8 @@ services:
   # ==================== AI SERVICE (Python) ====================
   ai:
     build:
-      context: ..
-      dockerfile: apps/ai-service/Dockerfile
+      context: ../apps/ai-service
+      dockerfile: Dockerfile
     container_name: examio-ai
     environment:
       - PYTHONUNBUFFERED=1
