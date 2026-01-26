@@ -24,6 +24,7 @@
         "prisma:migrate": "pnpm prisma:merge && prisma migrate dev --schema=libs/database/src/schema.prisma",
         "prisma:push": "pnpm prisma:merge && prisma db push --schema=libs/database/src/schema.prisma",
         "prisma:studio": "prisma studio --schema=libs/database/src/schema.prisma",
+        "prisma:deploy": "pnpm prisma:merge && prisma migrate deploy --schema=libs/database/src/schema.prisma",
         "start:prod": "node dist/apps/codecraft-be/main"
     },
     "keywords": [],
