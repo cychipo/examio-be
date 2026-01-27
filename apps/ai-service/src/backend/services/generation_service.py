@@ -29,7 +29,7 @@ class GenerateQuizRequest(BaseModel):
     """Request to generate quiz from file"""
     user_storage_id: str = Field(..., description="ID của UserStorage")
     user_id: str = Field(..., description="ID của user")
-    num_questions: int = Field(default=10, ge=1, le=50, description="Số câu hỏi cần tạo")
+    num_questions: int = Field(default=10, ge=1, le=1000, description="Số câu hỏi cần tạo")
     is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
     model_type: str = Field(default="gemini", description="AI model: 'gemini' or 'fayedark'")
@@ -39,7 +39,7 @@ class GenerateFlashcardRequest(BaseModel):
     """Request to generate flashcards from file"""
     user_storage_id: str = Field(..., description="ID của UserStorage")
     user_id: str = Field(..., description="ID của user")
-    num_flashcards: int = Field(default=10, ge=1, le=50, description="Số flashcard cần tạo")
+    num_flashcards: int = Field(default=10, ge=1, le=1000, description="Số flashcard cần tạo")
     is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
     model_type: str = Field(default="gemini", description="AI model: 'gemini' or 'fayedark'")
