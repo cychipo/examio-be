@@ -31,7 +31,7 @@ class GenerateQuizBody(BaseModel):
     """Request body for quiz generation"""
     user_storage_id: str = Field(..., alias="userStorageId", description="ID của UserStorage")
     user_id: str = Field(..., alias="userId", description="ID của user")
-    num_questions: int = Field(default=10, alias="numQuestions", ge=1, le=1000)
+    num_questions: int = Field(default=10, alias="numQuestions", ge=1, le=100)
     is_narrow_search: bool = Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")
     keyword: str | None = Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")
     model_type: str = Field(
@@ -48,7 +48,7 @@ class GenerateFlashcardBody(BaseModel):
     """Request body for flashcard generation"""
     user_storage_id: str = Field(..., alias="userStorageId", description="ID của UserStorage")
     user_id: str = Field(..., alias="userId", description="ID của user")
-    num_flashcards: int = Field(default=10, alias="numFlashcards", ge=1, le=1000)
+    num_flashcards: int = Field(default=10, alias="numFlashcards", ge=1, le=100)
     is_narrow_search: bool = Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")
     keyword: str | None = Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")
     model_type: str = Field(

@@ -282,7 +282,7 @@ export class AIService {
                 this.httpService.post(
                     `${this.aiServiceUrl}/ai/process-file`,
                     { user_storage_id: userStorageId },
-                    { timeout: 300000 } // 5 min timeout for OCR
+                    { timeout: 3600000 } // 60 min timeout for OCR
                 )
             );
 
@@ -316,7 +316,7 @@ export class AIService {
                         [isFlashcard ? 'numFlashcards' : 'numQuestions']: count,
                         modelType: modelType || 'gemini',
                     },
-                    { timeout: 300000 } // 5 min timeout for generation
+                    { timeout: 3600000 } // 60 min timeout for generation
                 )
             );
 
@@ -655,7 +655,7 @@ export class AIService {
                             keyword: dto.keyword,
                             modelType: dto.modelType || 'gemini',
                         },
-                        { timeout: 600000 } // 10 min timeout for Ollama
+                        { timeout: 3600000 } // 60 min timeout for Ollama
                     )
                 );
 
@@ -686,7 +686,7 @@ export class AIService {
                             keyword: dto.keyword,
                             modelType: dto.modelType || 'gemini',
                         },
-                        { timeout: 600000 } // 10 min timeout for Ollama
+                        { timeout: 3600000 } // 60 min timeout for Ollama
                     )
                 );
 

@@ -223,7 +223,7 @@ class ModelManager:
         ollama_info = self.get_ollama_info()
         url = f"{ollama_info['url']}/api/generate"
 
-        async with httpx.AsyncClient(timeout=600.0) as client:  # 10 minutes for quiz generation
+        async with httpx.AsyncClient(timeout=3600.0) as client:  # 60 minutes for large quiz generation
             response = await client.post(url, json={
                 "model": ollama_info["model"],
                 "prompt": prompt,
