@@ -361,15 +361,20 @@ class ContentGenerationService:
             return []
 
     def _extract_json(self, text: str) -> str:
-        """Extract JSON array from text (handle markdown code blocks)"""
-        # Remove markdown code blocks
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*', '', text)
+        """Extract JSON array from text (handle markdown code blocks and flexible finding)"""
+        # 1. Try to find markdown block first
+        json_block_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', text)
+        if json_block_match:
+            return json_block_match.group(1)
 
-        # Find JSON array
-        match = re.search(r'\[[\s\S]*\]', text)
-        if match:
-            return match.group()
+        # 2. Try to find the first outer bracket pair [...]
+        # This regex looks for [ ... ] where ... can contain nested brackets but imperfectly
+        # For simplicity and speed, we look for the first '[' and the last ']'
+        start_idx = text.find('[')
+        end_idx = text.rfind(']')
+
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            return text[start_idx : end_idx + 1]
 
         raise ValueError("No JSON array found in response")
 
