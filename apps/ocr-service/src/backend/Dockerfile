@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    libffi-dev \
+    build-essential \
     curl \
     git \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -34,6 +36,9 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
 
 # Copy requirements first for better caching
 COPY requirements.txt .
+
+# Install cffi first (required by cryptography)
+RUN pip install --no-cache-dir cffi
 
 # Install PyTorch with CUDA 12.1 support and other requirements
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
