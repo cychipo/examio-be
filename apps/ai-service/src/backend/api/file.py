@@ -16,7 +16,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -39,15 +39,16 @@ _retriever_cache: Dict[str, Any] = {}
 
 class ProcessFileRequest(BaseModel):
     """Request từ NestJS để OCR file đã upload"""
+    model_config = ConfigDict(populate_by_name=True)
+    
     user_storage_id: str = Field(..., description="ID của UserStorage (NestJS đã tạo)")
     model_type: str = Field(default="gemini", alias="modelType", description="AI model: 'gemini' or 'fayedark'")
-
-    class Config:
-        populate_by_name = True
 
 
 class QueryFileRequest(BaseModel):
     """Request để query file"""
+    model_config = ConfigDict(populate_by_name=True)
+    
     user_storage_id: str = Field(..., description="ID của UserStorage")
     query: str = Field(..., description="Câu hỏi về nội dung file")
     model_type: Optional[str] = Field(default=None, alias="modelType", description="AI model type")
@@ -55,6 +56,8 @@ class QueryFileRequest(BaseModel):
 
 class MultiQueryRequest(BaseModel):
     """Request để query nhiều câu hỏi"""
+    model_config = ConfigDict(populate_by_name=True)
+    
     user_storage_id: str = Field(..., description="ID của UserStorage")
     queries: List[str] = Field(..., description="Danh sách câu hỏi")
     model_type: Optional[str] = Field(default=None, alias="modelType", description="AI model type")

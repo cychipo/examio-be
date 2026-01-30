@@ -9,6 +9,7 @@ Features:
 """
 
 import os
+import logging
 import asyncio
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ import asyncpg
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

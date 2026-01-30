@@ -8,7 +8,10 @@ from dotenv import load_dotenv
 from enum import Enum
 
 # Load environment variables
+import logging
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class ModelType(str, Enum):
@@ -145,9 +148,6 @@ class ModelManager:
         """Generate content using Gemini API with key/model rotation on quota errors"""
         import google.generativeai as genai
         from google.api_core.exceptions import ResourceExhausted
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         logger.debug("Starting Gemini generation")
 
@@ -225,9 +225,7 @@ class ModelManager:
         """Generate content using Ollama with retry logic and SSL options"""
         import httpx
         import asyncio
-        import logging
 
-        logger = logging.getLogger(__name__)
         ollama_info = self.get_ollama_info()
         url = f"{ollama_info['url']}/api/generate"
         
@@ -285,9 +283,6 @@ class ModelManager:
         Returns:
             Generated text response
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         logger.info(f"Generating content with model type: {ai_model_type.value}")
         model_type = AIModelType.to_model_type(ai_model_type)
 
