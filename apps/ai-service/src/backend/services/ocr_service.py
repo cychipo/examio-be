@@ -294,12 +294,21 @@ class OCRProcessingService:
             from src.rag.vector_store_pg import get_pg_vector_store
 
             # Extract text
-            text = extract_text_from_file(temp_path)
+            is_pdf = file_info.mimetype == "application/pdf" or file_info.url.lower().endswith('.pdf')
+            
+            if is_pdf:
+                logger.info("📄 Processing PDF with local Tesseract/PyPDF in service...")
+                from backend.services.pdf_ocr_service import pdf_ocr_service
+                chunk_results = pdf_ocr_service.process_pdf_with_chunks(file_content)
+                text = "\n\n".join([c[1] for c in chunk_results])
+            else:
+                text = extract_text_from_file(temp_path, file_info.mimetype)
+
             if not text or len(text.strip()) < 10:
                 await self.update_processing_status(user_storage_id, "FAILED")
                 return {"success": False, "error": "No text extracted from file"}
 
-            # Chunk text
+            # Chunk text (already in chunks if it was PDf, but we re-chunk here for vector store consistency)
             chunks = self._chunk_text(text)
 
             # Get vector store and save chunks
@@ -308,7 +317,7 @@ class OCRProcessingService:
 
             for i, chunk in enumerate(chunks):
                 chunk_id = f"{user_storage_id}_chunk_{i}"
-                page_range = f"{i+1}-{i+1}"
+                page_range = f"{i+1}"
 
                 # Store document will handle embedding creation internally
                 success = await vector_store.store_document(

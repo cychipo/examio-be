@@ -13,6 +13,11 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
+try:
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+    GEMINI_EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    GEMINI_EMBEDDINGS_AVAILABLE = False
 from pydantic import Field
 from src.llm.config import get_llm  # Import get_llm thay vì get_gemini_llm
 
@@ -1387,7 +1392,7 @@ def extract_text_from_file(file_path: str, file_type: str) -> str:
         return f"Error extracting text from file: {str(e)}"
 
 
-def create_in_memory_retriever(file_content: str, chunk_size: int = 400, chunk_overlap: int = 200, k: int = 15) -> HybridRetriever:
+def create_in_memory_retriever(file_content: str, chunk_size: int = 400, chunk_overlap: int = 200, k: int = 15, model_type: str = "gemini") -> tuple[HybridRetriever, List[str]]:
     """Create an in-memory hybrid retriever from file content"""
     try:
         # Split text into chunks
@@ -1400,19 +1405,38 @@ def create_in_memory_retriever(file_content: str, chunk_size: int = 400, chunk_o
         )
         chunks = text_splitter.split_text(file_content)
 
-
-        # Try Ollama first, fallback to HuggingFace if unavailable
         embeddings = None
-        try:
-            embeddings = OllamaEmbeddings(
-                model="nomic-embed-text",
-                base_url=OLLAMA_BASE_URL
-            )
-            # Test connection with a simple embed
-            embeddings.embed_query("test")
-            logger.info("Using OllamaEmbeddings for in-memory retriever")
-        except Exception as e:
-            logger.warning(f"Ollama not available: {e}, falling back to HuggingFace")
+        
+        # Try requested embeddings first
+        if model_type == "gemini" and GEMINI_EMBEDDINGS_AVAILABLE:
+            try:
+                from src.llm.gemini_client import gemini_client
+                api_key = gemini_client.get_next_key()
+                embeddings = GoogleGenerativeAIEmbeddings(
+                    model="models/text-embedding-004",
+                    google_api_key=api_key
+                )
+                # Test connection
+                embeddings.embed_query("test")
+                logger.info("Using GoogleGenerativeAIEmbeddings for in-memory retriever")
+            except Exception as e:
+                logger.warning(f"Gemini embeddings failed: {e}, falling back...")
+
+        if not embeddings or model_type == "fayedark":
+            try:
+                embeddings = OllamaEmbeddings(
+                    model="nomic-embed-text",
+                    base_url=OLLAMA_BASE_URL
+                )
+                # Test connection with a simple embed
+                embeddings.embed_query("test")
+                logger.info("Using OllamaEmbeddings for in-memory retriever")
+            except Exception as e:
+                if model_type == "fayedark":
+                    logger.warning(f"Ollama not available: {e}, falling back to HuggingFace")
+
+        # Ultimate fallback to HuggingFace (CPU friendly)
+        if not embeddings:
             try:
                 from langchain_huggingface import HuggingFaceEmbeddings
                 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
