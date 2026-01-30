@@ -6,9 +6,18 @@ import {
     ForbiddenException,
     BadRequestException,
 } from '@nestjs/common';
-import { GenerateIdService, CryptoService } from '@examio/common';
+import {
+    GenerateIdService,
+    CryptoService,
+    RecaptchaService,
+} from '@examio/common';
 import { User } from '@prisma/client';
-import { EXAM_SESSION_STATUS, EXAM_ATTEMPT_STATUS, QUESTION_SELECTION_MODE, LabelQuestionConfig } from '../../types';
+import {
+    EXAM_SESSION_STATUS,
+    EXAM_ATTEMPT_STATUS,
+    QUESTION_SELECTION_MODE,
+    LabelQuestionConfig,
+} from '../../types';
 import { CreateExamAttemptDto } from './dto/create-examattempt.dto';
 import { GetExamAttemptsDto } from './dto/get-examattempt.dto';
 import { UpdateExamAttemptDto } from './dto/update-examattempt.dto';
@@ -29,7 +38,8 @@ export class ExamAttemptService {
         private readonly examSessionRepository: ExamSessionRepository,
         private readonly generateIdService: GenerateIdService,
         private readonly redisService: RedisService,
-        private readonly cryptoService: CryptoService
+        private readonly cryptoService: CryptoService,
+        private readonly recaptchaService: RecaptchaService
     ) {}
 
     /**
@@ -37,6 +47,13 @@ export class ExamAttemptService {
      * Checks retry limits based on ExamSession settings
      */
     async startExamAttempt(user: User, dto: CreateExamAttemptDto) {
+        // Verify reCAPTCHA token if provided
+        if (dto.captchaToken) {
+            await this.recaptchaService.verify(
+                dto.captchaToken,
+                'fullscreen_exam'
+            );
+        }
         // Verify exam session exists with all needed data
         const examSession = await this.prisma.examSession.findUnique({
             where: { id: dto.examSessionId },
@@ -126,7 +143,8 @@ export class ExamAttemptService {
         }
 
         // Select questions based on configuration
-        const allQuestions = examSession.examRoom.quizSet.detailsQuizQuestions || [];
+        const allQuestions =
+            examSession.examRoom.quizSet.detailsQuizQuestions || [];
         const selectedQuestionIds = this.selectQuestionsForAttempt(
             allQuestions,
             examSession.questionSelectionMode,
@@ -170,7 +188,11 @@ export class ExamAttemptService {
      * Select questions for an attempt based on the session configuration
      */
     private selectQuestionsForAttempt(
-        allQuestions: Array<{ id: string; labelId: string | null; quizQuestion: any }>,
+        allQuestions: Array<{
+            id: string;
+            labelId: string | null;
+            quizQuestion: any;
+        }>,
         selectionMode: number,
         questionCount: number | null,
         labelConfig: LabelQuestionConfig[] | null,
@@ -181,16 +203,20 @@ export class ExamAttemptService {
         switch (selectionMode) {
             case QUESTION_SELECTION_MODE.ALL:
                 // Use all questions
-                selectedIds = allQuestions.map(q => q.id);
+                selectedIds = allQuestions.map((q) => q.id);
                 break;
 
             case QUESTION_SELECTION_MODE.RANDOM_TOTAL:
                 // Randomly select N questions from total
                 if (questionCount && questionCount > 0) {
-                    const shuffled = [...allQuestions].sort(() => Math.random() - 0.5);
-                    selectedIds = shuffled.slice(0, questionCount).map(q => q.id);
+                    const shuffled = [...allQuestions].sort(
+                        () => Math.random() - 0.5
+                    );
+                    selectedIds = shuffled
+                        .slice(0, questionCount)
+                        .map((q) => q.id);
                 } else {
-                    selectedIds = allQuestions.map(q => q.id);
+                    selectedIds = allQuestions.map((q) => q.id);
                 }
                 break;
 
@@ -198,22 +224,29 @@ export class ExamAttemptService {
                 // Select questions based on label configuration
                 if (labelConfig && labelConfig.length > 0) {
                     for (const config of labelConfig) {
-                        const labelId = config.labelId === 'unlabeled' ? null : config.labelId;
-                        const questionsInLabel = allQuestions.filter(q => q.labelId === labelId);
-                        
+                        const labelId =
+                            config.labelId === 'unlabeled'
+                                ? null
+                                : config.labelId;
+                        const questionsInLabel = allQuestions.filter(
+                            (q) => q.labelId === labelId
+                        );
+
                         // Shuffle and take the required count
-                        const shuffled = [...questionsInLabel].sort(() => Math.random() - 0.5);
+                        const shuffled = [...questionsInLabel].sort(
+                            () => Math.random() - 0.5
+                        );
                         const selected = shuffled.slice(0, config.count);
-                        selectedIds.push(...selected.map(q => q.id));
+                        selectedIds.push(...selected.map((q) => q.id));
                     }
                 } else {
                     // Fallback to all questions if no config
-                    selectedIds = allQuestions.map(q => q.id);
+                    selectedIds = allQuestions.map((q) => q.id);
                 }
                 break;
 
             default:
-                selectedIds = allQuestions.map(q => q.id);
+                selectedIds = allQuestions.map((q) => q.id);
         }
 
         // Shuffle final order if enabled
@@ -316,19 +349,25 @@ export class ExamAttemptService {
         // Calculate score
         // Get all questions map for efficient lookup
         const allQuestionsMap = new Map(
-            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(d => [d.id, d.quizQuestion])
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                (d) => [d.id, d.quizQuestion]
+            )
         );
 
         // Filter questions based on selectedQuestionIds
         let questions: any[] = [];
-        if (attempt.selectedQuestionIds && attempt.selectedQuestionIds.length > 0) {
+        if (
+            attempt.selectedQuestionIds &&
+            attempt.selectedQuestionIds.length > 0
+        ) {
             questions = attempt.selectedQuestionIds
-                .map(id => allQuestionsMap.get(id))
-                .filter(q => q != null);
+                .map((id) => allQuestionsMap.get(id))
+                .filter((q) => q != null);
         } else {
-            questions = attempt.examSession.examRoom.quizSet.detailsQuizQuestions
-                ?.map((d) => d.quizQuestion)
-                .filter((q) => q != null) || [];
+            questions =
+                attempt.examSession.examRoom.quizSet.detailsQuizQuestions
+                    ?.map((d) => d.quizQuestion)
+                    .filter((q) => q != null) || [];
         }
 
         const answers = attempt.answers as Record<string, string>;
@@ -450,16 +489,25 @@ export class ExamAttemptService {
 
         // Get all questions from the quiz set
         const allQuestionsMap = new Map(
-            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(d => [d.id, d])
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                (d) => [d.id, d]
+            )
         );
 
         // Filter questions based on selectedQuestionIds if available
-        let filteredQuestionDetails = attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
-        if (attempt.selectedQuestionIds && attempt.selectedQuestionIds.length > 0) {
+        let filteredQuestionDetails =
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
+        if (
+            attempt.selectedQuestionIds &&
+            attempt.selectedQuestionIds.length > 0
+        ) {
             // Maintain the order of selectedQuestionIds
             filteredQuestionDetails = attempt.selectedQuestionIds
-                .map(id => allQuestionsMap.get(id))
-                .filter((d): d is typeof filteredQuestionDetails[0] => d !== undefined);
+                .map((id) => allQuestionsMap.get(id))
+                .filter(
+                    (d): d is (typeof filteredQuestionDetails)[0] =>
+                        d !== undefined
+                );
         }
 
         const questions = filteredQuestionDetails.map((d) => {
@@ -1121,14 +1169,20 @@ export class ExamAttemptService {
 
         // Filter questions based on selectedQuestionIds if available
         const attemptData = examAttempt as any;
-        if (attemptData.selectedQuestionIds && attemptData.selectedQuestionIds.length > 0) {
+        if (
+            attemptData.selectedQuestionIds &&
+            attemptData.selectedQuestionIds.length > 0
+        ) {
             const allQuestionsMap = new Map(
-                attemptData.examSession.examRoom.quizSet.detailsQuizQuestions.map((d: any) => [d.id, d])
+                attemptData.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                    (d: any) => [d.id, d]
+                )
             );
-            
-            attemptData.examSession.examRoom.quizSet.detailsQuizQuestions = attemptData.selectedQuestionIds
-                .map((id: string) => allQuestionsMap.get(id))
-                .filter((d: any) => d !== undefined);
+
+            attemptData.examSession.examRoom.quizSet.detailsQuizQuestions =
+                attemptData.selectedQuestionIds
+                    .map((id: string) => allQuestionsMap.get(id))
+                    .filter((d: any) => d !== undefined);
         }
 
         return examAttempt;
@@ -1471,16 +1525,25 @@ export class ExamAttemptService {
 
         // Get all questions from the quiz set
         const allQuestionsMap = new Map(
-            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(d => [d.id, d])
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                (d) => [d.id, d]
+            )
         );
 
         // Filter questions based on selectedQuestionIds if available
-        let filteredQuestionDetails = attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
-        if (attempt.selectedQuestionIds && attempt.selectedQuestionIds.length > 0) {
+        let filteredQuestionDetails =
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
+        if (
+            attempt.selectedQuestionIds &&
+            attempt.selectedQuestionIds.length > 0
+        ) {
             // Maintain the order of selectedQuestionIds
             filteredQuestionDetails = attempt.selectedQuestionIds
-                .map(id => allQuestionsMap.get(id))
-                .filter((d): d is typeof filteredQuestionDetails[0] => d !== undefined);
+                .map((id) => allQuestionsMap.get(id))
+                .filter(
+                    (d): d is (typeof filteredQuestionDetails)[0] =>
+                        d !== undefined
+                );
         }
 
         // Generate secure questions with JWT tokens and encrypted content
@@ -1582,31 +1645,38 @@ export class ExamAttemptService {
         // Build question map for lookup
         // Get all questions from the quiz set
         const allQuestionsMap = new Map(
-            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(d => [d.id, d])
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions.map(
+                (d) => [d.id, d]
+            )
         );
 
         // Filter questions based on selectedQuestionIds if available
-        let filteredQuestionDetails = attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
-        if (attempt.selectedQuestionIds && attempt.selectedQuestionIds.length > 0) {
+        let filteredQuestionDetails =
+            attempt.examSession.examRoom.quizSet.detailsQuizQuestions;
+        if (
+            attempt.selectedQuestionIds &&
+            attempt.selectedQuestionIds.length > 0
+        ) {
             // Maintain the order of selectedQuestionIds
             filteredQuestionDetails = attempt.selectedQuestionIds
-                .map(id => allQuestionsMap.get(id))
-                .filter((d): d is typeof filteredQuestionDetails[0] => d !== undefined);
+                .map((id) => allQuestionsMap.get(id))
+                .filter(
+                    (d): d is (typeof filteredQuestionDetails)[0] =>
+                        d !== undefined
+                );
         }
 
         const questionMap = new Map<
             string,
             { id: string; answer: string; index: number }
         >();
-        filteredQuestionDetails.forEach(
-            (d, index) => {
-                questionMap.set(d.quizQuestion.id, {
-                    id: d.quizQuestion.id,
-                    answer: d.quizQuestion.answer,
-                    index,
-                });
-            }
-        );
+        filteredQuestionDetails.forEach((d, index) => {
+            questionMap.set(d.quizQuestion.id, {
+                id: d.quizQuestion.id,
+                answer: d.quizQuestion.answer,
+                index,
+            });
+        });
 
         // Verify tokens and calculate score
         let correctCount = 0;
@@ -1702,17 +1772,13 @@ export class ExamAttemptService {
 
             // Only include answers if allowed
             if (showAnswers) {
-                response.questions =
-                    filteredQuestionDetails.map(
-                        (d) => ({
-                            id: d.quizQuestion.id,
-                            question: d.quizQuestion.question,
-                            options: d.quizQuestion.options,
-                            answer: d.quizQuestion.answer,
-                            userAnswer:
-                                verifiedAnswers[d.quizQuestion.id] || null,
-                        })
-                    );
+                response.questions = filteredQuestionDetails.map((d) => ({
+                    id: d.quizQuestion.id,
+                    question: d.quizQuestion.question,
+                    options: d.quizQuestion.options,
+                    answer: d.quizQuestion.answer,
+                    userAnswer: verifiedAnswers[d.quizQuestion.id] || null,
+                }));
             }
 
             return response;

@@ -9,6 +9,7 @@ export * from './services/generate-id.service';
 export * from './services/crypto.service';
 export * from './services/pdf.service';
 export * from './services/image-preprocessing.service';
+export * from './services/recaptcha.service';
 
 // Guards
 export * from './guard/auth.guard';
