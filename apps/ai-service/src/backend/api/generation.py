@@ -8,7 +8,7 @@ Endpoints:
 - GET /generate/flashcards/:historyId - Get generated flashcards by history ID
 """
 import logging
-from typing import Dict, Any, Annotated
+from typing import Dict, Any, Annotated, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
