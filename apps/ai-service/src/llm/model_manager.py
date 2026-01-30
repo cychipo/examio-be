@@ -233,8 +233,8 @@ class ModelManager:
 
         for attempt in range(max_retries):
             try:
-                # Use a reasonable timeout and DISALBE proxies to avoid redirection issues
-                async with httpx.AsyncClient(timeout=3600.0, verify=verify_ssl, proxies={}) as client:
+                # Use trust_env=False to ignore system proxies and connect directly
+                async with httpx.AsyncClient(timeout=3600.0, verify=verify_ssl, trust_env=False) as client:
                     logger.debug(f"Calling Ollama (Attempt {attempt+1}): {url} with model {ollama_info['model']}")
                     response = await client.post(url, json={
                         "model": ollama_info["model"],

@@ -13,7 +13,10 @@ from typing import List
 import httpx
 from dotenv import load_dotenv
 
+import logging
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class OllamaEmbeddings:
@@ -35,10 +38,10 @@ class OllamaEmbeddings:
         if self._initialized:
             return
         
-        self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip('/')
         self.model = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
         self._initialized = True
-        print(f"🔧 OllamaEmbeddings initialized: {self.base_url}, model: {self.model}")
+        logger.info(f"OllamaEmbeddings initialized: {self.base_url}, model: {self.model}")
     
     async def create_embedding(self, text: str, task_type: str = "retrieval_document") -> List[float]:
         """
@@ -52,7 +55,9 @@ class OllamaEmbeddings:
             List[float] embedding vector
         """
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
+            # Use trust_env=False to bypass system proxies
+            async with httpx.AsyncClient(timeout=60.0, verify=verify_ssl, trust_env=False) as client:
                 response = await client.post(
                     f"{self.base_url}/api/embeddings",
                     json={
@@ -64,7 +69,7 @@ class OllamaEmbeddings:
                 data = response.json()
                 return data.get("embedding", [])
         except Exception as e:
-            print(f"❌ Ollama embedding error: {e}")
+            logger.error(f"Ollama embedding error: {e}")
             raise Exception(f"Ollama embedding failed: {e}")
     
     async def create_embeddings_batch(
@@ -100,7 +105,7 @@ class OllamaEmbeddings:
             # Check for errors
             for j, emb in enumerate(batch_embeddings):
                 if isinstance(emb, Exception):
-                    print(f"⚠️ Error embedding text {i+j}: {emb}")
+                    logger.warning(f"Error embedding text {i+j}: {emb}")
                     # Retry single text
                     try:
                         emb = await self.create_embedding(batch[j], task_type)

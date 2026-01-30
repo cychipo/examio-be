@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Annotated
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -51,7 +51,7 @@ class QueryFileRequest(BaseModel):
     
     user_storage_id: str = Field(..., description="ID của UserStorage")
     query: str = Field(..., description="Câu hỏi về nội dung file")
-    model_type: Optional[str] = Field(default=None, alias="modelType", description="AI model type")
+    model_type: Annotated[Optional[str], Field(default=None, alias="modelType", description="AI model type")] = None
 
 
 class MultiQueryRequest(BaseModel):
@@ -60,7 +60,7 @@ class MultiQueryRequest(BaseModel):
     
     user_storage_id: str = Field(..., description="ID của UserStorage")
     queries: List[str] = Field(..., description="Danh sách câu hỏi")
-    model_type: Optional[str] = Field(default=None, alias="modelType", description="AI model type")
+    model_type: Annotated[Optional[str], Field(default=None, alias="modelType", description="AI model type")] = None
 
 
 # ==================== Helper Functions ====================

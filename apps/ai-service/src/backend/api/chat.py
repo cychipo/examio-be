@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import List, Dict, Optional, Any, Literal
+from typing import List, Dict, Optional, Any, Literal, Annotated
 from enum import Enum
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -33,16 +33,16 @@ class ChatRequest(BaseModel):
     history: List[Message] = Field(default=[], description="Previous conversation history")
     user_storage_id: Optional[str] = Field(None, description="ID for RAG context from a specific file")
     department: Optional[str] = Field(None, description="Department context for general RAG")
-    model_type: Optional[str] = Field(
+    model_type: Annotated[Optional[str], Field(
         default="gemini",
         alias="modelType",
         description="AI model to use: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)"
-    )
-    system_prompt: Optional[str] = Field(
+    )] = "gemini"
+    system_prompt: Annotated[Optional[str], Field(
         default=None,
         alias="systemPrompt",
         description="Custom system prompt for the AI model"
-    )
+    )] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
