@@ -213,11 +213,12 @@ class PgVectorStore:
                     )
                     success_count += 1
                 except Exception as e:
-                    print(f"❌ Error storing document {doc['id']}: {e}")
+                    logger.error(f"Error storing document {doc['id']}: {e}")
 
             logger.info(f"Stored {success_count}/{len(documents)} documents with batch embedding")
             return success_count
 
+        except Exception as e:
             logger.warning("Error in batch store, falling back to individual document storage")
             logger.debug(f"Batch store error: {e}")
             success_count = 0
