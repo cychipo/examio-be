@@ -222,25 +222,51 @@ class ModelManager:
         raise last_error or ValueError("All API keys and models exhausted")
 
     async def _generate_with_ollama(self, prompt: str) -> str:
-        """Generate content using Ollama"""
+        """Generate content using Ollama with retry logic and SSL options"""
         import httpx
+        import asyncio
+        import logging
 
+        logger = logging.getLogger(__name__)
         ollama_info = self.get_ollama_info()
         url = f"{ollama_info['url']}/api/generate"
+        
+        # SSL Verification option
+        verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
+        
+        max_retries = 3
+        last_error = None
 
-        async with httpx.AsyncClient(timeout=3600.0) as client:  # 60 minutes for large quiz generation
-            response = await client.post(url, json={
-                "model": ollama_info["model"],
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": self.get_temperature(),
-                    "num_predict": self.get_max_tokens(),
-                }
-            })
-            response.raise_for_status()
-            data = response.json()
-            return data.get("response", "")
+        for attempt in range(max_retries):
+            try:
+                # Use a reasonable timeout for the whole request
+                async with httpx.AsyncClient(timeout=3600.0, verify=verify_ssl) as client:
+                    response = await client.post(url, json={
+                        "model": ollama_info["model"],
+                        "prompt": prompt,
+                        "stream": False,
+                        "options": {
+                            "temperature": self.get_temperature(),
+                            "num_predict": self.get_max_tokens(),
+                        }
+                    })
+                    response.raise_for_status()
+                    data = response.json()
+                    return data.get("response", "")
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2
+                    logger.warning(f"Ollama connection failed (Attempt {attempt+1}/{max_retries}). Retrying... URL: {url}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Failed to connect to Ollama after {max_retries} attempts: {e}")
+                    raise
+            except Exception as e:
+                logger.error(f"Error calling Ollama: {e}")
+                raise
+
+        raise last_error or Exception("Ollama generation failed")
 
     async def generate_content_with_model(
         self,

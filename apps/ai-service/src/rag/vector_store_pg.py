@@ -215,13 +215,11 @@ class PgVectorStore:
                 except Exception as e:
                     print(f"❌ Error storing document {doc['id']}: {e}")
 
-            print(f"✅ Stored {success_count}/{len(documents)} documents with batch embedding")
+            logger.info(f"Stored {success_count}/{len(documents)} documents with batch embedding")
             return success_count
 
-        except Exception as e:
-            print(f"❌ Error in batch store: {e}")
-            # Fallback: store từng document một
-            print("⚠️ Falling back to individual document storage...")
+            logger.warning("Error in batch store, falling back to individual document storage")
+            logger.debug(f"Batch store error: {e}")
             success_count = 0
             for doc in documents:
                 success = await self.store_document(
@@ -295,7 +293,7 @@ class PgVectorStore:
                 for row in rows
             ]
 
-            print(f"🔍 Found {len(results)} similar documents (threshold: {similarity_threshold})")
+            logger.info(f"Found {len(results)} similar documents (threshold: {similarity_threshold})")
             return results
 
         except Exception as e:
