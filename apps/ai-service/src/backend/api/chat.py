@@ -7,7 +7,7 @@ from enum import Enum
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -44,8 +44,7 @@ class ChatRequest(BaseModel):
         description="Custom system prompt for the AI model"
     )
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 class ChatResponse(BaseModel):
     answer: str
@@ -197,4 +196,4 @@ async def stream_ai(request: ChatRequest):
 
 @router.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "ai-stateless-node"}
+    return {"status": "ok", "service": "ai-service-chat"}

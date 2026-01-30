@@ -11,7 +11,7 @@ import logging
 from typing import Dict, Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from src.backend.services.generation_service import (
     generation_service,
@@ -40,8 +40,7 @@ class GenerateQuizBody(BaseModel):
         description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
     )
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GenerateFlashcardBody(BaseModel):
@@ -57,8 +56,7 @@ class GenerateFlashcardBody(BaseModel):
         description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
     )
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 # ==================== API Endpoints ====================

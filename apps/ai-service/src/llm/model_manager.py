@@ -91,15 +91,10 @@ class ModelManager:
         return ModelType.GEMINI
 
     def get_ollama_info(self) -> Dict[str, Any]:
-        """Lấy cấu hình Ollama."""
-        # Detect if running in Docker to provide better default for localhost
-        default_url = "http://localhost:11434"
-        if os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER"):
-            default_url = "http://host.docker.internal:11434"
-            
+        """Lấy cấu hình Ollama từ môi trường."""
         return {
             "model": self._runtime_ollama_model or os.getenv("RAG_MODEL", "qwen3:8b"),
-            "url": os.getenv("OLLAMA_BASE_URL", default_url)
+            "url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip('/')
         }
 
     def get_gemini_info(self) -> Dict[str, Any]:
@@ -227,7 +222,8 @@ class ModelManager:
         import asyncio
 
         ollama_info = self.get_ollama_info()
-        url = f"{ollama_info['url']}/api/generate"
+        base_url = ollama_info['url'].rstrip('/')
+        url = f"{base_url}/api/generate"
         
         # SSL Verification option
         verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
@@ -237,8 +233,9 @@ class ModelManager:
 
         for attempt in range(max_retries):
             try:
-                # Use a reasonable timeout for the whole request
-                async with httpx.AsyncClient(timeout=3600.0, verify=verify_ssl) as client:
+                # Use a reasonable timeout and DISALBE proxies to avoid redirection issues
+                async with httpx.AsyncClient(timeout=3600.0, verify=verify_ssl, proxies={}) as client:
+                    logger.debug(f"Calling Ollama (Attempt {attempt+1}): {url} with model {ollama_info['model']}")
                     response = await client.post(url, json={
                         "model": ollama_info["model"],
                         "prompt": prompt,
@@ -250,18 +247,22 @@ class ModelManager:
                     })
                     response.raise_for_status()
                     data = response.json()
+                    
+                    if os.getenv("LOG_OLLAMA_RESPONSE") == "true":
+                        logger.debug(f"Ollama response data: {data}")
+                        
                     return data.get("response", "")
             except (httpx.ConnectError, httpx.ConnectTimeout) as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 2
-                    logger.warning(f"Ollama connection failed (Attempt {attempt+1}/{max_retries}). Retrying... URL: {url}")
+                    logger.warning(f"Ollama connection failed to {url} (Attempt {attempt+1}/{max_retries}). Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"Failed to connect to Ollama after {max_retries} attempts: {e}")
+                    logger.error(f"Failed to connect to Ollama at {url} after {max_retries} attempts: {e}")
                     raise
             except Exception as e:
-                logger.error(f"Error calling Ollama: {e}")
+                logger.error(f"Error calling Ollama at {url}: {e}")
                 raise
 
         raise last_error or Exception("Ollama generation failed")

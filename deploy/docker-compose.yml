@@ -255,8 +255,7 @@ services:
             - REDIS_PASSWORD=${REDIS_PASSWORD:-}
             - GEMINI_API_KEYS=${GEMINI_API_KEYS}
             - GEMINI_MODEL_NAMES=${GEMINI_MODEL_NAMES}
-            - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
-            - DOCKER_CONTAINER=true
+            - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
             - OCR_SERVICE_URL= # Using internal Tesseract/PyPDF logic
         env_file:
             - .env
