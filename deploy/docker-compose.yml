@@ -328,7 +328,7 @@ services:
                           count: 1
                           capabilities: [gpu]
         volumes:
-            - ../olmocr:/app/olmocr:ro
+            - ${OLMOCR_PATH}:/app/olmocr:ro
             - ocr_uploads:/app/apps/ocr-service/uploads
             - ocr_outputs:/app/apps/ocr-service/outputs
             - hf_cache:/root/.cache/huggingface
