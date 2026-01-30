@@ -167,15 +167,16 @@ class PdfOcrService:
 
     def ocr_pdf(self, pdf_bytes: bytes, language: str = 'eng+vie', use_preprocessing: bool = True) -> str:
         """
-        OCR một PDF chunk. Ưu tiên dùng ocr-service bên ngoài, fallback về Tesseract local.
+        OCR một PDF chunk.
         """
-        # 1. Thử gọi ocr-service bên ngoài (olmocr)
-        external_content = self._call_external_ocr_service(pdf_bytes)
-        if external_content:
-            return external_content
+        # 1. Thử gọi ocr-service bên ngoài nếu được cấu hình
+        if os.getenv("OCR_SERVICE_URL"):
+            external_content = self._call_external_ocr_service(pdf_bytes)
+            if external_content:
+                return external_content
 
-        # 2. Nếu fail, fallback về Tesseract local
-        logger.info("↩️ Falling back to local Tesseract OCR...")
+        # 2. Sử dụng Tesseract local
+        logger.info("📄 Using local Tesseract OCR...")
         
         if not PDF2IMAGE_AVAILABLE:
             raise RuntimeError("pdf2image not available. Install: pip install pdf2image")
