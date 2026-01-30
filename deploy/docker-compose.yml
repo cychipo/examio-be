@@ -254,7 +254,7 @@ services:
             - REDIS_PASSWORD=${REDIS_PASSWORD:-}
             - GEMINI_API_KEYS=${GEMINI_API_KEYS}
             - GEMINI_MODEL_NAMES=${GEMINI_MODEL_NAMES}
-            - OCR_SERVICE_URL=http://ocr-python:8003/api/ocr/process
+            - OCR_SERVICE_URL=http://ocr-python:8003
         env_file:
             - .env
         depends_on:
@@ -288,7 +288,7 @@ services:
             - NODE_ENV=production
             - PORT=7006
             - GRPC_PORT=50056
-            - OCR_PYTHON_SERVICE_URL=http://ocr-python:8003/api/ocr/process
+            - OCR_PYTHON_SERVICE_URL=http://ocr-python:8003/api/ocr
         env_file:
             - .env
         depends_on:
