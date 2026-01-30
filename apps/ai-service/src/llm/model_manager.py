@@ -239,6 +239,7 @@ class ModelManager:
                     response = await client.post(url, json={
                         "model": ollama_info["model"],
                         "prompt": prompt,
+                        "format": "json",  # Force JSON output
                         "stream": False,
                         "options": {
                             "temperature": self.get_temperature(),

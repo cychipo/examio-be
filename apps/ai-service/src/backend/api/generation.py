@@ -33,7 +33,7 @@ class GenerateQuizBody(BaseModel):
     user_id: str = Field(..., alias="userId", description="ID của user")
     num_questions: Annotated[int, Field(default=10, alias="numQuestions", ge=1, le=100)] = 10
     is_narrow_search: Annotated[bool, Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")] = False
-    keyword: Annotated[str | None, Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")] = None
+    keyword: Annotated[Optional[str], Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")] = None
     model_type: Annotated[str, Field(
         default="gemini",
         alias="modelType",
@@ -49,7 +49,7 @@ class GenerateFlashcardBody(BaseModel):
     user_id: str = Field(..., alias="userId", description="ID của user")
     num_flashcards: Annotated[int, Field(default=10, alias="numFlashcards", ge=1, le=100)] = 10
     is_narrow_search: Annotated[bool, Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")] = False
-    keyword: Annotated[str | None, Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")] = None
+    keyword: Annotated[Optional[str], Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")] = None
     model_type: Annotated[str, Field(
         default="gemini",
         alias="modelType",
