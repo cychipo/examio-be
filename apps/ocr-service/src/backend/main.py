@@ -39,7 +39,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info(logger_msg)
 
-# ... (FastAPI setup remains same)
+# FastAPI App Setup
+app = FastAPI(
+    title="OCR Service",
+    description="OCR microservice using olmocr with Tesseract fallback",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Create upload and output directories
+UPLOAD_DIR = Path("/app/apps/ocr-service/uploads")
+OUTPUT_DIR = Path("/app/apps/ocr-service/outputs")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def run_olmocr(pdf_path: Path, output_dir: Path) -> tuple[Path, int]:
     """
