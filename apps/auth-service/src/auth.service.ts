@@ -157,25 +157,37 @@ export class AuthService {
             });
 
             // Publish USER_CREATED event for other services (fire-and-forget to avoid timeout)
-            this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
-                userId: newUser.id,
-                email: newUser.email,
-                username: newUser.username,
-            }).catch(error => {
-                console.error(`Failed to publish USER_CREATED event for user ${newUser.id}:`, error);
-            });
+            this.eventPublisher
+                .publishAuthEvent(EventType.USER_CREATED, {
+                    userId: newUser.id,
+                    email: newUser.email,
+                    username: newUser.username,
+                })
+                .catch((error) => {
+                    console.error(
+                        `Failed to publish USER_CREATED event for user ${newUser.id}:`,
+                        error
+                    );
+                });
 
             // Send welcome email
-            this.mailService.sendMail(
-                email,
-                'Chào mừng bạn đến với ExamIO',
-                'welcome.template',
-                {
-                    username: newUser.username,
-                    useremail: newUser.email,
-                    loginUrl: `${process.env.FRONTEND_URL}/login`,
-                }
-            );
+            this.mailService
+                .sendMail(
+                    email,
+                    'Chào mừng bạn đến với ExamIO',
+                    'welcome.template',
+                    {
+                        username: newUser.username,
+                        useremail: newUser.email,
+                        loginUrl: `${process.env.FRONTEND_URL}/login`,
+                    }
+                )
+                .catch((error) => {
+                    console.error(
+                        `Failed to send welcome email to ${email}:`,
+                        error
+                    );
+                });
 
             // Auto-login: Generate token and create session
             const token = this.jwtService.sign({ userId: newUser.id });
@@ -231,15 +243,22 @@ export class AuthService {
                 },
             });
 
-            this.mailService.sendMail(
-                user.email,
-                'Xác minh tài khoản của bạn',
-                'verify-account.template',
-                {
-                    username: user.username,
-                    verificationCode: code,
-                }
-            );
+            this.mailService
+                .sendMail(
+                    user.email,
+                    'Xác minh tài khoản của bạn',
+                    'verify-account.template',
+                    {
+                        username: user.username,
+                        verificationCode: code,
+                    }
+                )
+                .catch((error) => {
+                    console.error(
+                        `Failed to send verification email to ${user.email}:`,
+                        error
+                    );
+                });
 
             return { message: 'Email xác minh đã được gửi' };
         } catch (error) {
@@ -317,15 +336,22 @@ export class AuthService {
                 },
             });
 
-            this.mailService.sendMail(
-                user.email,
-                'Yêu cầu đặt lại mật khẩu',
-                'reset-password.template',
-                {
-                    username: user.username,
-                    resetCode: code,
-                }
-            );
+            this.mailService
+                .sendMail(
+                    user.email,
+                    'Yêu cầu đặt lại mật khẩu',
+                    'reset-password.template',
+                    {
+                        username: user.username,
+                        resetCode: code,
+                    }
+                )
+                .catch((error) => {
+                    console.error(
+                        `Failed to send reset password email to ${user.email}:`,
+                        error
+                    );
+                });
 
             return { message: 'Email đặt lại mật khẩu đã được gửi' };
         } catch (error) {
@@ -407,15 +433,22 @@ export class AuthService {
                 },
             });
 
-            this.mailService.sendMail(
-                user.email,
-                'Xác minh đổi mật khẩu',
-                'change-password.template',
-                {
-                    username: user.username,
-                    changeCode: code,
-                }
-            );
+            this.mailService
+                .sendMail(
+                    user.email,
+                    'Xác minh đổi mật khẩu',
+                    'change-password.template',
+                    {
+                        username: user.username,
+                        changeCode: code,
+                    }
+                )
+                .catch((error) => {
+                    console.error(
+                        `Failed to send change password email to ${user.email}:`,
+                        error
+                    );
+                });
 
             return { message: 'Mã xác minh đã được gửi đến email của bạn' };
         } catch (error) {
@@ -524,13 +557,18 @@ export class AuthService {
             });
 
             // Publish USER_CREATED event for wallet creation and other services (fire-and-forget to avoid timeout)
-            this.eventPublisher.publishAuthEvent(EventType.USER_CREATED, {
-                userId: existingUser.id,
-                email: existingUser.email,
-                username: existingUser.username,
-            }).catch(error => {
-                console.error(`Failed to publish USER_CREATED event for user ${existingUser?.id}:`, error);
-            });
+            this.eventPublisher
+                .publishAuthEvent(EventType.USER_CREATED, {
+                    userId: existingUser.id,
+                    email: existingUser.email,
+                    username: existingUser.username,
+                })
+                .catch((error) => {
+                    console.error(
+                        `Failed to publish USER_CREATED event for user ${existingUser?.id}:`,
+                        error
+                    );
+                });
         }
 
         const token = this.jwtService.sign({ userId: existingUser.id });

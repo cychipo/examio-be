@@ -7,7 +7,7 @@ import {
     InternalServerErrorException,
     NotFoundException,
 } from '@nestjs/common';
-import { GenerateIdService } from '@examio/common';
+import { GenerateIdService, sanitizeFilename } from '@examio/common';
 import { EXPIRED_TIME } from '@examio/redis';
 import { User } from '@prisma/client';
 import { CreateQuizsetDto } from './dto/create-quizset.dto';
@@ -40,7 +40,7 @@ export class QuizsetService {
             // Handle thumbnail upload if file is provided
             let thumbnailUrl = dto.thumbnail || null;
             if (thumbnailFile) {
-                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const fileName = `${Date.now()}-${sanitizeFilename(thumbnailFile.originalname)}`;
                 const r2Key = await this.r2Service.uploadFile(
                     fileName,
                     thumbnailFile.buffer,
@@ -386,7 +386,7 @@ export class QuizsetService {
             ) {
                 const oldThumbnailUrl = quizSet.thumbnail;
 
-                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const fileName = `${Date.now()}-${sanitizeFilename(thumbnailFile.originalname)}`;
                 const r2Key = await this.r2Service.uploadFile(
                     fileName,
                     thumbnailFile.buffer,
@@ -772,15 +772,23 @@ export class QuizsetService {
                             // Question already exists in this quizset
                             // Check if labelId needs to be updated
                             const existingDetail = existingQuestions.find(
-                                eq => eq.quizSetId === quizSetId &&
-                                      this.hashQuestion(eq.quizQuestion.question, eq.quizQuestion.answer) === hash
+                                (eq) =>
+                                    eq.quizSetId === quizSetId &&
+                                    this.hashQuestion(
+                                        eq.quizQuestion.question,
+                                        eq.quizQuestion.answer
+                                    ) === hash
                             );
 
-                            if (existingDetail && existingDetail.labelId !== targetLabelId) {
+                            if (
+                                existingDetail &&
+                                existingDetail.labelId !== targetLabelId
+                            ) {
                                 // Update labelId for existing question
                                 detailsToUpdate.push({
                                     quizSetId,
-                                    quizQuestionId: existingDetail.quizQuestionId,
+                                    quizQuestionId:
+                                        existingDetail.quizQuestionId,
                                     labelId: targetLabelId,
                                 });
                                 updatedCount++;
@@ -885,7 +893,12 @@ export class QuizsetService {
     async addQuestionToQuizSet(
         quizSetId: string,
         user: User,
-        dto: { question: string; options: string[]; answer: string; labelId?: string | null }
+        dto: {
+            question: string;
+            options: string[];
+            answer: string;
+            labelId?: string | null;
+        }
     ) {
         // Check ownership
         const quizSet = await this.quizSetRepository.findOne({
@@ -1075,7 +1088,12 @@ export class QuizsetService {
     async createLabel(
         quizSetId: string,
         user: User,
-        dto: { name: string; description?: string; color?: string; order?: number }
+        dto: {
+            name: string;
+            description?: string;
+            color?: string;
+            order?: number;
+        }
     ) {
         // Check ownership
         const quizSet = await this.quizSetRepository.findOne({

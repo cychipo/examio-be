@@ -2,253 +2,372 @@
 # =============================================================================
 # Usage:
 #   1. Copy this file to docker-compose.yml at project root on your VPS
-#   2. Create .env file with required environment variables
+#   2. Create .env file with required environment variables (see .env.example)
 #   3. docker compose build && docker compose up -d
+#
+# This configuration includes:
+#   - PostgreSQL database (containerized)
+#   - Redis cache (containerized)
+#   - RabbitMQ message queue (containerized)
+#   - All microservices (gateway, auth, exam, finance, r2, ai)
 # =============================================================================
 
 # Shared logging configuration
 x-logging: &default-logging
-  driver: "json-file"
-  options:
-    max-size: "10m"
-    max-file: "3"
+    driver: 'json-file'
+    options:
+        max-size: '10m'
+        max-file: '3'
 
 # Shared healthcheck for NestJS services
 x-nestjs-healthcheck: &nestjs-healthcheck
-  interval: 30s
-  timeout: 10s
-  retries: 5
-  start_period: 60s
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
 
 services:
-  # ==================== GATEWAY ====================
-  gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE_NAME: gateway-service
-    container_name: examio-gateway
-    ports:
-      - "6369:7000"
-    environment:
-      - NODE_ENV=production
-      - PORT=7000
-      - FRONTEND_URL=${FRONTEND_URL}
-      - AUTH_SERVICE_URL=http://auth:7001
-      - EXAM_SERVICE_URL=http://exam:7002
-      - FINANCE_SERVICE_URL=http://finance:7003
-      - AI_SERVICE_URL=http://ai:7005/api
-      - DATABASE_URL=${DATABASE_URL}
-      - AUTH_GRPC_URL=auth:50051
-    env_file:
-      - .env
-    depends_on:
-      auth:
-        condition: service_healthy
-      exam:
-        condition: service_healthy
-      finance:
-        condition: service_healthy
-    networks:
-      - examio-network
-    healthcheck:
-      <<: *nestjs-healthcheck
-      test:
-        ["CMD", "wget", "-q", "--spider", "http://localhost:7000/api/v1/health"]
-    restart: unless-stopped
-    logging: *default-logging
+    # ==================== GATEWAY ====================
+    gateway:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+            args:
+                SERVICE_NAME: gateway-service
+        container_name: examio-gateway
+        ports:
+            - '6369:7000'
+        environment:
+            - NODE_ENV=production
+            - PORT=7000
+            - FRONTEND_URL=${FRONTEND_URL}
+            - AUTH_SERVICE_URL=http://auth:7001
+            - EXAM_SERVICE_URL=http://exam:7002
+            - FINANCE_SERVICE_URL=http://finance:7003
+            - AI_SERVICE_URL=http://ai:7005/api
+            - DATABASE_URL=${DATABASE_URL}
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+            - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+            - AUTH_GRPC_URL=auth:50051
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            auth:
+                condition: service_healthy
+            exam:
+                condition: service_healthy
+            finance:
+                condition: service_healthy
+        networks:
+            - examio-network
+        healthcheck:
+            <<: *nestjs-healthcheck
+            test:
+                [
+                    'CMD',
+                    'wget',
+                    '-q',
+                    '--spider',
+                    'http://localhost:7000/api/v1/health',
+                ]
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== AUTH SERVICE ====================
-  auth:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE_NAME: auth-service
-    container_name: examio-auth
-    environment:
-      - NODE_ENV=production
-      - PORT=7001
-      - DATABASE_URL=${DATABASE_URL}
-      - GRPC_PORT=50051
-      - WALLET_GRPC_URL=finance:50053
-      - R2_GRPC_URL=r2:50054
-    env_file:
-      - .env
-    depends_on:
-      finance:
-        condition: service_healthy
-      r2:
-        condition: service_healthy
-    networks:
-      - examio-network
-    healthcheck:
-      <<: *nestjs-healthcheck
-      test:
-        ["CMD", "wget", "-q", "--spider", "http://localhost:7001/api/v1/health"]
-    restart: unless-stopped
-    logging: *default-logging
+    # ==================== AUTH SERVICE ====================
+    auth:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+            args:
+                SERVICE_NAME: auth-service
+        container_name: examio-auth
+        environment:
+            - NODE_ENV=production
+            - PORT=7001
+            - DATABASE_URL=${DATABASE_URL}
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+            - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+            - GRPC_PORT=50051
+            - WALLET_GRPC_URL=finance:50053
+            - R2_GRPC_URL=r2:50054
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            finance:
+                condition: service_healthy
+            r2:
+                condition: service_healthy
+        networks:
+            - examio-network
+        healthcheck:
+            <<: *nestjs-healthcheck
+            test:
+                [
+                    'CMD',
+                    'wget',
+                    '-q',
+                    '--spider',
+                    'http://localhost:7001/api/v1/health',
+                ]
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== EXAM SERVICE ====================
-  exam:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE_NAME: exam-service
-        ENABLE_OCR: "true"
-    container_name: examio-exam
-    environment:
-      - NODE_ENV=production
-      - PORT=7002
-      - AI_SERVICE_URL=http://ai:7005/api
-      - R2_SERVICE_URL=r2:7004
-      - RABBITMQ_URL=${RABBITMQ_URL}
-      - DATABASE_URL=${DATABASE_URL}
-      - R2_GRPC_URL=r2:50054
-      - FINANCE_SERVICE_GRPC_URL=finance:50053
-    env_file:
-      - .env
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      r2:
-        condition: service_healthy
-      finance:
-        condition: service_healthy
-    networks:
-      - examio-network
-    healthcheck:
-      <<: *nestjs-healthcheck
-      test:
-        ["CMD", "wget", "-q", "--spider", "http://localhost:7002/api/v1/health"]
-    restart: unless-stopped
-    logging: *default-logging
+    # ==================== EXAM SERVICE ====================
+    exam:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+            args:
+                SERVICE_NAME: exam-service
+                ENABLE_OCR: 'true'
+        container_name: examio-exam
+        environment:
+            - NODE_ENV=production
+            - PORT=7002
+            - AI_SERVICE_URL=http://ai:7005/api
+            - R2_SERVICE_URL=r2:7004
+            - RABBITMQ_URL=${RABBITMQ_URL}
+            - DATABASE_URL=${DATABASE_URL}
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+            - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+            - R2_GRPC_URL=r2:50054
+            - FINANCE_SERVICE_GRPC_URL=finance:50053
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+            r2:
+                condition: service_healthy
+            finance:
+                condition: service_healthy
+        networks:
+            - examio-network
+        healthcheck:
+            <<: *nestjs-healthcheck
+            test:
+                [
+                    'CMD',
+                    'wget',
+                    '-q',
+                    '--spider',
+                    'http://localhost:7002/api/v1/health',
+                ]
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== FINANCE SERVICE ====================
-  finance:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE_NAME: finance-service
-    container_name: examio-finance
-    environment:
-      - NODE_ENV=production
-      - PORT=7003
-      - DATABASE_URL=${DATABASE_URL}
-      - GRPC_PORT=50053
-    env_file:
-      - .env
-    networks:
-      - examio-network
-    healthcheck:
-      <<: *nestjs-healthcheck
-      test:
-        ["CMD", "wget", "-q", "--spider", "http://localhost:7003/api/v1/health"]
-    restart: unless-stopped
-    logging: *default-logging
+    # ==================== FINANCE SERVICE ====================
+    finance:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+            args:
+                SERVICE_NAME: finance-service
+        container_name: examio-finance
+        environment:
+            - NODE_ENV=production
+            - PORT=7003
+            - DATABASE_URL=${DATABASE_URL}
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+            - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+            - GRPC_PORT=50053
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+        networks:
+            - examio-network
+        healthcheck:
+            <<: *nestjs-healthcheck
+            test:
+                [
+                    'CMD',
+                    'wget',
+                    '-q',
+                    '--spider',
+                    'http://localhost:7003/api/v1/health',
+                ]
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== R2 SERVICE (gRPC) ====================
-  r2:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE_NAME: r2-service
-    container_name: examio-r2
-    environment:
-      - NODE_ENV=production
-      - PORT=7004
-      - GRPC_PORT=50054
-    env_file:
-      - .env
-    networks:
-      - examio-network
-    healthcheck:
-      <<: *nestjs-healthcheck
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7004/health"]
-    restart: unless-stopped
-    logging: *default-logging
+    # ==================== R2 SERVICE (gRPC) ====================
+    r2:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+            args:
+                SERVICE_NAME: r2-service
+        container_name: examio-r2
+        environment:
+            - NODE_ENV=production
+            - PORT=7004
+            - GRPC_PORT=50054
+        env_file:
+            - .env
+        networks:
+            - examio-network
+        healthcheck:
+            <<: *nestjs-healthcheck
+            test:
+                [
+                    'CMD',
+                    'wget',
+                    '-q',
+                    '--spider',
+                    'http://localhost:7004/health',
+                ]
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== AI SERVICE (Python) ====================
-  ai:
-    build:
-      context: ./apps/ai-service
-      dockerfile: Dockerfile
-    container_name: examio-ai
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PORT=7005
-      - RABBITMQ_URL=${RABBITMQ_URL}
-      - DATABASE_URL=${DATABASE_URL}
-      - GEMINI_API_KEYS=${GEMINI_API_KEYS}
-      - GEMINI_MODEL_NAMES=${GEMINI_MODEL_NAMES}
-    env_file:
-      - .env
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    networks:
-      - examio-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7005/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    restart: unless-stopped
-    logging: *default-logging
+    # ==================== AI SERVICE (Python) ====================
+    ai:
+        build:
+            context: ../apps/ai-service
+            dockerfile: Dockerfile
+        container_name: examio-ai
+        environment:
+            - PYTHONUNBUFFERED=1
+            - PORT=7005
+            - RABBITMQ_URL=${RABBITMQ_URL}
+            - DATABASE_URL=${DATABASE_URL}
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+            - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+            - GEMINI_API_KEYS=${GEMINI_API_KEYS}
+            - GEMINI_MODEL_NAMES=${GEMINI_MODEL_NAMES}
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+        networks:
+            - examio-network
+        healthcheck:
+            test: ['CMD', 'curl', '-f', 'http://localhost:7005/health']
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 60s
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== RABBITMQ ====================
-  rabbitmq:
-    image: rabbitmq:3.12-management-alpine
-    container_name: examio-rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    environment:
-      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-admin}
-      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS:-admin}
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - examio-network
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-    logging: *default-logging
+    # ==================== RABBITMQ ====================
+    rabbitmq:
+        image: rabbitmq:3.12-management-alpine
+        container_name: examio-rabbitmq
+        ports:
+            - '5672:5672'
+            - '15672:15672'
+        environment:
+            - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-admin}
+            - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS:-admin}
+        volumes:
+            - rabbitmq_data:/var/lib/rabbitmq
+        networks:
+            - examio-network
+        healthcheck:
+            test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+            interval: 30s
+            timeout: 10s
+            retries: 3
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== REDIS (External) ====================
-  # Removed per request (User has existing Redis)
+    # ==================== POSTGRESQL ====================
+    postgres:
+        image: pgvector/pgvector:pg16
+        container_name: examio-postgres
+        ports:
+            - '5432:5432'
+        environment:
+            - POSTGRES_USER=${POSTGRES_USER:-examio}
+            - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-examio_password}
+            - POSTGRES_DB=${POSTGRES_DB:-examio}
+            - PGDATA=/var/lib/postgresql/data/pgdata
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+        networks:
+            - examio-network
+        healthcheck:
+            test:
+                [
+                    'CMD-SHELL',
+                    'pg_isready -U ${POSTGRES_USER:-examio} -d ${POSTGRES_DB:-examio}',
+                ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== POSTGRESQL (External) ====================
-  # Removed per request (User has existing Postgres)
+    # ==================== REDIS ====================
+    redis:
+        image: redis:7-alpine
+        container_name: examio-redis
+        ports:
+            - '6379:6379'
+        command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+        volumes:
+            - redis_data:/data
+        networks:
+            - examio-network
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+        restart: unless-stopped
+        logging: *default-logging
 
-  # ==================== MIGRATION ====================
-  # Runs prisma migrate deploy and exits
-  migration:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.migration
-    container_name: examio-migration
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-    env_file:
-      - .env
-    # depends_on: postgres (Removed - external DB)
-    networks:
-      - examio-network
-    restart: "no"
-    logging: *default-logging
+    # ==================== MIGRATION ====================
+    # Runs prisma migrate deploy and exits
+    migration:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile.migration
+        container_name: examio-migration
+        environment:
+            - DATABASE_URL=${DATABASE_URL}
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+        networks:
+            - examio-network
+        restart: 'no'
+        logging: *default-logging
 
 networks:
-  examio-network:
-    driver: bridge
+    examio-network:
+        driver: bridge
 
 volumes:
-  rabbitmq_data:
+    rabbitmq_data:
+    postgres_data:
+    redis_data:

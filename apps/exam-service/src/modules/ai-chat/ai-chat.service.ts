@@ -590,7 +590,17 @@ export class AIChatService implements OnModuleInit {
         }
     }
 
+    /**
+     * FREE_MODE: Khi bật, bypass tất cả limits
+     */
     private async checkLimits(userId: string, chatId: string) {
+        // FREE_MODE: Bypass all limits
+        const FREE_MODE = true;
+        if (FREE_MODE) {
+            this.logger.log(`[FREE_MODE] Bypassed limits for user ${userId}`);
+            return;
+        }
+
         let benefits;
         try {
             if (!this.subscriptionService) {
@@ -647,31 +657,40 @@ export class AIChatService implements OnModuleInit {
 
         if (deleteFiles) {
             // Get all document IDs associated with this chat
-            const documentIds = await this.chatRepository.getDocumentIds(chatId);
+            const documentIds =
+                await this.chatRepository.getDocumentIds(chatId);
 
             // Delete each file from R2 and database
             for (const docId of documentIds) {
                 try {
                     // Get file info
-                    const userStorage = await this.prisma.userStorage.findUnique({
-                        where: { id: docId },
-                        select: { id: true, filename: true, keyR2: true }
-                    });
+                    const userStorage =
+                        await this.prisma.userStorage.findUnique({
+                            where: { id: docId },
+                            select: { id: true, filename: true, keyR2: true },
+                        });
 
                     if (userStorage) {
                         // Delete from R2
-                        await this.r2UploadService.deleteImage(userStorage.keyR2);
+                        await this.r2UploadService.deleteImage(
+                            userStorage.keyR2
+                        );
 
                         // Delete from database (cascade will handle related records)
                         await this.prisma.userStorage.delete({
-                            where: { id: docId }
+                            where: { id: docId },
                         });
 
                         deletedFiles.push(userStorage.filename);
-                        this.logger.log(`[clearChat] Deleted file: ${userStorage.filename}`);
+                        this.logger.log(
+                            `[clearChat] Deleted file: ${userStorage.filename}`
+                        );
                     }
                 } catch (error) {
-                    this.logger.error(`[clearChat] Error deleting file ${docId}:`, error);
+                    this.logger.error(
+                        `[clearChat] Error deleting file ${docId}:`,
+                        error
+                    );
                     // Continue with other files even if one fails
                 }
             }
@@ -682,8 +701,10 @@ export class AIChatService implements OnModuleInit {
 
         return {
             success: true,
-            message: deleteFiles ? 'Chat và files đã được xóa' : 'Chat đã được xóa',
-            deletedFiles: deleteFiles ? deletedFiles : undefined
+            message: deleteFiles
+                ? 'Chat và files đã được xóa'
+                : 'Chat đã được xóa',
+            deletedFiles: deleteFiles ? deletedFiles : undefined,
         };
     }
 }

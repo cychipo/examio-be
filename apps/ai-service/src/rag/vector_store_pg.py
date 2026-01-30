@@ -66,35 +66,51 @@ class PgVectorStore:
             await self._pool.close()
             self._pool = None
 
-    async def create_embedding(self, text: str, task_type: str = "retrieval_document") -> List[float]:
+    async def create_embedding(
+        self, 
+        text: str, 
+        task_type: str = "retrieval_document",
+        model_type: str = "gemini"
+    ) -> List[float]:
         """
         Tạo embedding vector cho text.
-        Sử dụng GeminiClient để có token rotation.
 
         Args:
             text: Text cần embedding
             task_type: "retrieval_document" cho documents, "retrieval_query" cho queries
+            model_type: "gemini" cho Gemini API, "fayedark" cho Ollama local
         """
-        try:
+        if model_type == "fayedark":
+            # Use Ollama local embeddings
+            from src.llm.ollama_embeddings import ollama_embeddings
+            return await ollama_embeddings.create_embedding(text, task_type)
+        else:
+            # Use Gemini embeddings (default)
             from src.llm.gemini_client import gemini_client
-        except ImportError:
-            from src.llm.gemini_client import gemini_client
-        return await gemini_client.create_embedding(text, task_type)
+            return await gemini_client.create_embedding(text, task_type)
 
     async def create_embeddings_batch(
         self,
         texts: List[str],
-        task_type: str = "retrieval_document"
+        task_type: str = "retrieval_document",
+        model_type: str = "gemini"
     ) -> List[List[float]]:
         """
         Tạo embeddings cho nhiều texts với batching.
-        Sử dụng GeminiClient để có token rotation và tránh rate limit.
+
+        Args:
+            texts: List texts cần embedding
+            task_type: Task type
+            model_type: "gemini" cho Gemini API, "fayedark" cho Ollama local
         """
-        try:
+        if model_type == "fayedark":
+            # Use Ollama local embeddings
+            from src.llm.ollama_embeddings import ollama_embeddings
+            return await ollama_embeddings.create_embeddings_batch(texts, task_type)
+        else:
+            # Use Gemini embeddings (default)
             from src.llm.gemini_client import gemini_client
-        except ImportError:
-            from src.llm.gemini_client import gemini_client
-        return await gemini_client.create_embeddings_batch(texts, task_type)
+            return await gemini_client.create_embeddings_batch(texts, task_type)
 
     async def store_document(
         self,
@@ -102,7 +118,8 @@ class PgVectorStore:
         user_storage_id: str,
         content: str,
         page_range: str,
-        title: Optional[str] = None
+        title: Optional[str] = None,
+        model_type: str = "gemini"
     ) -> bool:
         """
         Lưu document chunk với embedding vào database.
@@ -113,13 +130,14 @@ class PgVectorStore:
             content: Nội dung text
             page_range: Phạm vi trang (vd: "1-3")
             title: Tiêu đề (optional)
+            model_type: "gemini" hoặc "fayedark" cho embedding
 
         Returns:
             True nếu thành công
         """
         try:
             # Tạo embedding cho content
-            embedding = await self.create_embedding(content)
+            embedding = await self.create_embedding(content, model_type=model_type)
 
             pool = await self._get_pool()
 
@@ -150,14 +168,15 @@ class PgVectorStore:
 
     async def store_documents_batch(
         self,
-        documents: List[Dict[str, Any]]
+        documents: List[Dict[str, Any]],
+        model_type: str = "gemini"
     ) -> int:
         """
         Lưu nhiều document chunks với batch embedding.
-        Sử dụng batch embedding để tối ưu rate limit.
 
         Args:
             documents: List dict với keys: id, user_storage_id, content, page_range, title (optional)
+            model_type: "gemini" hoặc "fayedark" cho embedding
 
         Returns:
             Số documents được lưu thành công
@@ -168,7 +187,7 @@ class PgVectorStore:
         try:
             # Tạo batch embeddings
             contents = [doc['content'] for doc in documents]
-            embeddings = await self.create_embeddings_batch(contents, "retrieval_document")
+            embeddings = await self.create_embeddings_batch(contents, "retrieval_document", model_type=model_type)
 
             pool = await self._get_pool()
             success_count = 0
@@ -210,7 +229,8 @@ class PgVectorStore:
                     doc['user_storage_id'],
                     doc['content'],
                     doc['page_range'],
-                    doc.get('title')
+                    doc.get('title'),
+                    model_type=model_type
                 )
                 if success:
                     success_count += 1

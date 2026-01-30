@@ -19,7 +19,7 @@ export interface SepayWebhook {
     /** Mã giao dịch ngân hàng */
     code: string | null;
 
-    /** Nội dung chuyển khoản - chứa FAYEDU{paymentId} */
+    /** Nội dung chuyển khoản - chứa KMAEDU{paymentId} */
     content: string;
 
     /** Loại giao dịch: 'in' = tiền vào, 'out' = tiền ra */

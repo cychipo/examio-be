@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { User } from '@prisma/client';
-import { GenerateIdService, R2ClientService } from '@examio/common';
+import {
+    GenerateIdService,
+    R2ClientService,
+    sanitizeFilename,
+} from '@examio/common';
 import { AIRepository } from './ai.repository';
 import {
     UploadFileDto,
@@ -58,11 +62,13 @@ export class AIService {
 
         try {
             // 1. Upload to R2 via gRPC - returns key (string)
+            // Sanitize filename to handle Vietnamese characters
+            const sanitizedName = `${Date.now()}-${sanitizeFilename(file.originalname)}`;
             this.logger.log('Uploading to R2 via gRPC...');
             let keyR2: string;
             try {
                 keyR2 = await this.r2ClientService.uploadFile(
-                    file.originalname,
+                    sanitizedName,
                     file.buffer,
                     file.mimetype,
                     'ai-teacher'
@@ -147,10 +153,12 @@ export class AIService {
 
         try {
             // 1. Upload to R2 via gRPC
+            // Sanitize filename to handle Vietnamese characters
+            const sanitizedName = `${Date.now()}-${sanitizeFilename(file.originalname)}`;
             const uploadStart = Date.now();
             this.logger.log('Uploading to R2 via gRPC...');
             const keyR2 = await this.r2ClientService.uploadFile(
-                file.originalname,
+                sanitizedName,
                 file.buffer,
                 file.mimetype,
                 'ai-uploads'
@@ -282,7 +290,7 @@ export class AIService {
                 this.httpService.post(
                     `${this.aiServiceUrl}/ai/process-file`,
                     { user_storage_id: userStorageId },
-                    { timeout: 300000 } // 5 min timeout for OCR
+                    { timeout: 3600000 } // 60 min timeout for OCR
                 )
             );
 
@@ -316,7 +324,7 @@ export class AIService {
                         [isFlashcard ? 'numFlashcards' : 'numQuestions']: count,
                         modelType: modelType || 'gemini',
                     },
-                    { timeout: 300000 } // 5 min timeout for generation
+                    { timeout: 3600000 } // 60 min timeout for generation
                 )
             );
 
@@ -655,7 +663,7 @@ export class AIService {
                             keyword: dto.keyword,
                             modelType: dto.modelType || 'gemini',
                         },
-                        { timeout: 600000 } // 10 min timeout for Ollama
+                        { timeout: 3600000 } // 60 min timeout for Ollama
                     )
                 );
 
@@ -686,7 +694,7 @@ export class AIService {
                             keyword: dto.keyword,
                             modelType: dto.modelType || 'gemini',
                         },
-                        { timeout: 600000 } // 10 min timeout for Ollama
+                        { timeout: 3600000 } // 60 min timeout for Ollama
                     )
                 );
 

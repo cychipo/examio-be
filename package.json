@@ -15,6 +15,8 @@
         "dev:finance": "nest start finance-service --watch",
         "dev:r2": "nest start r2-service --watch",
         "dev:gateway": "nest start gateway-service --watch",
+        "dev:ocr": "nest start ocr-service --watch",
+        "dev:ocr-python": "cd apps/ocr-service && PYTHONPATH=src:../../olmocr OLMOCR_PATH=../../olmocr python -m src.backend.main",
         "dev:ai": "cd apps/ai-service && PYTHONPATH=src SSL_CERT_FILE=$(./venv/bin/python -c 'import certifi; print(certifi.where())') ./venv/bin/uvicorn src.backend.main:app --reload --port 8000",
         "dev:all": "concurrently \"pnpm dev:gateway\" \"pnpm dev:auth\" \"pnpm dev:exam\" \"pnpm dev:finance\" \"pnpm dev:r2\" \"pnpm dev:ai\"",
         "prisma:merge": "prisma-merge -b libs/database/src/base.prisma -s 'libs/database/src/models/*.prisma' -o libs/database/src/schema.prisma",
@@ -22,6 +24,7 @@
         "prisma:migrate": "pnpm prisma:merge && prisma migrate dev --schema=libs/database/src/schema.prisma",
         "prisma:push": "pnpm prisma:merge && prisma db push --schema=libs/database/src/schema.prisma",
         "prisma:studio": "prisma studio --schema=libs/database/src/schema.prisma",
+        "prisma:deploy": "pnpm prisma:merge && prisma migrate deploy --schema=libs/database/src/schema.prisma",
         "start:prod": "node dist/apps/codecraft-be/main"
     },
     "keywords": [],

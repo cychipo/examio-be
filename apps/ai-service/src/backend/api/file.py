@@ -116,6 +116,60 @@ async def process_file(request: ProcessFileRequest):
             logger.info(f"Downloading file from R2: {file_info.url}")
             file_bytes, temp_path = await ocr_service.download_file_from_r2(file_info.url)
 
+            # --- PREFER OLMOCR SERVICE ---
+            try:
+                logger.info("🚀 Attempting to use high-quality OLMOCR service...")
+                import httpx
+                OCR_SERVICE_URL = os.environ.get("OCR_SERVICE_URL", "http://localhost:8003")
+
+                async with httpx.AsyncClient(timeout=600.0) as client:
+                    # Send file to OCR service
+                    files = {"file": (file_info.filename, file_bytes, file_info.mimetype)}
+                    ocr_response = await client.post(f"{OCR_SERVICE_URL}/api/ocr/process", files=files)
+
+                    if ocr_response.status_code == 200:
+                        ocr_result = ocr_response.json()
+                        if ocr_result.get("success"):
+                            content = ocr_result.get("content")
+                            page_count = ocr_result.get("page_count", 1)
+                            method = ocr_result.get("method", "unknown")
+                            logger.info(f"✅ OLMOCR Success (Method: {method}): {len(content)} chars")
+
+                            # Split into chunks for vector storage
+                            from langchain_text_splitters import RecursiveCharacterTextSplitter
+                            text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+                            text_chunks = text_splitter.split_text(content)
+
+                            pg_store = get_pg_vector_store()
+                            documents_to_store = []
+                            for i, chunk_text in enumerate(text_chunks):
+                                chunk_id = f"{user_storage_id}_chunk_{i}"
+                                documents_to_store.append({
+                                    'id': chunk_id,
+                                    'user_storage_id': user_storage_id,
+                                    'content': chunk_text,
+                                    'page_range': f"{i+1}",
+                                    'title': f"Chunk {i+1}"
+                                })
+
+                            stored_count = await pg_store.store_documents_batch(documents_to_store)
+
+                            # Update status to COMPLETED
+                            await ocr_service.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
+
+                            return {
+                                "success": True,
+                                "cached": False,
+                                "message": f"OCR (via {method}) và lưu embeddings thành công",
+                                "chunks_count": stored_count,
+                                "user_storage_id": user_storage_id
+                            }
+                    else:
+                        logger.warning(f"⚠️ OLMOCR service failed (Status {ocr_response.status_code}), falling back to Tesseract")
+            except Exception as ocr_svc_err:
+                logger.warning(f"⚠️ Could not reach OLMOCR service: {ocr_svc_err}. Falling back to Tesseract")
+
+            # --- FALLBACK TO TESSERACT (OLD METHOD) ---
             # Import PDF OCR service
             from backend.services.pdf_ocr_service import pdf_ocr_service
 

@@ -111,6 +111,15 @@
                 "tsConfigPath": "apps/gateway-service/tsconfig.app.json"
             }
         },
+        "ocr-service": {
+            "type": "application",
+            "root": "apps/ocr-service",
+            "entryFile": "main",
+            "sourceRoot": "apps/ocr-service/src",
+            "compilerOptions": {
+                "tsConfigPath": "apps/ocr-service/tsconfig.app.json"
+            }
+        },
         "redis": {
             "type": "library",
             "root": "libs/redis",

@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package ocr;
+
+// OCR Service - Xử lý OCR cho PDF documents
+service OcrService {
+    // Process PDF và trả về markdown content
+    rpc ProcessPdf (ProcessPdfRequest) returns (ProcessPdfResponse);
+
+    // Check OCR service health
+    rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ==================== ProcessPdf ====================
+
+message ProcessPdfRequest {
+    bytes pdf_data = 1;           // PDF file data as bytes
+    string filename = 2;          // Original filename
+    optional string user_id = 3;  // Optional user ID for tracking
+}
+
+message ProcessPdfResponse {
+    bool success = 1;
+    string job_id = 2;            // Unique job identifier
+    string content = 3;           // Markdown content from OCR
+    string error_message = 4;     // Error message if failed
+    int32 page_count = 5;         // Number of pages processed
+}
+
+// ==================== HealthCheck ====================
+
+message HealthCheckRequest {
+    // Empty request
+}
+
+message HealthCheckResponse {
+    bool healthy = 1;
+    string message = 2;
+    string version = 3;
+}

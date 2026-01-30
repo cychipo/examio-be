@@ -73,7 +73,7 @@ ENV SERVICE_NAME=${SERVICE_NAME} NODE_ENV=production
 # Install minimal runtime dependencies
 RUN apk add --no-cache wget && \
     if [ "$ENABLE_OCR" = "true" ]; then \
-    apk add --no-cache tesseract-ocr tesseract-ocr-data-eng graphicsmagick ghostscript; \
+    apk add --no-cache tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-vie graphicsmagick ghostscript poppler-utils; \
     fi && \
     rm -rf /var/cache/apk/* /tmp/*
 
@@ -83,6 +83,8 @@ WORKDIR /app
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=prod-deps /app/libs ./libs
+COPY templates ./templates
+
 
 EXPOSE 3000
 
