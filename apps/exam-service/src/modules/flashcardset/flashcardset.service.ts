@@ -8,7 +8,7 @@ import {
     BadRequestException,
     ForbiddenException,
 } from '@nestjs/common';
-import { GenerateIdService } from '@examio/common';
+import { GenerateIdService, sanitizeFilename } from '@examio/common';
 import { User } from '@prisma/client';
 import { CreateFlashcardsetDto } from './dto/create-flashcardset.dto';
 import { GetFlashcardsetsDto } from './dto/get-flashcardset.dto';
@@ -46,7 +46,7 @@ export class FlashcardsetService {
             // Handle thumbnail upload if file is provided
             let thumbnailUrl = dto.thumbnail || null;
             if (thumbnailFile) {
-                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const fileName = `${Date.now()}-${sanitizeFilename(thumbnailFile.originalname)}`;
                 const r2Key = await this.r2Service.uploadFile(
                     fileName,
                     thumbnailFile.buffer,
@@ -211,13 +211,15 @@ export class FlashcardsetService {
 
         // Track usage if first page is accessed
         if (pageNum === 1 && user.id) {
-            await this.prisma.flashCardViewHistory.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    userId: user.id,
-                    flashCardSetId: id,
-                },
-            }).catch(() => {});
+            await this.prisma.flashCardViewHistory
+                .create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: user.id,
+                        flashCardSetId: id,
+                    },
+                })
+                .catch(() => {});
         }
 
         const flashCards = detailsFlashCards.map((detail) => detail.flashCard);
@@ -273,13 +275,15 @@ export class FlashcardsetService {
 
         // Track usage if userId is provided
         if (userId) {
-            await this.prisma.flashCardViewHistory.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    userId: userId,
-                    flashCardSetId: id,
-                },
-            }).catch(() => {});
+            await this.prisma.flashCardViewHistory
+                .create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: userId,
+                        flashCardSetId: id,
+                    },
+                })
+                .catch(() => {});
         }
 
         // Transform để trả về flashCards như cũ và map 'tag' to 'tags'
@@ -373,7 +377,7 @@ export class FlashcardsetService {
             ) {
                 const oldThumbnailUrl = flashcardSet.thumbnail;
 
-                const fileName = `${Date.now()}-${thumbnailFile.originalname}`;
+                const fileName = `${Date.now()}-${sanitizeFilename(thumbnailFile.originalname)}`;
                 const r2Key = await this.r2Service.uploadFile(
                     fileName,
                     thumbnailFile.buffer,
@@ -628,27 +632,36 @@ export class FlashcardsetService {
 
                     // If labelId is provided, validate it belongs to this flashcardset
                     if (dto.labelId) {
-                        const existingLabel = await tx.flashCardSetLabel.findFirst({
-                            where: { id: dto.labelId, flashCardSetId: flashcardSetId },
-                        });
+                        const existingLabel =
+                            await tx.flashCardSetLabel.findFirst({
+                                where: {
+                                    id: dto.labelId,
+                                    flashCardSetId: flashcardSetId,
+                                },
+                            });
                         if (existingLabel) {
                             labelId = existingLabel.id;
                         }
                     }
                     // If labelName is provided but no labelId, create or find label
                     else if (dto.labelName) {
-                        const existingLabel = await tx.flashCardSetLabel.findFirst({
-                            where: { flashCardSetId: flashcardSetId, name: dto.labelName },
-                        });
+                        const existingLabel =
+                            await tx.flashCardSetLabel.findFirst({
+                                where: {
+                                    flashCardSetId: flashcardSetId,
+                                    name: dto.labelName,
+                                },
+                            });
 
                         if (existingLabel) {
                             labelId = existingLabel.id;
                         } else {
                             // Get max order for this flashcardset
-                            const maxOrder = await tx.flashCardSetLabel.aggregate({
-                                where: { flashCardSetId: flashcardSetId },
-                                _max: { order: true },
-                            });
+                            const maxOrder =
+                                await tx.flashCardSetLabel.aggregate({
+                                    where: { flashCardSetId: flashcardSetId },
+                                    _max: { order: true },
+                                });
                             const newOrder = (maxOrder._max.order ?? -1) + 1;
 
                             const newLabel = await tx.flashCardSetLabel.create({
@@ -738,17 +751,23 @@ export class FlashcardsetService {
 
                     for (const flashcardSetId of flashcardSetIds) {
                         const existingSet = existingMap.get(flashcardSetId);
-                        const targetLabelId = labelMap.get(flashcardSetId) || null;
+                        const targetLabelId =
+                            labelMap.get(flashcardSetId) || null;
 
                         if (existingSet && existingSet.has(hash)) {
                             // Check if labelId needs to be updated for existing flashcard
                             const existingDetail = existingFlashcards.find(
-                                ef => ef.flashCardSetId === flashcardSetId &&
-                                      ef.flashCard.question === flashcard.question &&
-                                      ef.flashCard.answer === flashcard.answer
+                                (ef) =>
+                                    ef.flashCardSetId === flashcardSetId &&
+                                    ef.flashCard.question ===
+                                        flashcard.question &&
+                                    ef.flashCard.answer === flashcard.answer
                             );
 
-                            if (existingDetail && existingDetail.labelId !== targetLabelId) {
+                            if (
+                                existingDetail &&
+                                existingDetail.labelId !== targetLabelId
+                            ) {
                                 // Update labelId for existing flashcard
                                 detailsToUpdate.push({
                                     flashCardSetId: flashcardSetId,
@@ -1135,13 +1154,20 @@ export class FlashcardsetService {
 
         // Record view history if userId is provided
         if (userId) {
-            await this.prisma.flashCardViewHistory.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    userId: userId,
-                    flashCardSetId: id,
-                },
-            }).catch(err => console.error('Failed to record flashcard view history:', err));
+            await this.prisma.flashCardViewHistory
+                .create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: userId,
+                        flashCardSetId: id,
+                    },
+                })
+                .catch((err) =>
+                    console.error(
+                        'Failed to record flashcard view history:',
+                        err
+                    )
+                );
         }
 
         const { detailsFlashCard, user, _count, ...flashcardSetData } =
@@ -1158,7 +1184,11 @@ export class FlashcardsetService {
     /**
      * Get flashcard set after code verification
      */
-    async getFlashcardSetWithCode(id: string, accessCode: string, userId?: string) {
+    async getFlashcardSetWithCode(
+        id: string,
+        accessCode: string,
+        userId?: string
+    ) {
         // Verify code first
         await this.verifyAccessCode(id, accessCode);
 
@@ -1188,13 +1218,20 @@ export class FlashcardsetService {
 
         // Record view history if userId is provided
         if (userId) {
-            await this.prisma.flashCardViewHistory.create({
-                data: {
-                    id: this.generateIdService.generateId(),
-                    userId: userId,
-                    flashCardSetId: id,
-                },
-            }).catch(err => console.error('Failed to record flashcard view history:', err));
+            await this.prisma.flashCardViewHistory
+                .create({
+                    data: {
+                        id: this.generateIdService.generateId(),
+                        userId: userId,
+                        flashCardSetId: id,
+                    },
+                })
+                .catch((err) =>
+                    console.error(
+                        'Failed to record flashcard view history:',
+                        err
+                    )
+                );
         }
 
         const { detailsFlashCard, user, _count, ...flashcardSetData } =
@@ -1563,7 +1600,9 @@ export class FlashcardsetService {
         });
 
         if (flashcards.length !== flashcardIds.length) {
-            throw new BadRequestException('Một số thẻ ghi nhớ không tồn tại hoặc không thuộc bộ này');
+            throw new BadRequestException(
+                'Một số thẻ ghi nhớ không tồn tại hoặc không thuộc bộ này'
+            );
         }
 
         // Assign label to flashcards
@@ -1684,7 +1723,9 @@ export class FlashcardsetService {
 
         // Only owner can generate share link for private sets
         if (!flashcardSet.isPublic && flashcardSet.userId !== user.id) {
-            throw new ForbiddenException('Bạn không có quyền chia sẻ bộ flashcard này');
+            throw new ForbiddenException(
+                'Bạn không có quyền chia sẻ bộ flashcard này'
+            );
         }
 
         // Generate 6-digit access code if not exists

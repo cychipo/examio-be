@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { R2ClientService } from '@examio/common';
+import { R2ClientService, sanitizeFilename } from '@examio/common';
 
 @Injectable()
 export class R2UploadService {
@@ -21,9 +21,9 @@ export class R2UploadService {
             `Uploading image: ${file.originalname} (${file.size} bytes)`
         );
 
-        // Generate unique filename
+        // Generate unique filename with sanitized name for Vietnamese support
         const timestamp = Date.now();
-        const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const sanitizedName = sanitizeFilename(file.originalname);
         const filename = `${timestamp}-${sanitizedName}`;
 
         // Use 'images' folder for general image uploads

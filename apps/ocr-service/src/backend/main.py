@@ -69,7 +69,17 @@ def run_olmocr(pdf_path: Path, output_dir: Path) -> tuple[Path, int]:
 
         env = os.environ.copy()
         if olmocr_path:
-            env["PYTHONPATH"] = f"{olmocr_path}:{env.get('PYTHONPATH', '')}"
+            # Normalize path for current OS
+            olmocr_path = os.path.normpath(olmocr_path)
+            
+            # Check if path exists
+            if not os.path.isdir(olmocr_path):
+                logger.warning(f"OLMOCR_PATH does not exist: {olmocr_path}")
+            else:
+                logger.info(f"OLMOCR_PATH verified: {olmocr_path}")
+            
+            # Use os.pathsep for cross-platform compatibility (`;` on Windows, `:` on Unix)
+            env["PYTHONPATH"] = f"{olmocr_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
             logger.info(f"Using OLMOCR_PATH: {olmocr_path}")
 
         logger.info(f"Running olmocr: {' '.join(cmd)}")
