@@ -21,6 +21,12 @@ interface WalletService {
     }>;
 }
 
+/**
+ * FREE_MODE: Khi bật, bypass tất cả deduction credits
+ * Đặt thành true để bỏ qua việc trừ credits
+ */
+const FREE_MODE = true;
+
 @Injectable()
 export class FinanceClientService implements OnModuleInit {
     private readonly logger = new Logger(FinanceClientService.name);
@@ -34,6 +40,18 @@ export class FinanceClientService implements OnModuleInit {
     }
 
     async deductCredits(userId: string, amount: number, description: string) {
+        // FREE_MODE: Bypass credit deduction, always return success
+        if (FREE_MODE) {
+            this.logger.log(
+                `[FREE_MODE] Skipped deducting ${amount} credits from user ${userId}: ${description}`
+            );
+            return {
+                success: true,
+                newBalance: undefined,
+                message: 'Free mode - no charge',
+            };
+        }
+
         if (amount <= 0)
             return {
                 success: true,

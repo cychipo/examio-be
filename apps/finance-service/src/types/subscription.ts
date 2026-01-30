@@ -1,4 +1,11 @@
 /**
+ * FREE_MODE: Khi bật, tất cả người dùng đều có quyền truy cập không giới hạn
+ * Đặt thành true để bỏ qua tất cả giới hạn thanh toán/subscription
+ * Đặt thành false để bật lại hệ thống thanh toán
+ */
+export const FREE_MODE = true;
+
+/**
  * Subscription Tier Constants
  */
 export enum SUBSCRIPTION_TIER {
@@ -12,18 +19,32 @@ export type BillingCycle = 'monthly' | 'yearly';
 
 /**
  * Subscription tier benefits configuration
+ * Khi FREE_MODE = true, tier NONE sẽ có quyền tương đương VIP
  */
 export const SUBSCRIPTION_BENEFITS = {
-    [SUBSCRIPTION_TIER.NONE]: {
-        name: 'Free',
-        nameVi: 'Miễn phí',
-        creditsPerMonth: 0,
-        filesPerMonth: 5,
-        messagesPerMinute: 5,
-        chatMessagesLimit: 30,
-        priceMonthly: 0,
-        priceYearly: 0,
-    },
+    [SUBSCRIPTION_TIER.NONE]: FREE_MODE
+        ? {
+              // FREE_MODE: Unlimited access
+              name: 'Free',
+              nameVi: 'Miễn phí',
+              creditsPerMonth: 999999,
+              filesPerMonth: -1, // unlimited
+              messagesPerMinute: -1, // unlimited
+              chatMessagesLimit: 999999,
+              priceMonthly: 0,
+              priceYearly: 0,
+          }
+        : {
+              // Original limits (khi tắt FREE_MODE)
+              name: 'Free',
+              nameVi: 'Miễn phí',
+              creditsPerMonth: 0,
+              filesPerMonth: 5,
+              messagesPerMinute: 5,
+              chatMessagesLimit: 30,
+              priceMonthly: 0,
+              priceYearly: 0,
+          },
     [SUBSCRIPTION_TIER.BASIC]: {
         name: 'Basic',
         nameVi: 'Cơ bản',

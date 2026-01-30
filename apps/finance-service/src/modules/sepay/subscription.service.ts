@@ -5,6 +5,7 @@ import {
     SUBSCRIPTION_TIER,
     BillingCycle,
     SUBSCRIPTION_BENEFITS,
+    FREE_MODE,
 } from '../../types/subscription';
 import { WalletRepository } from '../wallet/wallet.repository';
 import { WALLET_TRANSACTION_TYPE } from '../wallet/dto/wallet-details-response.dto';
@@ -305,6 +306,9 @@ export class SubscriptionService {
      * @throws BadRequestException if limit exceeded
      */
     async checkFileUploadLimit(userId: string): Promise<void> {
+        // FREE_MODE: Bypass all limits
+        if (FREE_MODE) return;
+
         const benefits = await this.getUserSubscriptionBenefits(userId);
         const limit = benefits.filesPerMonth;
 
