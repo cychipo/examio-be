@@ -17,6 +17,7 @@ import os
 import io
 import tempfile
 import logging
+import requests
 from typing import List, Tuple, Optional
 from pathlib import Path
 
@@ -67,6 +68,7 @@ class PdfOcrService:
 
     def __init__(self):
         self._check_dependencies()
+        self.ocr_service_url = os.getenv("OCR_SERVICE_URL", "http://ocr-service:8003/api/ocr/process")
 
     def _check_dependencies(self):
         """Check if required dependencies are available"""
@@ -142,32 +144,46 @@ class PdfOcrService:
             logger.error(f"❌ Error splitting PDF: {e}")
             raise
 
+    def _call_external_ocr_service(self, pdf_bytes: bytes) -> Optional[str]:
+        """Gọi OCR microservice bên ngoài (olmocr)"""
+        try:
+            logger.info(f"🚀 Calling external OCR service at {self.ocr_service_url}")
+            files = {'file': ('document.pdf', pdf_bytes, 'application/pdf')}
+            response = requests.post(self.ocr_service_url, files=files, timeout=300) # 5 min timeout
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success") and data.get("content"):
+                    logger.info("✅ External OCR service success!")
+                    return data.get("content")
+                else:
+                    logger.warning(f"⚠️ External OCR service returned failure: {data.get('error_message')}")
+            else:
+                logger.warning(f"⚠️ External OCR service returned status {response.status_code}")
+        except Exception as e:
+            logger.error(f"❌ Failed to reach external OCR service: {e}")
+        
+        return None
+
     def ocr_pdf(self, pdf_bytes: bytes, language: str = 'eng+vie', use_preprocessing: bool = True) -> str:
         """
-        OCR một PDF chunk bằng Tesseract với image preprocessing
-        Giống ocrPdfEnhanced trong be-main
-
-        Pipeline:
-        1. Convert PDF → images (high DPI)
-        2. Preprocess mỗi image (CLAHE, gamma, threshold, denoise, sharpen)
-        3. OCR với Tesseract
-
-        Args:
-            pdf_bytes: PDF content
-            language: OCR language (default: 'eng+vie' for English + Vietnamese)
-            use_preprocessing: Enable image preprocessing for better OCR (default: True)
-
-        Returns:
-            Extracted text
+        OCR một PDF chunk. Ưu tiên dùng ocr-service bên ngoài, fallback về Tesseract local.
         """
+        # 1. Thử gọi ocr-service bên ngoài (olmocr)
+        external_content = self._call_external_ocr_service(pdf_bytes)
+        if external_content:
+            return external_content
+
+        # 2. Nếu fail, fallback về Tesseract local
+        logger.info("↩️ Falling back to local Tesseract OCR...")
+        
         if not PDF2IMAGE_AVAILABLE:
             raise RuntimeError("pdf2image not available. Install: pip install pdf2image")
         if not TESSERACT_AVAILABLE:
             raise RuntimeError("pytesseract not available. Install: pip install pytesseract")
 
         try:
-            logger.info("📷 Converting PDF to images with enhanced preprocessing...")
-
+            logger.info("📷 Converting PDF to images for Tesseract...")
             # Convert PDF pages to images at high DPI
             images = convert_from_bytes(
                 pdf_bytes,
@@ -183,61 +199,47 @@ class PdfOcrService:
                 try:
                     from backend.services.image_preprocessing_service import get_image_preprocessing_service
                     preprocessing_service = get_image_preprocessing_service()
-                    logger.info("✅ Image preprocessing enabled")
                 except Exception as e:
                     logger.warning(f"⚠️ Image preprocessing not available: {e}")
 
             full_text = []
             import numpy as np
+            import cv2
 
             for i, pil_image in enumerate(images):
                 try:
-                    # Convert PIL Image to numpy array for OpenCV
-                    import cv2
                     image_np = np.array(pil_image)
-
-                    # Convert RGB to BGR for OpenCV
                     if len(image_np.shape) == 3:
                         image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
-                    # Apply preprocessing if available
                     if preprocessing_service:
-                        logger.debug(f"🔧 Preprocessing page {i+1}...")
                         processed_image = preprocessing_service.preprocess_image(image_np)
                     else:
                         processed_image = image_np
 
-                    # OCR with Tesseract
-                    # Convert back to PIL for pytesseract
                     if len(processed_image.shape) == 2:
-                        # Grayscale
                         pil_processed = Image.fromarray(processed_image)
                     else:
-                        # Color - convert BGR to RGB
                         pil_processed = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
 
-                    logger.debug(f"🔍 Running OCR on page {i+1}...")
                     text = pytesseract.image_to_string(
                         pil_processed,
                         lang=language,
-                        config='--psm 6 --oem 3'  # PSM 6: uniform block, OEM 3: default LSTM
+                        config='--psm 6 --oem 3'
                     )
 
                     if text.strip():
                         full_text.append(text.strip())
-                        logger.debug(f"✅ Page {i+1}: {len(text)} chars")
-
                 except Exception as e:
-                    logger.error(f"❌ Error OCR page {i+1}: {e}")
+                    logger.error(f"❌ Error Tesseract page {i+1}: {e}")
                     continue
 
             result = '\n'.join(full_text)
-            logger.info(f"✅ Enhanced OCR completed: {len(result)} characters from {len(images)} pages")
-
+            logger.info(f"✅ Tesseract OCR completed: {len(result)} characters")
             return result
 
         except Exception as e:
-            logger.error(f"❌ Error in OCR: {e}")
+            logger.error(f"❌ Both external and local OCR failed: {e}")
             raise
 
     def ocr_pdf_basic(self, pdf_bytes: bytes, language: str = 'eng+vie') -> str:

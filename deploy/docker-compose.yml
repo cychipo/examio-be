@@ -9,7 +9,7 @@
 #   - PostgreSQL database (containerized)
 #   - Redis cache (containerized)
 #   - RabbitMQ message queue (containerized)
-#   - All microservices (gateway, auth, exam, finance, r2, ai)
+#   - All microservices (gateway, auth, exam, finance, r2, ai, ocr)
 # =============================================================================
 
 # Shared logging configuration
@@ -254,6 +254,7 @@ services:
             - REDIS_PASSWORD=${REDIS_PASSWORD:-}
             - GEMINI_API_KEYS=${GEMINI_API_KEYS}
             - GEMINI_MODEL_NAMES=${GEMINI_MODEL_NAMES}
+            - OCR_SERVICE_URL=http://ocr-python:8003/api/ocr/process
         env_file:
             - .env
         depends_on:
@@ -271,6 +272,73 @@ services:
             timeout: 10s
             retries: 3
             start_period: 60s
+        restart: unless-stopped
+        logging: *default-logging
+
+    # ==================== OCR SERVICE (gRPC Gateway) ====================
+    ocr:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+            args:
+                SERVICE_NAME: ocr-service
+                ENABLE_OCR: 'true'
+        container_name: examio-ocr
+        environment:
+            - NODE_ENV=production
+            - PORT=7006
+            - GRPC_PORT=50056
+            - OCR_PYTHON_SERVICE_URL=http://ocr-python:8003/api/ocr/process
+        env_file:
+            - .env
+        depends_on:
+            - ocr-python
+        networks:
+            - examio-network
+        healthcheck:
+            <<: *nestjs-healthcheck
+            test:
+                [
+                    'CMD',
+                    'wget',
+                    '-q',
+                    '--spider',
+                    'http://localhost:7006/health',
+                ]
+        restart: unless-stopped
+        logging: *default-logging
+
+    # ==================== OCR PYTHON SERVICE (Background Worker) ====================
+    ocr-python:
+        build:
+            context: ../apps/ocr-service
+            dockerfile: src/backend/Dockerfile # Cần tạo Dockerfile này nếu chưa có
+        container_name: examio-ocr-python
+        environment:
+            - PYTHONUNBUFFERED=1
+            - PORT=8003
+            - OLMOCR_PATH=/app/olmocr
+            - NVIDIA_VISIBLE_DEVICES=all
+            - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          count: 1
+                          capabilities: [gpu]
+        volumes:
+            - ${OLMOCR_PATH}:/app/olmocr:ro
+            - ocr_uploads:/app/apps/ocr-service/uploads
+            - ocr_outputs:/app/apps/ocr-service/outputs
+            - hf_cache:/root/.cache/huggingface
+        networks:
+            - examio-network
+        healthcheck:
+            test: ['CMD', 'curl', '-f', 'http://localhost:8003/health']
+            interval: 30s
+            timeout: 10s
+            retries: 3
         restart: unless-stopped
         logging: *default-logging
 
@@ -371,3 +439,6 @@ volumes:
     rabbitmq_data:
     postgres_data:
     redis_data:
+    ocr_uploads:
+    ocr_outputs:
+    hf_cache:
