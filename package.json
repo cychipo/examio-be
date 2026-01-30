@@ -25,7 +25,7 @@
         "prisma:push": "pnpm prisma:merge && prisma db push --schema=libs/database/src/schema.prisma",
         "prisma:studio": "prisma studio --schema=libs/database/src/schema.prisma",
         "prisma:deploy": "pnpm prisma:merge && prisma migrate deploy --schema=libs/database/src/schema.prisma",
-        "prisma:seed": "ts-node libs/database/prisma/seed.ts",
+        "prisma:seed": "npx ts-node libs/database/prisma/seed.ts",
         "start:prod": "node dist/apps/codecraft-be/main"
     },
     "keywords": [],
