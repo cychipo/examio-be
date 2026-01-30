@@ -67,17 +67,19 @@ class GeminiClient:
         if self.api_keys:
             genai.configure(api_key=self.api_keys[0])
 
+        import logging
+        self.logger = logging.getLogger(__name__)
+        
         self._initialized = True
-        print(f"🔧 GeminiClient initialized: {len(self.api_keys)} keys, {len(self.model_names)} models")
+        self.logger.debug(f"GeminiClient initialized with {len(self.api_keys)} keys")
 
     def get_next_key(self) -> str:
         """Lấy API key tiếp theo, bỏ qua các keys đã failed."""
         if not self.api_keys:
             raise ValueError("Không có API keys được cấu hình. Set GEMINI_API_KEYS hoặc GOOGLE_API_KEY.")
 
-        # Reset failed keys nếu hết thời gian
         if time.time() > self.key_reset_time:
-            print("🔄 Reset danh sách failed keys...")
+            self.logger.debug("Resetting failed keys list")
             self.failed_keys.clear()
             self.key_reset_time = time.time() + 60
 
@@ -92,7 +94,6 @@ class GeminiClient:
         selected_key = available_keys[key_index]
         self.current_key_index = (self.current_key_index + 1) % len(available_keys)
 
-        print(f"🔑 Sử dụng API key {key_index + 1}/{len(available_keys)} (masked: {selected_key[:8]}...)")
         return selected_key
 
     def get_next_model(self) -> str:
@@ -102,7 +103,7 @@ class GeminiClient:
 
         # Reset failed models nếu hết thời gian
         if time.time() > self.model_reset_time:
-            print("🔄 Reset danh sách failed models...")
+            self.logger.debug("Resetting failed models list")
             self.failed_models_per_key.clear()
             self.model_reset_time = time.time() + 60
 
@@ -122,13 +123,13 @@ class GeminiClient:
         model_index = self.current_model_index % len(available_models)
         selected_model = available_models[model_index]
 
-        print(f"🤖 Sử dụng model {model_index + 1}/{len(available_models)}: {selected_model}")
+        self.logger.info(f"Using model {selected_model}")
         return selected_model
 
     def mark_key_failed(self, api_key: str):
         """Đánh dấu API key đã hết quota."""
         self.failed_keys.add(api_key)
-        print(f"❌ Đánh dấu API key failed. Tổng failed: {len(self.failed_keys)}/{len(self.api_keys)}")
+        self.logger.warning(f"Marked API key as failed. Total failed: {len(self.failed_keys)}/{len(self.api_keys)}")
 
     def mark_model_failed(self, model: str) -> bool:
         """
@@ -143,11 +144,11 @@ class GeminiClient:
         self.failed_models_per_key[current_key].add(model)
         failed_count = len(self.failed_models_per_key[current_key])
 
-        print(f"❌ Đánh dấu model '{model}' failed. Tổng: {failed_count}/{len(self.model_names)}")
+        self.logger.warning(f"Marked model '{model}' as failed. Total: {failed_count}/{len(self.model_names)}")
 
         # Nếu tất cả models đều failed, báo hiệu cần rotate key
         if failed_count >= len(self.model_names):
-            print("⚠️ Tất cả models đều fail cho key hiện tại, chuyển sang key tiếp theo...")
+            self.logger.warning("All models failed for current key, rotating key...")
             self.current_model_index = 0
             return True
 

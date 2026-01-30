@@ -89,9 +89,14 @@ class ModelManager:
 
     def get_ollama_info(self) -> Dict[str, Any]:
         """Lấy cấu hình Ollama."""
+        # Detect if running in Docker to provide better default for localhost
+        default_url = "http://localhost:11434"
+        if os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER"):
+            default_url = "http://host.docker.internal:11434"
+            
         return {
             "model": self._runtime_ollama_model or os.getenv("RAG_MODEL", "qwen3:8b"),
-            "url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            "url": os.getenv("OLLAMA_BASE_URL", default_url)
         }
 
     def get_gemini_info(self) -> Dict[str, Any]:
@@ -144,7 +149,7 @@ class ModelManager:
 
         logger = logging.getLogger(__name__)
 
-        logger.info("Starting Gemini generation")
+        logger.debug("Starting Gemini generation")
 
         # Get API key(s)
         api_keys_str = os.getenv("GEMINI_API_KEYS", "")
@@ -159,13 +164,13 @@ class ModelManager:
             logger.error("No Gemini API key configured")
             raise ValueError("No Gemini API key configured")
 
-        logger.info(f"Found {len(api_keys)} API keys")
+        logger.debug(f"Found {len(api_keys)} API keys")
 
         # Get model names
         model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash,gemini-1.5-flash,gemini-1.5-pro")
         model_names = [m.strip() for m in model_names_str.split(",") if m.strip()]
 
-        logger.info(f"Using models: {model_names}")
+        logger.debug(f"Using models: {model_names}")
 
         # If runtime model is set, use it first
         if self._runtime_gemini_model and self._runtime_gemini_model not in model_names:
@@ -177,17 +182,17 @@ class ModelManager:
         for key_idx, api_key in enumerate(api_keys):
             for model_idx, model_name in enumerate(model_names):
                 try:
-                    logger.info(f"Trying key {key_idx + 1}/{len(api_keys)}, model: {model_name}")
+                    logger.debug(f"Trying Gemini model: {model_name}")
 
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel(model_name)
 
-                    logger.info(f"Making API call to Gemini for model {model_name}")
+                    logger.debug(f"Making API call to Gemini for model {model_name}")
 
                     temperature_val = self.get_temperature()
                     max_tokens_val = self.get_max_tokens()
 
-                    logger.info(f"Using temperature: {temperature_val}, max_tokens: {max_tokens_val}")
+                    logger.debug(f"Using temperature: {temperature_val}, max_tokens: {max_tokens_val}")
 
                     response = model.generate_content(
                         prompt,
@@ -197,7 +202,7 @@ class ModelManager:
                         )
                     )
 
-                    logger.info(f"Successfully generated with key {key_idx + 1}, model: {model_name}")
+                    logger.info(f"Successfully generated with Gemini model: {model_name}")
                     return response.text
 
                 except ResourceExhausted as e:
