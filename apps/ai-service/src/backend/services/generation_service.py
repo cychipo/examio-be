@@ -32,7 +32,7 @@ class GenerateQuizRequest(BaseModel):
     num_questions: int = Field(default=10, ge=1, le=100, description="Số câu hỏi cần tạo (max 100)")
     is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
-    model_type: str = Field(default="gemini", description="AI model: 'gemini' or 'fayedark'")
+    model_type: Optional[str] = Field(default=None, description="AI model: 'gemini' or 'fayedark'")
 
 
 class GenerateFlashcardRequest(BaseModel):
@@ -42,7 +42,7 @@ class GenerateFlashcardRequest(BaseModel):
     num_flashcards: int = Field(default=10, ge=1, le=100, description="Số flashcard cần tạo (max 100)")
     is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
-    model_type: str = Field(default="gemini", description="AI model: 'gemini' or 'fayedark'")
+    model_type: Optional[str] = Field(default=None, description="AI model: 'gemini' or 'fayedark'")
 
 
 @dataclass
@@ -113,12 +113,27 @@ class ContentGenerationService:
             if file_info.processing_status != "COMPLETED":
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
+            # Determine AI model type (respect system default if not explicitly local)
+            from src.llm.model_manager import model_manager, ModelType
+            system_model_type = model_manager.get_model_type()
+            
+            # If request is fayedark OR (request is default/gemini/None and system is OLLAMA)
+            use_local = request.model_type == "fayedark" or (
+                (not request.model_type or request.model_type == "gemini") and 
+                system_model_type == ModelType.OLLAMA
+            )
+            
+            ai_model = AIModelType.FAYEDARK if use_local else AIModelType.GEMINI
+            model_type_str = "fayedark" if use_local else "gemini"
+            
+            logger.info(f"Using AI model for quiz: {ai_model.value} (requested: {request.model_type})")
+
             # Get document chunks
             chunks = []
             if request.is_narrow_search and request.keyword:
                 logger.info(f"Generating with Narrow Search for keyword: {request.keyword}")
                 vector_store = get_pg_vector_store()
-                embedding = await vector_store.create_embedding(request.keyword, model_type=request.model_type)
+                embedding = await vector_store.create_embedding(request.keyword, model_type=model_type_str)
 
                 # Search similar chunks (limit 10 for focused context)
                 similar_results = await ocr_service.search_similar_documents(
@@ -140,10 +155,6 @@ class ContentGenerationService:
 
             # Distribute questions across chunks
             questions_per_chunk = self._distribute_items(request.num_questions, len(chunks))
-
-            # Determine AI model type
-            ai_model = AIModelType.FAYEDARK if request.model_type == "fayedark" else AIModelType.GEMINI
-            logger.info(f"Using AI model: {ai_model.value}")
 
             # Generate questions from each chunk
             all_questions = []
@@ -205,12 +216,27 @@ class ContentGenerationService:
             if file_info.processing_status != "COMPLETED":
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
+            # Determine AI model type (respect system default if not explicitly local)
+            from src.llm.model_manager import model_manager, ModelType
+            system_model_type = model_manager.get_model_type()
+            
+            # If request is fayedark OR (request is default/gemini/None and system is OLLAMA)
+            use_local = request.model_type == "fayedark" or (
+                (not request.model_type or request.model_type == "gemini") and 
+                system_model_type == ModelType.OLLAMA
+            )
+            
+            ai_model = AIModelType.FAYEDARK if use_local else AIModelType.GEMINI
+            model_type_str = "fayedark" if use_local else "gemini"
+            
+            logger.info(f"Using AI model for flashcards: {ai_model.value} (requested: {request.model_type})")
+
             # Get document chunks
             chunks = []
             if request.is_narrow_search and request.keyword:
                 logger.info(f"Generating with Narrow Search for keyword: {request.keyword}")
                 vector_store = get_pg_vector_store()
-                embedding = await vector_store.create_embedding(request.keyword, model_type=request.model_type)
+                embedding = await vector_store.create_embedding(request.keyword, model_type=model_type_str)
 
                 # Search similar chunks (limit 10 for focused context)
                 similar_results = await ocr_service.search_similar_documents(
@@ -232,10 +258,6 @@ class ContentGenerationService:
 
             # Distribute flashcards across chunks
             flashcards_per_chunk = self._distribute_items(request.num_flashcards, len(chunks))
-
-            # Determine AI model type
-            ai_model = AIModelType.FAYEDARK if request.model_type == "fayedark" else AIModelType.GEMINI
-            logger.info(f"Using AI model: {ai_model.value}")
 
             # Generate flashcards from each chunk
             all_flashcards = []

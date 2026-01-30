@@ -40,6 +40,10 @@ _retriever_cache: Dict[str, Any] = {}
 class ProcessFileRequest(BaseModel):
     """Request từ NestJS để OCR file đã upload"""
     user_storage_id: str = Field(..., description="ID của UserStorage (NestJS đã tạo)")
+    model_type: str = Field(default="gemini", alias="modelType", description="AI model: 'gemini' or 'fayedark'")
+
+    class Config:
+        populate_by_name = True
 
 
 class QueryFileRequest(BaseModel):
@@ -89,7 +93,8 @@ async def process_file(request: ProcessFileRequest):
     """
     try:
         user_storage_id = request.user_storage_id
-        logger.info(f"Processing file: {user_storage_id}")
+        model_type = request.model_type
+        logger.info(f"Processing file: {user_storage_id} with model: {model_type}")
 
         # Get file info from DB (created by NestJS)
         file_info = await ocr_service.get_file_info(user_storage_id)
@@ -152,7 +157,7 @@ async def process_file(request: ProcessFileRequest):
                                     'title': f"Chunk {i+1}"
                                 })
 
-                            stored_count = await pg_store.store_documents_batch(documents_to_store)
+                            stored_count = await pg_store.store_documents_batch(documents_to_store, model_type=model_type)
 
                             # Update status to COMPLETED
                             await ocr_service.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
@@ -207,7 +212,7 @@ async def process_file(request: ProcessFileRequest):
 
                     # Batch store với batch embedding (tối ưu rate limit)
                     if documents_to_store:
-                        stored_count = await pg_store.store_documents_batch(documents_to_store)
+                        stored_count = await pg_store.store_documents_batch(documents_to_store, model_type=model_type)
                     else:
                         stored_count = 0
 
@@ -239,7 +244,7 @@ async def process_file(request: ProcessFileRequest):
                             })
 
                         if documents_to_store:
-                            stored_count = await pg_store.store_documents_batch(documents_to_store)
+                            stored_count = await pg_store.store_documents_batch(documents_to_store, model_type=model_type)
             else:
                 # Non-PDF: Extract text and chunk
                 logger.info(f"📝 Processing non-PDF file: {file_info.mimetype}")
@@ -269,7 +274,7 @@ async def process_file(request: ProcessFileRequest):
                     })
 
                 if documents_to_store:
-                    stored_count = await pg_store.store_documents_batch(documents_to_store)
+                    stored_count = await pg_store.store_documents_batch(documents_to_store, model_type=model_type)
 
             # Cleanup temp file
             if os.path.exists(temp_path):

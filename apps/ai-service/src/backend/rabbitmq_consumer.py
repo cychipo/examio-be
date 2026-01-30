@@ -81,12 +81,18 @@ class RabbitMQConsumer:
                 type_result = payload.get("typeResult", 1)  # 1=quiz, 2=flashcard
                 quantity_quizz = payload.get("quantityQuizz", 10)
                 quantity_flashcard = payload.get("quantityFlashcard", 10)
+                
+                # Model type override from payload or system default
+                from src.llm.model_manager import model_manager, ModelType
+                system_model_type = model_manager.get_model_type()
+                default_model = "fayedark" if system_model_type == ModelType.OLLAMA else "gemini"
+                model_type = payload.get("modelType", default_model)
 
                 if not user_storage_id:
                     logger.error("Missing userStorageId in message")
                     return
 
-                logger.info(f"Processing OCR for userStorageId: {user_storage_id}")
+                logger.info(f"Processing OCR for userStorageId: {user_storage_id} with model: {model_type}")
 
                 # Get file info and process OCR
                 file_info = await ocr_service.get_file_info(user_storage_id)
@@ -104,7 +110,7 @@ class RabbitMQConsumer:
                 await ocr_service.update_file_status(user_storage_id, "PROCESSING")
 
                 # Perform OCR
-                result = await ocr_service.process_file(user_storage_id)
+                result = await ocr_service.process_file(user_storage_id, model_type=model_type)
 
                 if result.get("success"):
                     chunks_count = result.get("chunks_count", 0)
@@ -116,7 +122,8 @@ class RabbitMQConsumer:
                         user_id,
                         type_result,
                         quantity_quizz,
-                        quantity_flashcard
+                        quantity_flashcard,
+                        model_type=model_type
                     )
                 else:
                     error = result.get("error", "Unknown error")
@@ -132,7 +139,8 @@ class RabbitMQConsumer:
         user_id: str,
         type_result: int,
         quantity_quizz: int,
-        quantity_flashcard: int
+        quantity_flashcard: int,
+        model_type: str = "gemini"
     ):
         """
         Auto-generate quiz or flashcard after OCR completes.
@@ -147,20 +155,22 @@ class RabbitMQConsumer:
 
             if type_result == 2:
                 # Generate flashcards
-                logger.info(f"Auto-generating {quantity_flashcard} flashcards for {user_storage_id}")
+                logger.info(f"Auto-generating {quantity_flashcard} flashcards for {user_storage_id} with model {model_type}")
                 request = GenerateFlashcardRequest(
                     user_storage_id=user_storage_id,
                     user_id=user_id,
-                    num_flashcards=quantity_flashcard
+                    num_flashcards=quantity_flashcard,
+                    model_type=model_type
                 )
                 result = await generation_service.generate_flashcards(request)
             else:
                 # Generate quiz (default)
-                logger.info(f"Auto-generating {quantity_quizz} quiz questions for {user_storage_id}")
+                logger.info(f"Auto-generating {quantity_quizz} quiz questions for {user_storage_id} with model {model_type}")
                 request = GenerateQuizRequest(
                     user_storage_id=user_storage_id,
                     user_id=user_id,
-                    num_questions=quantity_quizz
+                    num_questions=quantity_quizz,
+                    model_type=model_type
                 )
                 result = await generation_service.generate_quiz(request)
 

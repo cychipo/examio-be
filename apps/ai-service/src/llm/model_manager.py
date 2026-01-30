@@ -162,7 +162,7 @@ class ModelManager:
         logger.info(f"Found {len(api_keys)} API keys")
 
         # Get model names
-        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash,gemini-2.5-flash-lite,gemini-1.5-flash")
+        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash,gemini-1.5-flash,gemini-1.5-pro")
         model_names = [m.strip() for m in model_names_str.split(",") if m.strip()]
 
         logger.info(f"Using models: {model_names}")

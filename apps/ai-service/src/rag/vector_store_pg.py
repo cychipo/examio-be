@@ -241,7 +241,8 @@ class PgVectorStore:
         user_storage_ids: List[str],
         query: str,
         top_k: int = None,
-        similarity_threshold: float = None
+        similarity_threshold: float = None,
+        model_type: str = "gemini"
     ) -> List[DocumentChunk]:
         """
         Tìm kiếm documents tương tự bằng vector similarity.
@@ -251,16 +252,14 @@ class PgVectorStore:
             query: Query text
             top_k: Số kết quả trả về (default: 15)
             similarity_threshold: Ngưỡng similarity (default: 0.7)
-
-        Returns:
-            Danh sách DocumentChunk sắp xếp theo similarity giảm dần
+            model_type: "gemini" hoặc "fayedark"
         """
         top_k = top_k or self.VECTOR_SEARCH_CONFIG["TOP_K"]
         similarity_threshold = similarity_threshold or self.VECTOR_SEARCH_CONFIG["SIMILARITY_THRESHOLD"]
 
         try:
             # Tạo embedding cho query (dùng task_type khác với document)
-            query_embedding = await self.create_embedding(query, task_type="retrieval_query")
+            query_embedding = await self.create_embedding(query, task_type="retrieval_query", model_type=model_type)
 
             pool = await self._get_pool()
 

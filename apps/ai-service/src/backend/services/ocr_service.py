@@ -273,7 +273,7 @@ class OCRProcessingService:
         """Convenience method to update file status (for RabbitMQ consumer)"""
         await self.update_processing_status(user_storage_id, status)
 
-    async def process_file(self, user_storage_id: str) -> dict:
+    async def process_file(self, user_storage_id: str, model_type: str = "gemini") -> dict:
         """
         Process a file for OCR (for RabbitMQ consumer)
 
@@ -287,7 +287,7 @@ class OCRProcessingService:
                 return {"success": False, "error": "File not found"}
 
             # Download file
-            _, temp_path = await self.download_file_from_r2(file_info.url)
+            file_content, temp_path = await self.download_file_from_r2(file_info.url)
 
             # Import here to avoid circular imports
             from src.rag.retriever import extract_text_from_file
@@ -303,26 +303,25 @@ class OCRProcessingService:
             chunks = self._chunk_text(text)
 
             # Get vector store and save chunks
-            vector_store = await get_pg_vector_store()
+            vector_store = get_pg_vector_store()
             chunks_saved = 0
 
             for i, chunk in enumerate(chunks):
                 chunk_id = f"{user_storage_id}_chunk_{i}"
                 page_range = f"{i+1}-{i+1}"
 
-                # Get embedding
-                embedding = await vector_store.get_embedding(chunk)
-
-                # Store chunk
-                await self.store_document_chunk(
-                    chunk_id=chunk_id,
+                # Store document will handle embedding creation internally
+                success = await vector_store.store_document(
+                    doc_id=chunk_id,
                     user_storage_id=user_storage_id,
+                    content=chunk,
                     page_range=page_range,
                     title=f"Chunk {i+1}",
-                    content=chunk,
-                    embeddings=embedding
+                    model_type=model_type
                 )
-                chunks_saved += 1
+                
+                if success:
+                    chunks_saved += 1
 
             # Update status
             await self.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
