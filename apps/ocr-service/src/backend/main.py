@@ -17,19 +17,14 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# Try to import fallback OCR services
-try:
-    # Add ai-service src to path if needed to reuse PdfOcrService
-    AI_SERVICE_SRC = Path(__file__).parent.parent.parent.parent / "ai-service" / "src"
-    if AI_SERVICE_SRC.exists():
-        sys.path.append(str(AI_SERVICE_SRC))
+# Fallback OCR services
+import pytesseract
+from pdf2image import convert_from_path
+from pypdf import PdfReader
+import io
 
-    from backend.services.pdf_ocr_service import pdf_ocr_service
-    FALLBACK_AVAILABLE = True
-    logger_msg = "Fallback OCR (Tesseract) is available"
-except ImportError:
-    FALLBACK_AVAILABLE = False
-    logger_msg = "Fallback OCR (Tesseract) is NOT available"
+FALLBACK_AVAILABLE = True
+logger_msg = "Built-in Tesseract OCR fallback is available"
 
 # Configure logging
 logging.basicConfig(
@@ -151,29 +146,30 @@ def run_olmocr(pdf_path: Path, output_dir: Path) -> tuple[Path, int]:
 
 def run_fallback_ocr(pdf_path: Path) -> Tuple[str, int]:
     """
-    Fallback OCR method using Tesseract
+    Fallback OCR method using Tesseract directly
     """
-    if not FALLBACK_AVAILABLE:
-        raise RuntimeError("Fallback OCR service not available")
-
-    logger.info(f"Running fallback OCR for: {pdf_path}")
+    logger.info(f"Running fallback OCR (Tesseract) for: {pdf_path}")
     try:
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
-
-        # Use PdfOcrService from ai-service
-        text = pdf_ocr_service.extract_text_from_pdf(pdf_bytes)
-
-        # Try to get page count
-        from pypdf import PdfReader
-        import io
-        reader = PdfReader(io.BytesIO(pdf_bytes))
+        # Get page count
+        reader = PdfReader(str(pdf_path))
         page_count = len(reader.pages)
-
+        
+        # Convert PDF to images
+        images = convert_from_path(str(pdf_path))
+        
+        full_text = []
+        for i, image in enumerate(images):
+            logger.info(f"Processing page {i+1}/{page_count} with Tesseract")
+            # Run OCR on each page
+            text = pytesseract.image_to_string(image, lang='vie+eng')
+            full_text.append(f"## Trang {i+1}\n\n{text}")
+            
         logger.info(f"Fallback OCR completed successfully ({page_count} pages)")
-        return text, page_count
+        return "\n\n".join(full_text), page_count
     except Exception as e:
         logger.error(f"Fallback OCR failed: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise RuntimeError(f"Fallback OCR failed: {str(e)}")
 
 

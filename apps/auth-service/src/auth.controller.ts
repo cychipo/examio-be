@@ -320,8 +320,10 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
-        res.redirect(`${frontendUrl}/`);
+        const frontendUrl = (
+            process.env.FRONTEND_URL || 'http://localhost:3001'
+        ).replace(/\/+$/, '');
+        res.redirect(`${frontendUrl}/k`);
     }
 
     @Get('facebook')
@@ -351,8 +353,10 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
-        res.redirect(`${frontendUrl}/`);
+        const frontendUrl = (
+            process.env.FRONTEND_URL || 'http://localhost:3001'
+        ).replace(/\/+$/, '');
+        res.redirect(`${frontendUrl}/k`);
     }
 
     @Get('github')
@@ -382,8 +386,10 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
-        res.redirect(`${frontendUrl}/`);
+        const frontendUrl = (
+            process.env.FRONTEND_URL || 'http://localhost:3001'
+        ).replace(/\/+$/, '');
+        res.redirect(`${frontendUrl}/k`);
     }
 
     @Get('me')
