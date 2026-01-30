@@ -72,10 +72,24 @@ def run_olmocr(pdf_path: Path, output_dir: Path) -> tuple[Path, int]:
         # We try to run it with --help first to see if it exists
         check_cmd = ["python", "-m", "olmocr.pipeline", "--help"]
         try:
-            subprocess.run(check_cmd, capture_output=True, check=True, timeout=10)
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-            logger.warning("olmocr is not found or not working correctly. Failing over.")
-            raise RuntimeError("olmocr not available")
+            result = subprocess.run(check_cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                logger.error(f"olmocr check failed with return code: {result.returncode}")
+                logger.error(f"olmocr STDOUT: {result.stdout}")
+                logger.error(f"olmocr STDERR: {result.stderr}")
+                raise RuntimeError(f"olmocr check failed: {result.stderr}")
+            logger.info("olmocr is available and working")
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"olmocr check timed out after 30s: {e}")
+            raise RuntimeError("olmocr check timed out")
+        except FileNotFoundError as e:
+            logger.error(f"olmocr module not found: {e}")
+            raise RuntimeError(f"olmocr module not found: {e}")
+        except Exception as e:
+            logger.error(f"olmocr check failed with exception: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise RuntimeError(f"olmocr not available: {e}")
 
         cmd = [
             "python",
