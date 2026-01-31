@@ -23,6 +23,27 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# ==================== Schema Definitions ====================
+
+class QuizItem(BaseModel):
+    question: str = Field(description="The quiz question text")
+    options: List[str] = Field(description="A list of 4 possible answers")
+    answer: str = Field(description="The correct answer matching one of the options exactly")
+    sourcePageRange: Optional[str] = Field(default=None, description="The source page range reference")
+
+class QuizList(BaseModel):
+    items: List[QuizItem] = Field(description="List of quiz questions")
+
+class FlashcardItem(BaseModel):
+    question: str = Field(description="The front of the flashcard (concept or question)")
+    answer: str = Field(description="The back of the flashcard (definition or answer)")
+    sourcePageRange: Optional[str] = Field(default=None, description="The source page range reference")
+
+class FlashcardList(BaseModel):
+    items: List[FlashcardItem] = Field(description="List of flashcards")
+
+
+
 # ==================== Request/Response Models ====================
 
 class GenerateQuizRequest(BaseModel):
@@ -168,10 +189,33 @@ class ContentGenerationService:
                     content=chunk.content
                 )
 
-                # Call LLM with specified model type
-                response = await model_manager.generate_content_with_model(prompt, ai_model)
-                questions = self._parse_quiz_response(response, chunk.page_range)
-                all_questions.extend(questions)
+                # Call LLM with structured output using LangChain
+                try:
+                    llm = model_manager.get_langchain_model(ai_model)
+                    structured_llm = llm.with_structured_output(QuizList)
+                    
+                    logger.info(f"Invoking structured model: {ai_model.value}")
+                    # Invocation
+                    result = structured_llm.invoke(prompt)
+                    
+                    if result and result.items:
+                        # Map back to our dictionary format
+                        for item in result.items:
+                            all_questions.append({
+                                "question": item.question,
+                                "options": item.options,
+                                "answer": item.answer,
+                                "sourcePageRange": chunk.page_range
+                            })
+                    else:
+                        logger.warning(f"Empty structured result for chunk {i}")
+
+                except Exception as e:
+                    logger.error(f"Structured geneation failed: {e}")
+                    # Fallback to legacy string generation if structured fails (though unlikely with retry)
+                    response = await model_manager.generate_content_with_model(prompt, ai_model)
+                    questions = self._parse_quiz_response(response, chunk.page_range)
+                    all_questions.extend(questions)
 
             if not all_questions:
                 return {"success": False, "error": "Failed to generate any questions"}
@@ -273,16 +317,35 @@ class ContentGenerationService:
 
                 # Call LLM with specified model type
                 logger.info(f"Calling LLM for flashcard chunk {i+1}/{len(chunks)} with model {ai_model.value}")
+                # Call LLM with specified model type
+                logger.info(f"Calling LLM for flashcard chunk {i+1}/{len(chunks)} with model {ai_model.value}")
                 try:
-                    response = await model_manager.generate_content_with_model(prompt, ai_model)
-                    logger.info(f"LLM response received for flashcard chunk {i+1}, length: {len(response)}")
-                    flashcards = self._parse_flashcard_response(response, chunk.page_range)
-                    logger.info(f"Parsed {len(flashcards)} flashcards from chunk {i+1}")
-                    all_flashcards.extend(flashcards)
+                    llm = model_manager.get_langchain_model(ai_model)
+                    structured_llm = llm.with_structured_output(FlashcardList)
+
+                    result = structured_llm.invoke(prompt)
+
+                    if result and result.items:
+                         for item in result.items:
+                            all_flashcards.append({
+                                "question": item.question,
+                                "answer": item.answer,
+                                "sourcePageRange": chunk.page_range
+                            })
+                         logger.info(f"Parsed {len(result.items)} flashcards from chunk {i+1}")
+                    else:
+                        logger.warning(f"Empty structured result for chunk {i+1}")
+
                 except Exception as chunk_error:
                     logger.error(f"Error generating flashcards for chunk {i+1}: {chunk_error}")
-                    # Continue with other chunks instead of failing completely
-                    continue
+                    # Fallback to string method
+                    try:
+                        response = await model_manager.generate_content_with_model(prompt, ai_model)
+                        flashcards = self._parse_flashcard_response(response, chunk.page_range)
+                        all_flashcards.extend(flashcards)
+                    except Exception as fallback_error:
+                         logger.error(f"Fallback generation also failed: {fallback_error}")
+                         continue
 
             if not all_flashcards:
                 return {"success": False, "error": "Failed to generate any flashcards"}

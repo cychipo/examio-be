@@ -296,5 +296,43 @@ class ModelManager:
             return await self._generate_with_ollama(prompt)
 
 
+    def get_langchain_model(self, ai_model_type: AIModelType = AIModelType.GEMINI):
+        """
+        Get a LangChain Chat Model instance for structured output and advanced chains
+        """
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_ollama import ChatOllama
+        
+        model_type = AIModelType.to_model_type(ai_model_type)
+        
+        if model_type == ModelType.GEMINI:
+            gemini_info = self.get_gemini_info()
+            api_keys_str = os.getenv("GEMINI_API_KEYS", "")
+            # Pick first available key for now (rotation handled inside ChatGoogleGenerativeAI if configured, but here we pick one)
+            api_key = api_keys_str.split(",")[0].strip() if api_keys_str else os.getenv("GEMINI_API_KEY")
+            
+            return ChatGoogleGenerativeAI(
+                model=gemini_info["model"],
+                google_api_key=api_key,
+                temperature=self.get_temperature(),
+                max_output_tokens=self.get_max_tokens(),
+                convert_system_message_to_human=True
+            )
+        else:
+            ollama_info = self.get_ollama_info()
+            verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
+            # Using trust_env=False equivalent for LangChain is implicit if base_url is local or correctly routed,
+            # but ChatOllama uses httpx under the hood. Currently no direct way to pass client kwargs in constructor easily
+            # without custom client, but standard usually works if URL is correct.
+            
+            return ChatOllama(
+                base_url=ollama_info["url"],
+                model=ollama_info["model"],
+                temperature=self.get_temperature(),
+                # num_predict=self.get_max_tokens(), # LangChain uses different param mapping
+                format="json", # Force JSON mode natively
+            )
+
+
 # Singleton instance
 model_manager = ModelManager()
