@@ -42,7 +42,7 @@ class ProcessFileRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     
     user_storage_id: str = Field(..., description="ID của UserStorage (NestJS đã tạo)")
-    model_type: str = Field(default="gemini", alias="modelType", description="AI model: 'gemini' or 'fayedark'")
+    model_type: str = Field(default="fayedark", alias="modelType", description="AI model: 'gemini' or 'fayedark' (Ollama)")
 
 
 class QueryFileRequest(BaseModel):
