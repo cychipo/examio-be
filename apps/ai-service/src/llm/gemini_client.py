@@ -280,9 +280,10 @@ class GeminiClient:
             List[float] embedding vector
         """
         # Embedding models để xoay vòng khi bị rate limit
+        # Note: embedding-001 hoạt động với v1beta API, text-embedding-004 cần v1
         embedding_models = [
-            "models/text-embedding-004",  # Mới hơn, performance tốt hơn
-            "models/embedding-001",        # Legacy nhưng ổn định
+            "models/embedding-001",        # Ổn định, hoạt động với v1beta API
+            "models/text-embedding-004",   # Fallback - cần v1 API
         ]
 
         last_error = None
