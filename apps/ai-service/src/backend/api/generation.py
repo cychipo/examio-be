@@ -31,14 +31,14 @@ class GenerateQuizBody(BaseModel):
     """Request body for quiz generation"""
     user_storage_id: str = Field(..., alias="userStorageId", description="ID của UserStorage")
     user_id: str = Field(..., alias="userId", description="ID của user")
-    num_questions: Annotated[int, Field(default=10, alias="numQuestions", ge=1, le=100)] = 10
-    is_narrow_search: Annotated[bool, Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")] = False
-    keyword: Annotated[Optional[str], Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")] = None
-    model_type: Annotated[str, Field(
+    num_questions: int = Field(default=10, alias="numQuestions", ge=1, le=100)
+    is_narrow_search: bool = Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")
+    keyword: Optional[str] = Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")
+    model_type: str = Field(
         default="gemini",
         alias="modelType",
         description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
-    )] = "gemini"
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -47,14 +47,14 @@ class GenerateFlashcardBody(BaseModel):
     """Request body for flashcard generation"""
     user_storage_id: str = Field(..., alias="userStorageId", description="ID của UserStorage")
     user_id: str = Field(..., alias="userId", description="ID của user")
-    num_flashcards: Annotated[int, Field(default=10, alias="numFlashcards", ge=1, le=100)] = 10
-    is_narrow_search: Annotated[bool, Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")] = False
-    keyword: Annotated[Optional[str], Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")] = None
-    model_type: Annotated[str, Field(
+    num_flashcards: int = Field(default=10, alias="numFlashcards", ge=1, le=100)
+    is_narrow_search: bool = Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")
+    keyword: Optional[str] = Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")
+    model_type: str = Field(
         default="gemini",
         alias="modelType",
         description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
-    )] = "gemini"
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 

@@ -142,6 +142,7 @@ class ModelManager:
     async def _generate_with_gemini(self, prompt: str) -> str:
         """Generate content using Gemini API with key/model rotation on quota errors"""
         import google.generativeai as genai
+        import asyncio
         from google.api_core.exceptions import ResourceExhausted
 
         logger.debug("Starting Gemini generation")
@@ -162,7 +163,7 @@ class ModelManager:
         logger.debug(f"Found {len(api_keys)} API keys")
 
         # Get model names
-        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash,gemini-1.5-flash,gemini-1.5-pro")
+        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.5-flash-lite,gemini-2.5-flash,gemini-2.5-pro,gemini-3-pro-preview,gemini-2.0-flash,gemini-2.0-flash-001,gemini-2.0-flash-lite,gemini-2.0-flash-lite-001")
         model_names = [m.strip() for m in model_names_str.split(",") if m.strip()]
 
         logger.debug(f"Using models: {model_names}")
@@ -189,11 +190,16 @@ class ModelManager:
 
                     logger.debug(f"Using temperature: {temperature_val}, max_tokens: {max_tokens_val}")
 
-                    response = model.generate_content(
-                        prompt,
-                        generation_config=genai.types.GenerationConfig(
-                            temperature=temperature_val,
-                            max_output_tokens=max_tokens_val,
+                    # Run blocking generation in thread pool to avoid blocking event loop
+                    loop = asyncio.get_running_loop()
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: model.generate_content(
+                            prompt,
+                            generation_config=genai.types.GenerationConfig(
+                                temperature=temperature_val,
+                                max_output_tokens=max_tokens_val,
+                            )
                         )
                     )
 
@@ -216,7 +222,7 @@ class ModelManager:
         logger.error(f"All combinations failed. Last error: {last_error}")
         raise last_error or ValueError("All API keys and models exhausted")
 
-    async def _generate_with_ollama(self, prompt: str) -> str:
+    async def _generate_with_ollama(self, prompt: str, response_model: Any = None) -> str:
         """Generate content using Ollama with retry logic and SSL options"""
         import httpx
         import asyncio
@@ -231,28 +237,39 @@ class ModelManager:
         max_retries = 3
         last_error = None
 
+        payload = {
+            "model": ollama_info["model"],
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": self.get_temperature(),
+                "num_predict": self.get_max_tokens(),
+                "num_ctx": 4096,
+            }
+        }
+
+        # Apply structured output format if provided
+        if response_model:
+             payload["format"] = response_model.model_json_schema()
+        
         for attempt in range(max_retries):
             try:
                 # Use trust_env=False to ignore system proxies and connect directly
                 async with httpx.AsyncClient(timeout=3600.0, verify=verify_ssl, trust_env=False) as client:
                     logger.debug(f"Calling Ollama (Attempt {attempt+1}): {url} with model {ollama_info['model']}")
-                    response = await client.post(url, json={
-                        "model": ollama_info["model"],
-                        "prompt": prompt,
-                        "format": "json",  # Force JSON output
-                        "stream": False,
-                        "options": {
-                            "temperature": self.get_temperature(),
-                            "num_predict": self.get_max_tokens(),
-                        }
-                    })
+                    
+                    response = await client.post(url, json=payload)
                     response.raise_for_status()
                     data = response.json()
                     
+                    resp_text = data.get("response", "")
+                    if len(resp_text) < 200:
+                        logger.warning(f"Ollama response too short: {resp_text}")
+                        
                     if os.getenv("LOG_OLLAMA_RESPONSE") == "true":
                         logger.debug(f"Ollama response data: {data}")
                         
-                    return data.get("response", "")
+                    return resp_text
             except (httpx.ConnectError, httpx.ConnectTimeout) as e:
                 last_error = e
                 if attempt < max_retries - 1:
@@ -271,7 +288,8 @@ class ModelManager:
     async def generate_content_with_model(
         self,
         prompt: str,
-        ai_model_type: AIModelType = AIModelType.GEMINI
+        ai_model_type: AIModelType = AIModelType.GEMINI,
+        response_model: Any = None
     ) -> str:
         """
         Generate content using a specific AI model type (thread-safe).
@@ -281,6 +299,7 @@ class ModelManager:
         Args:
             prompt: The prompt to send to the model
             ai_model_type: The AI model to use (gemini or fayedark)
+            response_model: Optional Pydantic model for structured output (Ollama only)
 
         Returns:
             Generated text response
@@ -293,7 +312,7 @@ class ModelManager:
             return await self._generate_with_gemini(prompt)
         else:
             logger.info("Using Ollama model")
-            return await self._generate_with_ollama(prompt)
+            return await self._generate_with_ollama(prompt, response_model)
 
 
     def get_langchain_model(self, ai_model_type: AIModelType = AIModelType.GEMINI):

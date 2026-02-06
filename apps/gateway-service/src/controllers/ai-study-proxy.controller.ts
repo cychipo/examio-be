@@ -131,14 +131,23 @@ export class AIProxyController {
             contentType: file.mimetype,
         });
         // Append other form fields
+        console.log('Gateway generate-from-file body:', JSON.stringify(body));
+
         if (body.typeResult) formData.append('typeResult', body.typeResult);
-        if (body.quantityQuizz)
+
+        // Handle both spelling variants for quiz quantity
+        if (body.quantityQuizz) {
             formData.append('quantityQuizz', body.quantityQuizz);
+        } else if (body.quantityQuiz) {
+            formData.append('quantityQuizz', body.quantityQuiz); // Normalize to 2 'z's for exam-service
+        }
+
         if (body.quantityFlashcard)
             formData.append('quantityFlashcard', body.quantityFlashcard);
         if (body.isNarrowSearch)
             formData.append('isNarrowSearch', body.isNarrowSearch);
         if (body.keyword) formData.append('keyword', body.keyword);
+        if (body.modelType) formData.append('modelType', body.modelType);
 
         const examServiceUrl =
             process.env.EXAM_SERVICE_URL || 'http://localhost:3002';

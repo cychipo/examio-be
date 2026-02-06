@@ -41,7 +41,10 @@ async def lifespan(app: FastAPI):
             _consumer_task = asyncio.create_task(consumer.start_consuming())
             logger.info("RabbitMQ consumer started")
         except Exception as e:
-            logger.warning(f"Failed to start RabbitMQ consumer: {e}")
+            # Soft fail: Log error but let the app start. 
+            # This prevents dev environment from crashing due to AMQP issues.
+            logger.error(f"Failed to start RabbitMQ consumer (Optional): {e}")
+            _consumer_task = None
 
     yield
 

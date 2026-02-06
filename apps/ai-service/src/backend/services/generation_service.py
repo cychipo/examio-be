@@ -134,20 +134,27 @@ class ContentGenerationService:
             if file_info.processing_status != "COMPLETED":
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
-            # Determine AI model type (respect system default if not explicitly local)
+            # Determine AI model type strictly based on user request first
             from src.llm.model_manager import model_manager, ModelType
-            system_model_type = model_manager.get_model_type()
             
-            # If request is fayedark OR (request is default/gemini/None and system is OLLAMA)
-            use_local = request.model_type == "fayedark" or (
-                (not request.model_type or request.model_type == "gemini") and 
-                system_model_type == ModelType.OLLAMA
-            )
+            # Default to System Setting if request is empty
+            final_model_enum = AIModelType.GEMINI 
             
-            ai_model = AIModelType.FAYEDARK if use_local else AIModelType.GEMINI
-            model_type_str = "fayedark" if use_local else "gemini"
+            if request.model_type:
+                if request.model_type.lower() == "gemini":
+                    final_model_enum = AIModelType.GEMINI
+                elif request.model_type.lower() in ["fayedark", "ollama", "local"]:
+                    final_model_enum = AIModelType.FAYEDARK
+            else:
+                # Fallback to system env if not specified
+                system_type = model_manager.get_model_type()
+                if system_type == ModelType.OLLAMA:
+                    final_model_enum = AIModelType.FAYEDARK
+                else:
+                    final_model_enum = AIModelType.GEMINI
             
-            logger.info(f"Using AI model for quiz: {ai_model.value} (requested: {request.model_type})")
+            logger.info(f"Using AI model for quiz: {final_model_enum.value} (Request: {request.model_type})")
+            model_type_str = "fayedark" if final_model_enum == AIModelType.FAYEDARK else "gemini"
 
             # Get document chunks
             chunks = []
@@ -183,56 +190,94 @@ class ContentGenerationService:
                 if questions_per_chunk[i] == 0:
                     continue
 
-                prompt = prompt_utils.generate_quiz_prompt(
-                    page_range=chunk.page_range,
-                    num_questions=questions_per_chunk[i],
-                    content=chunk.content
-                )
-
-                # Call LLM with structured output using LangChain
-                try:
-                    llm = model_manager.get_langchain_model(ai_model)
-                    structured_llm = llm.with_structured_output(QuizList)
+                # Batching logic to avoid timeouts (max 3 items per request)
+                items_needed = questions_per_chunk[i]
+                BATCH_SIZE = 3
+                
+                chunk_questions = []
+                
+                # Calculate number of batches needed
+                num_batches = (items_needed + BATCH_SIZE - 1) // BATCH_SIZE
+                
+                for batch_idx in range(num_batches):
+                    # Calculate questions for this batch
+                    current_batch_size = min(BATCH_SIZE, items_needed - batch_idx * BATCH_SIZE)
                     
-                    logger.info(f"Invoking structured model: {ai_model.value}")
-                    # Invocation
-                    result = structured_llm.invoke(prompt)
-                    
-                    if result and result.items:
-                        # Map back to our dictionary format
-                        for item in result.items:
-                            all_questions.append({
-                                "question": item.question,
-                                "options": item.options,
-                                "answer": item.answer,
-                                "sourcePageRange": chunk.page_range
-                            })
-                    else:
-                        logger.warning(f"Empty structured result for chunk {i}")
+                    logger.info(f"Processing chunk {i+1}/{len(chunks)}, batch {batch_idx+1}/{num_batches} (size: {current_batch_size})")
 
-                except Exception as e:
-                    logger.error(f"Structured geneation failed: {e}")
-                    # Fallback to legacy string generation if structured fails (though unlikely with retry)
-                    response = await model_manager.generate_content_with_model(prompt, ai_model)
-                    questions = self._parse_quiz_response(response, chunk.page_range)
-                    all_questions.extend(questions)
+                    prompt = prompt_utils.generate_quiz_prompt(
+                        page_range=chunk.page_range,
+                        num_questions=current_batch_size,
+                        content=chunk.content
+                    )
+
+                    # Append strict JSON instruction to prompt
+                    json_prompt = prompt + "\n\nIMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
+                    
+                    is_ollama = final_model_enum == AIModelType.FAYEDARK
+                    
+                    try:
+                        response = await model_manager.generate_content_with_model(
+                            json_prompt, 
+                            final_model_enum,
+                            response_model=QuizList if is_ollama else None
+                        )
+                        
+                        batch_results = []
+                        if is_ollama:
+                            try:
+                                # Parse structured output from Ollama
+                                quiz_list = QuizList.model_validate_json(response)
+                                batch_results = [
+                                    self._normalize_quiz_item(item, chunk.page_range)
+                                    for item in quiz_list.items
+                                ]
+                            except Exception as e:
+                                logger.error(f"Failed to validate structured output (batch {batch_idx+1}): {e}")
+                                # Fallback to manual parsing
+                                batch_results = self._parse_quiz_response(response, chunk.page_range)
+                        else:
+                            batch_results = self._parse_quiz_response(response, chunk.page_range)
+
+                        if batch_results:
+                            # Enforce batch size limit
+                            if len(batch_results) > current_batch_size:
+                                logger.warning(f"Batch returned more items than requested: {len(batch_results)} vs {current_batch_size}. Slicing.")
+                                batch_results = batch_results[:current_batch_size]
+                                
+                            chunk_questions.extend(batch_results)
+                        else:
+                            logger.warning(f"No questions generated for chunk {i+1} batch {batch_idx+1}")
+                    except Exception as e:
+                        logger.error(f"Generation failed for chunk {i+1} batch {batch_idx+1}: {e}")
+                        continue
+                
+                if chunk_questions:
+                    logger.info(f"Generated total {len(chunk_questions)} questions for chunk {i+1}")
+                    all_questions.extend(chunk_questions)
 
             if not all_questions:
                 return {"success": False, "error": "Failed to generate any questions"}
 
             # Save to HistoryGeneratedQuizz
-            history_id = await self._save_quiz_history(
-                user_id=request.user_id,
-                user_storage_id=request.user_storage_id,
-                quizzes=all_questions
-            )
+            try:
+                history_id = await self._save_quiz_history(
+                    user_id=request.user_id,
+                    user_storage_id=request.user_storage_id,
+                    quizzes=all_questions
+                )
 
-            return {
-                "success": True,
-                "history_id": history_id,
-                "quizzes": all_questions,
-                "count": len(all_questions)
-            }
+                return {
+                    "success": True,
+                    "history_id": history_id,
+                    "quizzes": all_questions,
+                    "count": len(all_questions)
+                }
+            except Exception as e:
+                logger.error(f"Failed to save quiz history: {e}")
+                if "violates foreign key constraint" in str(e):
+                    return {"success": False, "error": "Job cancelled or UserStorage not found"}
+                raise e
 
         except Exception as e:
             logger.exception(f"Error generating quiz: {e}")
@@ -260,20 +305,27 @@ class ContentGenerationService:
             if file_info.processing_status != "COMPLETED":
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
-            # Determine AI model type (respect system default if not explicitly local)
+            # Determine AI model type strictly based on user request first
             from src.llm.model_manager import model_manager, ModelType
-            system_model_type = model_manager.get_model_type()
             
-            # If request is fayedark OR (request is default/gemini/None and system is OLLAMA)
-            use_local = request.model_type == "fayedark" or (
-                (not request.model_type or request.model_type == "gemini") and 
-                system_model_type == ModelType.OLLAMA
-            )
+            # Default to System Setting if request is empty
+            final_model_enum = AIModelType.GEMINI
             
-            ai_model = AIModelType.FAYEDARK if use_local else AIModelType.GEMINI
-            model_type_str = "fayedark" if use_local else "gemini"
+            if request.model_type:
+                if request.model_type.lower() == "gemini":
+                    final_model_enum = AIModelType.GEMINI
+                elif request.model_type.lower() in ["fayedark", "ollama", "local"]:
+                    final_model_enum = AIModelType.FAYEDARK
+            else:
+                # Fallback to system env if not specified
+                system_type = model_manager.get_model_type()
+                if system_type == ModelType.OLLAMA:
+                    final_model_enum = AIModelType.FAYEDARK
+                else:
+                    final_model_enum = AIModelType.GEMINI
             
-            logger.info(f"Using AI model for flashcards: {ai_model.value} (requested: {request.model_type})")
+            logger.info(f"Using AI model for flashcards: {final_model_enum.value} (Request: {request.model_type})")
+            model_type_str = "fayedark" if final_model_enum == AIModelType.FAYEDARK else "gemini"
 
             # Get document chunks
             chunks = []
@@ -309,60 +361,97 @@ class ContentGenerationService:
                 if flashcards_per_chunk[i] == 0:
                     continue
 
-                prompt = prompt_utils.generate_flashcard_prompt(
-                    page_range=chunk.page_range,
-                    num_flashcards=flashcards_per_chunk[i],
-                    content=chunk.content
-                )
+                # Batching logic to avoid timeouts (max 3 items per request)
+                items_needed = flashcards_per_chunk[i]
+                BATCH_SIZE = 3
+                
+                chunk_flashcards = []
+                
+                # Calculate number of batches needed
+                num_batches = (items_needed + BATCH_SIZE - 1) // BATCH_SIZE
+                
+                for batch_idx in range(num_batches):
+                    # Calculate flashcards for this batch
+                    current_batch_size = min(BATCH_SIZE, items_needed - batch_idx * BATCH_SIZE)
+                    
+                    logger.info(f"Processing chunk {i+1}/{len(chunks)}, batch {batch_idx+1}/{num_batches} (size: {current_batch_size})")
 
-                # Call LLM with specified model type
-                logger.info(f"Calling LLM for flashcard chunk {i+1}/{len(chunks)} with model {ai_model.value}")
-                # Call LLM with specified model type
-                logger.info(f"Calling LLM for flashcard chunk {i+1}/{len(chunks)} with model {ai_model.value}")
-                try:
-                    llm = model_manager.get_langchain_model(ai_model)
-                    structured_llm = llm.with_structured_output(FlashcardList)
+                    prompt = prompt_utils.generate_flashcard_prompt(
+                        page_range=chunk.page_range,
+                        num_flashcards=current_batch_size,
+                        content=chunk.content
+                    )
 
-                    result = structured_llm.invoke(prompt)
-
-                    if result and result.items:
-                         for item in result.items:
-                            all_flashcards.append({
-                                "question": item.question,
-                                "answer": item.answer,
-                                "sourcePageRange": chunk.page_range
-                            })
-                         logger.info(f"Parsed {len(result.items)} flashcards from chunk {i+1}")
-                    else:
-                        logger.warning(f"Empty structured result for chunk {i+1}")
-
-                except Exception as chunk_error:
-                    logger.error(f"Error generating flashcards for chunk {i+1}: {chunk_error}")
-                    # Fallback to string method
+                    # Append strict JSON instruction to prompt
+                    json_prompt = prompt + "\n\nIMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
+                    
+                    is_ollama = final_model_enum == AIModelType.FAYEDARK
+                    
                     try:
-                        response = await model_manager.generate_content_with_model(prompt, ai_model)
-                        flashcards = self._parse_flashcard_response(response, chunk.page_range)
-                        all_flashcards.extend(flashcards)
-                    except Exception as fallback_error:
-                         logger.error(f"Fallback generation also failed: {fallback_error}")
-                         continue
+                        response = await model_manager.generate_content_with_model(
+                            json_prompt, 
+                            final_model_enum, 
+                            response_model=FlashcardList if is_ollama else None
+                        )
+                        
+                        batch_results = []
+                        if is_ollama:
+                            try:
+                                fc_list = FlashcardList.model_validate_json(response)
+                                batch_results = [
+                                    {
+                                        "question": item.question,
+                                        "answer": item.answer,
+                                        "sourcePageRange": item.sourcePageRange or chunk.page_range
+                                    }
+                                    for item in fc_list.items
+                                ]
+                            except Exception as e:
+                                logger.error(f"Failed to validate structured output for flashcards (batch {batch_idx+1}): {e}")
+                                batch_results = self._parse_flashcard_response(response, chunk.page_range)
+                        else:
+                            batch_results = self._parse_flashcard_response(response, chunk.page_range)
+
+                        if batch_results:
+                            # Enforce batch size limit
+                            if len(batch_results) > current_batch_size:
+                                logger.warning(f"Batch returned more items than requested: {len(batch_results)} vs {current_batch_size}. Slicing.")
+                                batch_results = batch_results[:current_batch_size]
+                                
+                            chunk_flashcards.extend(batch_results)
+                        else:
+                            logger.warning(f"No flashcards generated for chunk {i+1} batch {batch_idx+1}")
+                            
+                    except Exception as chunk_error:
+                        logger.error(f"Error generating flashcards for chunk {i+1} batch {batch_idx+1}: {chunk_error}")
+                        continue
+                
+                if chunk_flashcards:
+                    logger.info(f"Generated total {len(chunk_flashcards)} flashcards for chunk {i+1}")
+                    all_flashcards.extend(chunk_flashcards)
 
             if not all_flashcards:
                 return {"success": False, "error": "Failed to generate any flashcards"}
 
             # Save to HistoryGeneratedFlashcard
-            history_id = await self._save_flashcard_history(
-                user_id=request.user_id,
-                user_storage_id=request.user_storage_id,
-                flashcards=all_flashcards
-            )
+            try:
+                history_id = await self._save_flashcard_history(
+                    user_id=request.user_id,
+                    user_storage_id=request.user_storage_id,
+                    flashcards=all_flashcards
+                )
 
-            return {
-                "success": True,
-                "history_id": history_id,
-                "flashcards": all_flashcards,
-                "count": len(all_flashcards)
-            }
+                return {
+                    "success": True,
+                    "history_id": history_id,
+                    "flashcards": all_flashcards,
+                    "count": len(all_flashcards)
+                }
+            except Exception as e:
+                logger.error(f"Failed to save flashcard history: {e}")
+                if "violates foreign key constraint" in str(e):
+                    return {"success": False, "error": "Job cancelled or UserStorage not found"}
+                raise e
 
         except Exception as e:
             logger.exception(f"Error generating flashcards: {e}")
@@ -440,6 +529,65 @@ class ContentGenerationService:
             return text[start_idx : end_idx + 1]
 
         raise ValueError("No JSON array found in response")
+
+    def _normalize_quiz_item(self, item: QuizItem, page_range: str) -> dict:
+        """Normalize quiz item to ensure correct format"""
+        valid_answers = ["A", "B", "C", "D"]
+        clean_answer = str(item.answer).strip()
+
+        # Normalize Options first
+        new_options = []
+        for idx, opt in enumerate(item.options):
+            prefix = f"{valid_answers[idx]}. "
+            clean_opt = str(opt).strip()
+            # Remove existing prefixes like "A. ", "A) ", "1. ", etc.
+            # Using simple replacement for common patterns to avoid complex regex logic if possible, 
+            # but regex is safer for "A) content".
+            import re
+            # Matches A., A), 1., 1), or just A space at start
+            clean_opt = re.sub(r'^([A-D]|[0-9]+)[\.\)\:]\s+', '', clean_opt)
+            # Remove literal "A " if present
+            if clean_opt.startswith(valid_answers[idx] + " "):
+                clean_opt = clean_opt[2:].strip()
+                
+            new_options.append(f"{prefix}{clean_opt}")
+            
+        # Fix Answer if it is not A/B/C/D (e.g. full text answer)
+        if clean_answer not in valid_answers:
+            # Try to match with options
+            found = False
+            
+            # 1. Check normalized new_options
+            for idx, opt in enumerate(new_options): 
+                # opt is "A. content". We check content.
+                opt_content = opt[3:].strip() 
+                if clean_answer.lower() == opt_content.lower() or clean_answer in opt_content:
+                    clean_answer = valid_answers[idx]
+                    found = True
+                    break
+            
+            if not found:
+                # 2. Check original item.options
+                 for idx, opt in enumerate(item.options):
+                    if clean_answer in str(opt):
+                        clean_answer = valid_answers[idx]
+                        found = True
+                        break
+            
+            if not found:
+                 # 3. Last resort: if answer looks like "A) content", extract A
+                 if len(clean_answer) > 0 and clean_answer[0].upper() in valid_answers:
+                     clean_answer = clean_answer[0].upper()
+                 else:
+                     logger.warning(f"Could not normalize answer '{item.answer}', defaulting to A")
+                     clean_answer = "A"
+
+        return {
+            "question": item.question,
+            "options": new_options,
+            "answer": clean_answer,
+            "sourcePageRange": item.sourcePageRange or page_range
+        }
 
     async def _save_quiz_history(
         self,

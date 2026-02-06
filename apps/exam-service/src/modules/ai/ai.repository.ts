@@ -168,4 +168,22 @@ export class AIRepository {
             orderBy: { createdAt: 'desc' },
         });
     }
+    /**
+     * Find existing file by name and size to prevent duplicates
+     */
+    async findDuplicateUserStorage(
+        userId: string,
+        filename: string,
+        size: number
+    ): Promise<UserStorage | null> {
+        return this.prisma.userStorage.findFirst({
+            where: {
+                userId,
+                filename,
+                size,
+                // Only consider recent files or ensure exact match
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+    }
 }
