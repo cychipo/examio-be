@@ -48,16 +48,28 @@ class OllamaEmbeddings:
         Create embedding vector using Ollama.
         
         Args:
-            text: Text to embed
+            text: Text to embed (will be truncated if too long)
             task_type: Ignored for Ollama (kept for API compatibility)
         
         Returns:
             List[float] embedding vector
         """
         try:
+            # Truncate text if too long (nomic-embed-text has ~2048 token context window)
+            # ~4 chars per token, so max ~2000 chars to be safe
+            max_length = 2000
+            if len(text) > max_length:
+                logger.warning(f"Truncating text from {len(text)} to {max_length} chars for embedding")
+                text = text[:max_length]
+            
             verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
-            # Use trust_env=False to bypass system proxies
-            async with httpx.AsyncClient(timeout=60.0, verify=verify_ssl, trust_env=False) as client:
+            
+            # Increase timeout for large texts
+            timeout = httpx.Timeout(120.0, connect=30.0)
+            
+            logger.debug(f"Embedding text ({len(text)} chars) to {self.base_url}/api/embeddings with model {self.model}")
+            
+            async with httpx.AsyncClient(timeout=timeout, verify=verify_ssl, trust_env=False) as client:
                 response = await client.post(
                     f"{self.base_url}/api/embeddings",
                     json={
@@ -65,9 +77,20 @@ class OllamaEmbeddings:
                         "prompt": text
                     }
                 )
+                
+                if response.status_code != 200:
+                    # Log response body for debugging
+                    try:
+                        error_body = response.text
+                        logger.error(f"Ollama error response: {error_body[:500]}")
+                    except:
+                        pass
+                
                 response.raise_for_status()
                 data = response.json()
-                return data.get("embedding", [])
+                embedding = data.get("embedding", [])
+                logger.debug(f"Got embedding with {len(embedding)} dimensions")
+                return embedding
         except Exception as e:
             logger.error(f"Ollama embedding error: {e}")
             raise Exception(f"Ollama embedding failed: {e}")

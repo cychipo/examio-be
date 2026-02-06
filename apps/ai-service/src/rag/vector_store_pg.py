@@ -73,47 +73,35 @@ class PgVectorStore:
         self, 
         text: str, 
         task_type: str = "retrieval_document",
-        model_type: str = "gemini"
+        model_type: str = "fayedark"  # Default to Ollama
     ) -> List[float]:
         """
-        Tạo embedding vector cho text.
+        Tạo embedding vector cho text sử dụng Ollama.
 
         Args:
             text: Text cần embedding
             task_type: "retrieval_document" cho documents, "retrieval_query" cho queries
-            model_type: "gemini" cho Gemini API, "fayedark" cho Ollama local
+            model_type: Ignored - always uses Ollama
         """
-        if model_type == "fayedark":
-            # Use Ollama local embeddings
-            from src.llm.ollama_embeddings import ollama_embeddings
-            return await ollama_embeddings.create_embedding(text, task_type)
-        else:
-            # Use Gemini embeddings (default)
-            from src.llm.gemini_client import gemini_client
-            return await gemini_client.create_embedding(text, task_type)
+        from src.llm.ollama_embeddings import ollama_embeddings
+        return await ollama_embeddings.create_embedding(text, task_type)
 
     async def create_embeddings_batch(
         self,
         texts: List[str],
         task_type: str = "retrieval_document",
-        model_type: str = "gemini"
+        model_type: str = "fayedark"  # Default to Ollama
     ) -> List[List[float]]:
         """
-        Tạo embeddings cho nhiều texts với batching.
+        Tạo embeddings cho nhiều texts sử dụng Ollama.
 
         Args:
             texts: List texts cần embedding
             task_type: Task type
-            model_type: "gemini" cho Gemini API, "fayedark" cho Ollama local
+            model_type: Ignored - always uses Ollama
         """
-        if model_type == "fayedark":
-            # Use Ollama local embeddings
-            from src.llm.ollama_embeddings import ollama_embeddings
-            return await ollama_embeddings.create_embeddings_batch(texts, task_type)
-        else:
-            # Use Gemini embeddings (default)
-            from src.llm.gemini_client import gemini_client
-            return await gemini_client.create_embeddings_batch(texts, task_type)
+        from src.llm.ollama_embeddings import ollama_embeddings
+        return await ollama_embeddings.create_embeddings_batch(texts, task_type)
 
     async def store_document(
         self,

@@ -268,9 +268,7 @@ class GeminiClient:
         """
         Tạo embedding vector với key rotation và retry.
 
-        Hỗ trợ các embedding models:
-        - models/embedding-001 (768 dims)
-        - models/text-embedding-004 (768 dims)
+        Sử dụng langchain-google-genai với v1 API (không phải v1beta deprecated).
 
         Args:
             text: Text cần tạo embedding
@@ -279,11 +277,12 @@ class GeminiClient:
         Returns:
             List[float] embedding vector
         """
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        
         # Embedding models để xoay vòng khi bị rate limit
-        # Note: embedding-001 hoạt động với v1beta API, text-embedding-004 cần v1
         embedding_models = [
-            "models/embedding-001",        # Ổn định, hoạt động với v1beta API
-            "models/text-embedding-004",   # Fallback - cần v1 API
+            "models/gemini-embedding-exp-03-07",  # Newest experimental model
+            "models/embedding-001",               # Legacy stable model
         ]
 
         last_error = None
@@ -291,14 +290,17 @@ class GeminiClient:
         for model_idx, embed_model in enumerate(embedding_models):
             async def _embed():
                 api_key = self.get_next_key()
-                genai.configure(api_key=api_key)
-
-                result = genai.embed_content(
+                
+                # Use LangChain embeddings with v1 API
+                embeddings = GoogleGenerativeAIEmbeddings(
                     model=embed_model,
-                    content=text,
+                    google_api_key=api_key,
                     task_type=task_type
                 )
-                return result['embedding']
+                
+                # embed_query returns list of floats
+                result = embeddings.embed_query(text)
+                return result
 
             try:
                 return await self.retry_with_backoff(_embed, max_retries=3)
@@ -306,9 +308,9 @@ class GeminiClient:
                 last_error = e
                 error_str = str(e).lower()
 
-                # Nếu là lỗi rate limit/quota, thử model tiếp theo
-                if "429" in error_str or "quota" in error_str or "rate" in error_str:
-                    print(f"⚠️ Embedding model {embed_model} bị rate limit, thử model tiếp theo...")
+                # Nếu là lỗi rate limit/quota hoặc 404, thử model tiếp theo
+                if any(x in error_str for x in ["429", "quota", "rate", "404", "not found"]):
+                    print(f"⚠️ Embedding model {embed_model} failed, trying next model...")
                     continue
                 else:
                     # Lỗi khác thì raise ngay

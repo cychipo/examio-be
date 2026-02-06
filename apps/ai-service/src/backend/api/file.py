@@ -137,25 +137,44 @@ async def process_file(request: ProcessFileRequest):
             if is_pdf:
                 logger.info("📄 Processing PDF with local Tesseract/PyPDF...")
                 try:
-                    # Process PDF with chunks (split + OCR each chunk)
+                    # Process PDF with chunks (split by pages + OCR each chunk)
                     chunk_results = pdf_ocr_service.process_pdf_with_chunks(file_bytes)
+
+                    # PDF chunks are by pages (10 pages/chunk), need to split text further
+                    from langchain_text_splitters import RecursiveCharacterTextSplitter
+                    text_splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=1500,  # Max 1500 chars per embedding chunk
+                        chunk_overlap=150,
+                        separators=["\n\n", "\n", ". ", " ", ""]
+                    )
 
                     # Prepare documents for batch storage
                     documents_to_store = []
-                    for chunk_index, chunk_text in chunk_results:
-                        if not chunk_text or not chunk_text.strip():
+                    chunk_idx = 0
+                    
+                    for page_chunk_index, page_chunk_text in chunk_results:
+                        if not page_chunk_text or not page_chunk_text.strip():
                             continue
 
-                        chunk_id = f"{user_storage_id}_chunk_{chunk_index}"
-                        documents_to_store.append({
-                            'id': chunk_id,
-                            'user_storage_id': user_storage_id,
-                            'content': chunk_text,
-                            'page_range': str(chunk_index),
-                            'title': f"Chunk {chunk_index}"
-                        })
+                        # Split large page chunks into smaller text chunks
+                        text_chunks = text_splitter.split_text(page_chunk_text)
+                        logger.info(f"📝 Page chunk {page_chunk_index}: {len(page_chunk_text)} chars → {len(text_chunks)} text chunks")
+                        
+                        for text_chunk in text_chunks:
+                            if not text_chunk.strip():
+                                continue
+                            chunk_id = f"{user_storage_id}_chunk_{chunk_idx}"
+                            documents_to_store.append({
+                                'id': chunk_id,
+                                'user_storage_id': user_storage_id,
+                                'content': text_chunk.strip(),
+                                'page_range': str(page_chunk_index),
+                                'title': f"Chunk {chunk_idx + 1}"
+                            })
+                            chunk_idx += 1
 
                     if documents_to_store:
+                        logger.info(f"📦 Storing {len(documents_to_store)} text chunks...")
                         stored_count = await pg_store.store_documents_batch(documents_to_store, model_type=model_type)
                 except Exception as pdf_error:
                     logger.error(f"PDF processing failed: {pdf_error}")

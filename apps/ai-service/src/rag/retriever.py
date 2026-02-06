@@ -1407,33 +1407,17 @@ def create_in_memory_retriever(file_content: str, chunk_size: int = 400, chunk_o
 
         embeddings = None
         
-        # Try requested embeddings first
-        if model_type == "gemini" and GEMINI_EMBEDDINGS_AVAILABLE:
-            try:
-                from src.llm.gemini_client import gemini_client
-                api_key = gemini_client.get_next_key()
-                embeddings = GoogleGenerativeAIEmbeddings(
-                    model="models/text-embedding-004",
-                    google_api_key=api_key
-                )
-                # Test connection
-                embeddings.embed_query("test")
-                logger.info("Using GoogleGenerativeAIEmbeddings for in-memory retriever")
-            except Exception as e:
-                logger.warning(f"Gemini embeddings failed: {e}, falling back...")
-
-        if not embeddings or model_type == "fayedark":
-            try:
-                embeddings = OllamaEmbeddings(
-                    model="nomic-embed-text",
-                    base_url=OLLAMA_BASE_URL
-                )
-                # Test connection with a simple embed
-                embeddings.embed_query("test")
-                logger.info("Using OllamaEmbeddings for in-memory retriever")
-            except Exception as e:
-                if model_type == "fayedark":
-                    logger.warning(f"Ollama not available: {e}, falling back to HuggingFace")
+        # Use Ollama embeddings as primary (Gemini embedding API is deprecated)
+        try:
+            embeddings = OllamaEmbeddings(
+                model="nomic-embed-text",
+                base_url=OLLAMA_BASE_URL
+            )
+            # Test connection with a simple embed
+            embeddings.embed_query("test")
+            logger.info("Using OllamaEmbeddings for in-memory retriever")
+        except Exception as e:
+            logger.warning(f"Ollama not available: {e}, falling back to HuggingFace")
 
         # Ultimate fallback to HuggingFace (CPU friendly)
         if not embeddings:
