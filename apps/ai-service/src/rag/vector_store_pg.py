@@ -70,18 +70,21 @@ class PgVectorStore:
             self._pool = None
 
     async def create_embedding(
-        self, 
-        text: str, 
+        self,
+        text: str,
         task_type: str = "retrieval_document",
-        model_type: str = "fayedark"  # Default to Ollama
+        model_type: str = "fayedark"
     ) -> List[float]:
         """
-        Tạo embedding vector cho text sử dụng Ollama.
+        Tạo embedding vector cho text bằng Ollama embedding model.
+
+        Lưu ý: luôn dùng cùng 1 embedding space để đảm bảo retrieval nhất quán
+        giữa các lần generate (dù model tạo nội dung là gemini hay fayedark).
 
         Args:
             text: Text cần embedding
             task_type: "retrieval_document" cho documents, "retrieval_query" cho queries
-            model_type: Ignored - always uses Ollama
+            model_type: Ignored (giữ để tương thích interface cũ)
         """
         from src.llm.ollama_embeddings import ollama_embeddings
         return await ollama_embeddings.create_embedding(text, task_type)
@@ -90,15 +93,17 @@ class PgVectorStore:
         self,
         texts: List[str],
         task_type: str = "retrieval_document",
-        model_type: str = "fayedark"  # Default to Ollama
+        model_type: str = "fayedark"
     ) -> List[List[float]]:
         """
-        Tạo embeddings cho nhiều texts sử dụng Ollama.
+        Tạo embeddings cho nhiều texts bằng Ollama embedding model.
+
+        Lưu ý: luôn dùng cùng 1 embedding space để đảm bảo retrieval nhất quán.
 
         Args:
             texts: List texts cần embedding
             task_type: Task type
-            model_type: Ignored - always uses Ollama
+            model_type: Ignored (giữ để tương thích interface cũ)
         """
         from src.llm.ollama_embeddings import ollama_embeddings
         return await ollama_embeddings.create_embeddings_batch(texts, task_type)

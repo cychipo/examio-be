@@ -131,7 +131,7 @@ class ContentGenerationService:
             if not file_info:
                 return {"success": False, "error": "File not found"}
 
-            if file_info.processing_status != "COMPLETED":
+            if file_info.processing_status not in ["COMPLETED", "PROCESSING"]:
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
             # Determine AI model type strictly based on user request first
@@ -249,7 +249,14 @@ class ContentGenerationService:
                         else:
                             logger.warning(f"No questions generated for chunk {i+1} batch {batch_idx+1}")
                     except Exception as e:
-                        logger.error(f"Generation failed for chunk {i+1} batch {batch_idx+1}: {e}")
+                        import traceback
+                        logger.error(
+                            f"Generation failed for chunk {i+1} batch {batch_idx+1} | "
+                            f"Model: {final_model_enum.value} | "
+                            f"Error type: {type(e).__name__} | "
+                            f"Error: {e}\n"
+                            f"Traceback:\n{traceback.format_exc()}"
+                        )
                         continue
                 
                 if chunk_questions:
@@ -302,7 +309,7 @@ class ContentGenerationService:
             if not file_info:
                 return {"success": False, "error": "File not found"}
 
-            if file_info.processing_status != "COMPLETED":
+            if file_info.processing_status not in ["COMPLETED", "PROCESSING"]:
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
             # Determine AI model type strictly based on user request first
@@ -423,7 +430,14 @@ class ContentGenerationService:
                             logger.warning(f"No flashcards generated for chunk {i+1} batch {batch_idx+1}")
                             
                     except Exception as chunk_error:
-                        logger.error(f"Error generating flashcards for chunk {i+1} batch {batch_idx+1}: {chunk_error}")
+                        import traceback
+                        logger.error(
+                            f"Error generating flashcards for chunk {i+1} batch {batch_idx+1} | "
+                            f"Model: {final_model_enum.value} | "
+                            f"Error type: {type(chunk_error).__name__} | "
+                            f"Error: {chunk_error}\n"
+                            f"Traceback:\n{traceback.format_exc()}"
+                        )
                         continue
                 
                 if chunk_flashcards:

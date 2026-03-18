@@ -93,7 +93,7 @@ class ModelManager:
     def get_ollama_info(self) -> Dict[str, Any]:
         """Lấy cấu hình Ollama từ môi trường."""
         return {
-            "model": self._runtime_ollama_model or os.getenv("RAG_MODEL", "qwen3:8b"),
+            "model": self._runtime_ollama_model or os.getenv("RAG_MODEL", "qwen3:32b"),
             "url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip('/')
         }
 
@@ -278,6 +278,29 @@ class ModelManager:
                     await asyncio.sleep(wait_time)
                 else:
                     logger.error(f"Failed to connect to Ollama at {url} after {max_retries} attempts: {e}")
+                    raise
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                status_code = e.response.status_code
+                try:
+                    response_body = e.response.text[:2000]  # Limit to first 2000 chars
+                except Exception:
+                    response_body = "(could not read response body)"
+                logger.error(
+                    f"[Ollama] HTTP {status_code} from {url} | "
+                    f"Attempt {attempt+1}/{max_retries} | "
+                    f"Model: {ollama_info['model']} | "
+                    f"Response body: {response_body}"
+                )
+                if status_code >= 500 and attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2
+                    logger.warning(f"Retrying in {wait_time}s...")
+                    # On first 500, try removing the 'format' field — some servers don't support structured output
+                    if attempt == 0 and "format" in payload:
+                        logger.warning("Removing 'format' field from payload and retrying (server may not support structured output)")
+                        payload = {k: v for k, v in payload.items() if k != "format"}
+                    await asyncio.sleep(wait_time)
+                else:
                     raise
             except Exception as e:
                 logger.error(f"Error calling Ollama at {url}: {e}")

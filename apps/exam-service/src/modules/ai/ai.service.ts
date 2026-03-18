@@ -188,6 +188,12 @@ export class AIService {
                             );
                         }
                     }
+
+                    // Important: mark PROCESSING immediately to avoid polling reading old history
+                    await this.aiRepository.updateUserStorageStatus(
+                        existingStorage.id,
+                        'PROCESSING'
+                    );
                 } else {
                     // FAILED/PENDING case: Treat as retry.
                     // We update status to PENDING to restart flow
@@ -225,10 +231,7 @@ export class AIService {
 
                 return {
                     jobId: existingStorage.id,
-                    status:
-                        existingStorage.processingStatus === 'COMPLETED'
-                            ? 'COMPLETED'
-                            : 'PENDING',
+                    status: 'PROCESSING',
                     message:
                         existingStorage.processingStatus === 'COMPLETED'
                             ? 'File đã tồn tại, đang tạo nội dung mới...'
@@ -364,25 +367,32 @@ export class AIService {
             // Fetch current status to check if we can skip OCR
             const currentStorage =
                 await this.aiRepository.findUserStorageById(userStorageId);
-            const skipOcr =
-                currentStorage &&
-                currentStorage.processingStatus === 'COMPLETED';
+
+            if (!currentStorage) {
+                throw new Error(`UserStorage not found: ${userStorageId}`);
+            }
+
+            const skipOcr = currentStorage.processingStatus === 'COMPLETED';
+
+            // Always mark PROCESSING while this generation job is running
+            await this.aiRepository.updateUserStorageStatus(
+                userStorageId,
+                'PROCESSING'
+            );
 
             if (!skipOcr) {
-                // Update status to PROCESSING
-                await this.aiRepository.updateUserStorageStatus(
-                    userStorageId,
-                    'PROCESSING'
-                );
-
                 // Step 1: Call AI service to process OCR + embeddings
                 this.logger.log(
                     `Calling AI service to process file ${userStorageId}...`
                 );
+                const processFilePayload = modelType
+                    ? { user_storage_id: userStorageId, modelType }
+                    : { user_storage_id: userStorageId };
+
                 const ocrResponse = await firstValueFrom(
                     this.httpService.post(
                         `${this.aiServiceUrl}/ai/process-file`,
-                        { user_storage_id: userStorageId },
+                        processFilePayload,
                         { timeout: 3600000 } // 60 min timeout for OCR
                     )
                 );
@@ -399,6 +409,15 @@ export class AIService {
             } else {
                 this.logger.log(
                     `Skipping OCR for already COMPLETED file: ${userStorageId}`
+                );
+            }
+
+            // Keep PROCESSING only when OCR was skipped (regenerate path).
+            // If OCR just completed, AI service already set status COMPLETED and generation endpoint requires it.
+            if (skipOcr) {
+                await this.aiRepository.updateUserStorageStatus(
+                    userStorageId,
+                    'PROCESSING'
                 );
             }
 
@@ -426,15 +445,21 @@ export class AIService {
                 )
             );
 
-            if (!generateResponse.data) {
-                throw new Error('Content generation failed');
+            if (!generateResponse.data?.success) {
+                throw new Error(
+                    generateResponse.data?.error || 'Content generation failed'
+                );
             }
+
+            // Mark completed only when generation actually succeeds
+            await this.aiRepository.updateUserStorageStatus(
+                userStorageId,
+                'COMPLETED'
+            );
 
             this.logger.log(
                 `Generation completed for ${userStorageId}, historyId: ${generateResponse.data.history_id}`
             );
-
-            // Status will be updated to COMPLETED by AI service
         } catch (error) {
             const errorDetails = error.response?.data || error.message;
             this.logger.error(
@@ -798,6 +823,18 @@ export class AIService {
     async getJobStatus(jobId: string, user: User) {
         const upload = await this.getUploadDetail(jobId, user);
 
+        // If currently processing/pending, do not return old history data
+        const normalizedStatus =
+            upload.processingStatus?.toLowerCase() || 'pending';
+        if (normalizedStatus === 'processing' || normalizedStatus === 'pending') {
+            return {
+                jobId: upload.id,
+                status: normalizedStatus,
+                filename: upload.filename,
+                createdAt: upload.createdAt,
+            };
+        }
+
         // Check if quiz or flashcard was generated
         const [quizHistory, flashcardHistory] = await Promise.all([
             this.aiRepository.findLatestQuizHistory(upload.id),
@@ -854,10 +891,10 @@ export class AIService {
             };
         }
 
-        // No result yet, return processing status
+        // No result found
         return {
             jobId: upload.id,
-            status: upload.processingStatus?.toLowerCase() || 'pending',
+            status: normalizedStatus,
             filename: upload.filename,
             createdAt: upload.createdAt,
         };
