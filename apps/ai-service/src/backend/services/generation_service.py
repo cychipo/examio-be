@@ -4,8 +4,11 @@ Content Generation Service - Generate Quiz and Flashcards from OCR'd content
 This service uses LLM to generate educational content from document chunks.
 """
 import json
+import os
+import asyncio
 import logging
 import re
+import time
 import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -88,6 +91,9 @@ class ContentGenerationService:
 
     _instance = None
     _pool: Optional[asyncpg.Pool] = None
+    MAX_SOURCE_CHUNKS = 8
+    MAX_ITEMS_PER_CALL = 6
+    DEFAULT_GENERATION_MAX_CONCURRENCY = 1
 
     def __new__(cls):
         if cls._instance is None:
@@ -96,7 +102,6 @@ class ContentGenerationService:
 
     async def _get_pool(self) -> asyncpg.Pool:
         """Get or create connection pool"""
-        import os
         if self._pool is None or self._pool._closed:
             postgres_uri = os.environ.get("DATABASE_URL")
             if not postgres_uri:
@@ -111,6 +116,183 @@ class ContentGenerationService:
             logger.info("PostgreSQL connection pool created for ContentGenerationService")
 
         return self._pool
+
+    def _get_generation_max_concurrency(self) -> int:
+        raw = os.getenv("GENERATION_MAX_CONCURRENCY")
+        if raw is None:
+            return self.DEFAULT_GENERATION_MAX_CONCURRENCY
+        try:
+            value = int(raw)
+            if value < 1:
+                logger.warning(
+                    f"GENERATION_MAX_CONCURRENCY must be >= 1, got {value}. Using {self.DEFAULT_GENERATION_MAX_CONCURRENCY}."
+                )
+                return self.DEFAULT_GENERATION_MAX_CONCURRENCY
+            return value
+        except ValueError:
+            logger.warning(
+                f"Invalid GENERATION_MAX_CONCURRENCY={raw!r}, using default={self.DEFAULT_GENERATION_MAX_CONCURRENCY}"
+            )
+            return self.DEFAULT_GENERATION_MAX_CONCURRENCY
+
+    async def _generate_quiz_batch_for_chunk(
+        self,
+        chunk: DocumentChunk,
+        chunk_position: int,
+        total_chunks: int,
+        batch_idx: int,
+        num_batches: int,
+        current_batch_size: int,
+        final_model_enum: AIModelType,
+    ) -> List[Dict[str, Any]]:
+        logger.info(
+            f"Processing chunk {chunk_position + 1}/{total_chunks}, "
+            f"batch {batch_idx + 1}/{num_batches} (size: {current_batch_size})"
+        )
+
+        prompt = prompt_utils.generate_quiz_prompt(
+            page_range=chunk.page_range,
+            num_questions=current_batch_size,
+            content=chunk.content
+        )
+
+        # Append strict JSON instruction to prompt
+        json_prompt = prompt + "\n\nIMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
+
+        is_ollama = final_model_enum == AIModelType.FAYEDARK
+
+        response = await model_manager.generate_content_with_model(
+            json_prompt,
+            final_model_enum,
+            response_model=QuizList if is_ollama else None
+        )
+
+        if is_ollama:
+            try:
+                quiz_list = QuizList.model_validate_json(response)
+                batch_results = [
+                    self._normalize_quiz_item(item, chunk.page_range)
+                    for item in quiz_list.items
+                ]
+            except Exception as e:
+                logger.error(f"Failed to validate structured output (batch {batch_idx + 1}): {e}")
+                batch_results = self._parse_quiz_response(response, chunk.page_range)
+        else:
+            batch_results = self._parse_quiz_response(response, chunk.page_range)
+
+        if not batch_results:
+            logger.warning(f"No questions generated for chunk {chunk_position + 1} batch {batch_idx + 1}")
+            return []
+
+        # Enforce batch size limit
+        if len(batch_results) > current_batch_size:
+            logger.warning(
+                f"Batch returned more items than requested: {len(batch_results)} vs {current_batch_size}. Slicing."
+            )
+            batch_results = batch_results[:current_batch_size]
+
+        return batch_results
+
+    async def _generate_flashcard_batch_for_chunk(
+        self,
+        chunk: DocumentChunk,
+        chunk_position: int,
+        total_chunks: int,
+        batch_idx: int,
+        num_batches: int,
+        current_batch_size: int,
+        final_model_enum: AIModelType,
+    ) -> List[Dict[str, Any]]:
+        logger.info(
+            f"Processing chunk {chunk_position + 1}/{total_chunks}, "
+            f"batch {batch_idx + 1}/{num_batches} (size: {current_batch_size})"
+        )
+
+        prompt = prompt_utils.generate_flashcard_prompt(
+            page_range=chunk.page_range,
+            num_flashcards=current_batch_size,
+            content=chunk.content
+        )
+
+        # Append strict JSON instruction to prompt
+        json_prompt = prompt + "\n\nIMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
+
+        is_ollama = final_model_enum == AIModelType.FAYEDARK
+
+        response = await model_manager.generate_content_with_model(
+            json_prompt,
+            final_model_enum,
+            response_model=FlashcardList if is_ollama else None
+        )
+
+        if is_ollama:
+            try:
+                fc_list = FlashcardList.model_validate_json(response)
+                batch_results = [
+                    {
+                        "question": item.question,
+                        "answer": item.answer,
+                        "sourcePageRange": item.sourcePageRange or chunk.page_range
+                    }
+                    for item in fc_list.items
+                ]
+            except Exception as e:
+                logger.error(f"Failed to validate structured output for flashcards (batch {batch_idx + 1}): {e}")
+                batch_results = self._parse_flashcard_response(response, chunk.page_range)
+        else:
+            batch_results = self._parse_flashcard_response(response, chunk.page_range)
+
+        if not batch_results:
+            logger.warning(f"No flashcards generated for chunk {chunk_position + 1} batch {batch_idx + 1}")
+            return []
+
+        # Enforce batch size limit
+        if len(batch_results) > current_batch_size:
+            logger.warning(
+                f"Batch returned more items than requested: {len(batch_results)} vs {current_batch_size}. Slicing."
+            )
+            batch_results = batch_results[:current_batch_size]
+
+        return batch_results
+
+    async def _run_generation_tasks(
+        self,
+        tasks: List[Dict[str, Any]],
+        max_concurrency: int,
+        kind: str,
+    ) -> List[Dict[str, Any]]:
+        if not tasks:
+            return []
+
+        semaphore = asyncio.Semaphore(max(1, max_concurrency))
+
+        async def _run_one(task: Dict[str, Any]) -> Dict[str, Any]:
+            async with semaphore:
+                try:
+                    result = await task["runner"]()
+                    return {
+                        "chunk_index": task["chunk_index"],
+                        "batch_index": task["batch_index"],
+                        "items": result,
+                        "error": None,
+                    }
+                except Exception as e:
+                    import traceback
+                    logger.error(
+                        f"Error generating {kind} for chunk {task['chunk_index'] + 1} batch {task['batch_index'] + 1} | "
+                        f"Error type: {type(e).__name__} | Error: {e}\n"
+                        f"Traceback:\n{traceback.format_exc()}"
+                    )
+                    return {
+                        "chunk_index": task["chunk_index"],
+                        "batch_index": task["batch_index"],
+                        "items": [],
+                        "error": str(e),
+                    }
+
+        results = await asyncio.gather(*[_run_one(task) for task in tasks])
+        results.sort(key=lambda item: (item["chunk_index"], item["batch_index"]))
+        return results
 
     async def generate_quiz(
         self,
@@ -155,6 +337,7 @@ class ContentGenerationService:
             
             logger.info(f"Using AI model for quiz: {final_model_enum.value} (Request: {request.model_type})")
             model_type_str = "fayedark" if final_model_enum == AIModelType.FAYEDARK else "gemini"
+            generation_start = time.perf_counter()
 
             # Get document chunks
             chunks = []
@@ -181,90 +364,77 @@ class ContentGenerationService:
             if not chunks:
                 return {"success": False, "error": "No content found in file"}
 
-            # Distribute questions across chunks
-            questions_per_chunk = self._distribute_items(request.num_questions, len(chunks))
+            original_chunk_count = len(chunks)
+            chunks = self._select_chunks_for_generation(chunks, request.num_questions)
+            selected_chunk_count = len(chunks)
 
-            # Generate questions from each chunk
-            all_questions = []
+            # Distribute questions across chunks
+            questions_per_chunk = self._distribute_items(request.num_questions, selected_chunk_count)
+            expected_batches = sum(
+                (items + self.MAX_ITEMS_PER_CALL - 1) // self.MAX_ITEMS_PER_CALL
+                for items in questions_per_chunk
+                if items > 0
+            )
+            logger.info(
+                f"[AI_TIMING] stage=quiz_prepare user_storage_id={request.user_storage_id} requested={request.num_questions} chunks_total={original_chunk_count} chunks_selected={selected_chunk_count} expected_batches={expected_batches} max_items_per_call={self.MAX_ITEMS_PER_CALL} model={model_type_str}"
+            )
+
+            generation_max_concurrency = self._get_generation_max_concurrency()
+            logger.info(
+                f"[AI_TIMING] stage=quiz_generation_config user_storage_id={request.user_storage_id} generation_max_concurrency={generation_max_concurrency}"
+            )
+
+            # Build chunk-batch tasks while preserving original selection/distribution logic
+            generation_tasks = []
             for i, chunk in enumerate(chunks):
                 if questions_per_chunk[i] == 0:
                     continue
 
-                # Batching logic to avoid timeouts (max 3 items per request)
                 items_needed = questions_per_chunk[i]
-                BATCH_SIZE = 3
-                
-                chunk_questions = []
-                
-                # Calculate number of batches needed
-                num_batches = (items_needed + BATCH_SIZE - 1) // BATCH_SIZE
-                
+                num_batches = (items_needed + self.MAX_ITEMS_PER_CALL - 1) // self.MAX_ITEMS_PER_CALL
                 for batch_idx in range(num_batches):
-                    # Calculate questions for this batch
-                    current_batch_size = min(BATCH_SIZE, items_needed - batch_idx * BATCH_SIZE)
-                    
-                    logger.info(f"Processing chunk {i+1}/{len(chunks)}, batch {batch_idx+1}/{num_batches} (size: {current_batch_size})")
-
-                    prompt = prompt_utils.generate_quiz_prompt(
-                        page_range=chunk.page_range,
-                        num_questions=current_batch_size,
-                        content=chunk.content
+                    current_batch_size = min(
+                        self.MAX_ITEMS_PER_CALL,
+                        items_needed - batch_idx * self.MAX_ITEMS_PER_CALL
                     )
-
-                    # Append strict JSON instruction to prompt
-                    json_prompt = prompt + "\n\nIMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
-                    
-                    is_ollama = final_model_enum == AIModelType.FAYEDARK
-                    
-                    try:
-                        response = await model_manager.generate_content_with_model(
-                            json_prompt, 
-                            final_model_enum,
-                            response_model=QuizList if is_ollama else None
+                    generation_tasks.append({
+                        "chunk_index": i,
+                        "batch_index": batch_idx,
+                        "runner": lambda c=chunk, ci=i, bi=batch_idx, nb=num_batches, bs=current_batch_size: self._generate_quiz_batch_for_chunk(
+                            chunk=c,
+                            chunk_position=ci,
+                            total_chunks=len(chunks),
+                            batch_idx=bi,
+                            num_batches=nb,
+                            current_batch_size=bs,
+                            final_model_enum=final_model_enum,
                         )
-                        
-                        batch_results = []
-                        if is_ollama:
-                            try:
-                                # Parse structured output from Ollama
-                                quiz_list = QuizList.model_validate_json(response)
-                                batch_results = [
-                                    self._normalize_quiz_item(item, chunk.page_range)
-                                    for item in quiz_list.items
-                                ]
-                            except Exception as e:
-                                logger.error(f"Failed to validate structured output (batch {batch_idx+1}): {e}")
-                                # Fallback to manual parsing
-                                batch_results = self._parse_quiz_response(response, chunk.page_range)
-                        else:
-                            batch_results = self._parse_quiz_response(response, chunk.page_range)
+                    })
 
-                        if batch_results:
-                            # Enforce batch size limit
-                            if len(batch_results) > current_batch_size:
-                                logger.warning(f"Batch returned more items than requested: {len(batch_results)} vs {current_batch_size}. Slicing.")
-                                batch_results = batch_results[:current_batch_size]
-                                
-                            chunk_questions.extend(batch_results)
-                        else:
-                            logger.warning(f"No questions generated for chunk {i+1} batch {batch_idx+1}")
-                    except Exception as e:
-                        import traceback
-                        logger.error(
-                            f"Generation failed for chunk {i+1} batch {batch_idx+1} | "
-                            f"Model: {final_model_enum.value} | "
-                            f"Error type: {type(e).__name__} | "
-                            f"Error: {e}\n"
-                            f"Traceback:\n{traceback.format_exc()}"
-                        )
-                        continue
-                
-                if chunk_questions:
-                    logger.info(f"Generated total {len(chunk_questions)} questions for chunk {i+1}")
-                    all_questions.extend(chunk_questions)
+            actual_batches = len(generation_tasks)
+            generation_results = await self._run_generation_tasks(
+                tasks=generation_tasks,
+                max_concurrency=generation_max_concurrency,
+                kind="quiz",
+            )
+
+            all_questions = []
+            per_chunk_counts: Dict[int, int] = {}
+            for result in generation_results:
+                if result["items"]:
+                    all_questions.extend(result["items"])
+                    per_chunk_counts[result["chunk_index"]] = per_chunk_counts.get(result["chunk_index"], 0) + len(result["items"])
+
+            for chunk_idx in sorted(per_chunk_counts.keys()):
+                logger.info(f"Generated total {per_chunk_counts[chunk_idx]} questions for chunk {chunk_idx + 1}")
 
             if not all_questions:
                 return {"success": False, "error": "Failed to generate any questions"}
+
+            total_ms = int((time.perf_counter() - generation_start) * 1000)
+            logger.info(
+                f"[AI_TIMING] stage=quiz_total user_storage_id={request.user_storage_id} total_ms={total_ms} generated={len(all_questions)} actual_batches={actual_batches} expected_batches={expected_batches} chunks_used={selected_chunk_count}"
+            )
 
             # Save to HistoryGeneratedQuizz
             try:
@@ -333,6 +503,7 @@ class ContentGenerationService:
             
             logger.info(f"Using AI model for flashcards: {final_model_enum.value} (Request: {request.model_type})")
             model_type_str = "fayedark" if final_model_enum == AIModelType.FAYEDARK else "gemini"
+            generation_start = time.perf_counter()
 
             # Get document chunks
             chunks = []
@@ -359,93 +530,77 @@ class ContentGenerationService:
             if not chunks:
                 return {"success": False, "error": "No content found in file"}
 
-            # Distribute flashcards across chunks
-            flashcards_per_chunk = self._distribute_items(request.num_flashcards, len(chunks))
+            original_chunk_count = len(chunks)
+            chunks = self._select_chunks_for_generation(chunks, request.num_flashcards)
+            selected_chunk_count = len(chunks)
 
-            # Generate flashcards from each chunk
-            all_flashcards = []
+            # Distribute flashcards across chunks
+            flashcards_per_chunk = self._distribute_items(request.num_flashcards, selected_chunk_count)
+            expected_batches = sum(
+                (items + self.MAX_ITEMS_PER_CALL - 1) // self.MAX_ITEMS_PER_CALL
+                for items in flashcards_per_chunk
+                if items > 0
+            )
+            logger.info(
+                f"[AI_TIMING] stage=flashcard_prepare user_storage_id={request.user_storage_id} requested={request.num_flashcards} chunks_total={original_chunk_count} chunks_selected={selected_chunk_count} expected_batches={expected_batches} max_items_per_call={self.MAX_ITEMS_PER_CALL} model={model_type_str}"
+            )
+
+            generation_max_concurrency = self._get_generation_max_concurrency()
+            logger.info(
+                f"[AI_TIMING] stage=flashcard_generation_config user_storage_id={request.user_storage_id} generation_max_concurrency={generation_max_concurrency}"
+            )
+
+            # Build chunk-batch tasks while preserving original selection/distribution logic
+            generation_tasks = []
             for i, chunk in enumerate(chunks):
                 if flashcards_per_chunk[i] == 0:
                     continue
 
-                # Batching logic to avoid timeouts (max 3 items per request)
                 items_needed = flashcards_per_chunk[i]
-                BATCH_SIZE = 3
-                
-                chunk_flashcards = []
-                
-                # Calculate number of batches needed
-                num_batches = (items_needed + BATCH_SIZE - 1) // BATCH_SIZE
-                
+                num_batches = (items_needed + self.MAX_ITEMS_PER_CALL - 1) // self.MAX_ITEMS_PER_CALL
                 for batch_idx in range(num_batches):
-                    # Calculate flashcards for this batch
-                    current_batch_size = min(BATCH_SIZE, items_needed - batch_idx * BATCH_SIZE)
-                    
-                    logger.info(f"Processing chunk {i+1}/{len(chunks)}, batch {batch_idx+1}/{num_batches} (size: {current_batch_size})")
-
-                    prompt = prompt_utils.generate_flashcard_prompt(
-                        page_range=chunk.page_range,
-                        num_flashcards=current_batch_size,
-                        content=chunk.content
+                    current_batch_size = min(
+                        self.MAX_ITEMS_PER_CALL,
+                        items_needed - batch_idx * self.MAX_ITEMS_PER_CALL
                     )
-
-                    # Append strict JSON instruction to prompt
-                    json_prompt = prompt + "\n\nIMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
-                    
-                    is_ollama = final_model_enum == AIModelType.FAYEDARK
-                    
-                    try:
-                        response = await model_manager.generate_content_with_model(
-                            json_prompt, 
-                            final_model_enum, 
-                            response_model=FlashcardList if is_ollama else None
+                    generation_tasks.append({
+                        "chunk_index": i,
+                        "batch_index": batch_idx,
+                        "runner": lambda c=chunk, ci=i, bi=batch_idx, nb=num_batches, bs=current_batch_size: self._generate_flashcard_batch_for_chunk(
+                            chunk=c,
+                            chunk_position=ci,
+                            total_chunks=len(chunks),
+                            batch_idx=bi,
+                            num_batches=nb,
+                            current_batch_size=bs,
+                            final_model_enum=final_model_enum,
                         )
-                        
-                        batch_results = []
-                        if is_ollama:
-                            try:
-                                fc_list = FlashcardList.model_validate_json(response)
-                                batch_results = [
-                                    {
-                                        "question": item.question,
-                                        "answer": item.answer,
-                                        "sourcePageRange": item.sourcePageRange or chunk.page_range
-                                    }
-                                    for item in fc_list.items
-                                ]
-                            except Exception as e:
-                                logger.error(f"Failed to validate structured output for flashcards (batch {batch_idx+1}): {e}")
-                                batch_results = self._parse_flashcard_response(response, chunk.page_range)
-                        else:
-                            batch_results = self._parse_flashcard_response(response, chunk.page_range)
+                    })
 
-                        if batch_results:
-                            # Enforce batch size limit
-                            if len(batch_results) > current_batch_size:
-                                logger.warning(f"Batch returned more items than requested: {len(batch_results)} vs {current_batch_size}. Slicing.")
-                                batch_results = batch_results[:current_batch_size]
-                                
-                            chunk_flashcards.extend(batch_results)
-                        else:
-                            logger.warning(f"No flashcards generated for chunk {i+1} batch {batch_idx+1}")
-                            
-                    except Exception as chunk_error:
-                        import traceback
-                        logger.error(
-                            f"Error generating flashcards for chunk {i+1} batch {batch_idx+1} | "
-                            f"Model: {final_model_enum.value} | "
-                            f"Error type: {type(chunk_error).__name__} | "
-                            f"Error: {chunk_error}\n"
-                            f"Traceback:\n{traceback.format_exc()}"
-                        )
-                        continue
-                
-                if chunk_flashcards:
-                    logger.info(f"Generated total {len(chunk_flashcards)} flashcards for chunk {i+1}")
-                    all_flashcards.extend(chunk_flashcards)
+            actual_batches = len(generation_tasks)
+            generation_results = await self._run_generation_tasks(
+                tasks=generation_tasks,
+                max_concurrency=generation_max_concurrency,
+                kind="flashcards",
+            )
+
+            all_flashcards = []
+            per_chunk_counts: Dict[int, int] = {}
+            for result in generation_results:
+                if result["items"]:
+                    all_flashcards.extend(result["items"])
+                    per_chunk_counts[result["chunk_index"]] = per_chunk_counts.get(result["chunk_index"], 0) + len(result["items"])
+
+            for chunk_idx in sorted(per_chunk_counts.keys()):
+                logger.info(f"Generated total {per_chunk_counts[chunk_idx]} flashcards for chunk {chunk_idx + 1}")
 
             if not all_flashcards:
                 return {"success": False, "error": "Failed to generate any flashcards"}
+
+            total_ms = int((time.perf_counter() - generation_start) * 1000)
+            logger.info(
+                f"[AI_TIMING] stage=flashcard_total user_storage_id={request.user_storage_id} total_ms={total_ms} generated={len(all_flashcards)} actual_batches={actual_batches} expected_batches={expected_batches} chunks_used={selected_chunk_count}"
+            )
 
             # Save to HistoryGeneratedFlashcard
             try:
@@ -484,6 +639,38 @@ class ContentGenerationService:
             distribution[i] += 1
 
         return distribution
+
+    def _select_chunks_for_generation(
+        self,
+        chunks: List[DocumentChunk],
+        total_items: int
+    ) -> List[DocumentChunk]:
+        """Select bounded number of chunks to reduce generation latency."""
+        if not chunks:
+            return []
+
+        needed_chunks = min(len(chunks), max(1, total_items), self.MAX_SOURCE_CHUNKS)
+
+        if len(chunks) <= needed_chunks:
+            return chunks
+
+        # Keep chunk order stable but sample across the whole document
+        step = len(chunks) / needed_chunks
+        selected_indices = {min(len(chunks) - 1, int(i * step)) for i in range(needed_chunks)}
+        selected_chunks = [chunk for idx, chunk in enumerate(chunks) if idx in selected_indices]
+
+        if len(selected_chunks) < needed_chunks:
+            for chunk in chunks:
+                if chunk not in selected_chunks:
+                    selected_chunks.append(chunk)
+                    if len(selected_chunks) == needed_chunks:
+                        break
+
+        selected_chunks = selected_chunks[:needed_chunks]
+        logger.info(
+            f"Using {len(selected_chunks)}/{len(chunks)} chunks for generation (requested items: {total_items})"
+        )
+        return selected_chunks
 
     def _parse_quiz_response(self, response: str, default_page_range: str) -> List[Dict]:
         """Parse LLM response into quiz questions"""

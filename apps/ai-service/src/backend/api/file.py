@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 import uuid
-from typing import Dict, Any, List, Optional, Annotated
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -25,6 +25,7 @@ from src.rag.retriever import extract_text_from_file, create_in_memory_retriever
 from src.rag.simple_chat_agent import SimpleChatAgent
 from src.rag.vector_store_pg import get_pg_vector_store
 from src.backend.services.ocr_service import ocr_service
+from src.llm.ollama_embeddings import get_embedding_text_limit
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,6 +34,41 @@ router = APIRouter()
 
 # Cache retrievers in memory for faster queries
 _retriever_cache: Dict[str, Any] = {}
+
+DEFAULT_OCR_TEXT_CHUNK_OVERLAP = 200
+
+
+def _get_int_env(name: str, default: int, min_value: int = 1) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+        return max(min_value, value)
+    except ValueError:
+        logger.warning(f"Invalid {name}={raw!r}, using default={default}")
+        return default
+
+
+def _resolve_text_splitter_config() -> tuple[int, int, int]:
+    embed_limit = get_embedding_text_limit()
+    configured_chunk_size = _get_int_env("OCR_TEXT_CHUNK_SIZE", embed_limit)
+    chunk_size = min(configured_chunk_size, embed_limit)
+
+    default_overlap = min(DEFAULT_OCR_TEXT_CHUNK_OVERLAP, max(0, chunk_size - 1))
+    configured_overlap = _get_int_env("OCR_TEXT_CHUNK_OVERLAP", default_overlap, min_value=0)
+    chunk_overlap = min(configured_overlap, max(0, chunk_size - 1))
+
+    if configured_chunk_size > chunk_size:
+        logger.info(
+            f"OCR_TEXT_CHUNK_SIZE={configured_chunk_size} exceeds OLLAMA_EMBED_MAX_LENGTH={embed_limit}; using chunk_size={chunk_size}"
+        )
+    if configured_overlap != chunk_overlap:
+        logger.info(
+            f"OCR_TEXT_CHUNK_OVERLAP={configured_overlap} exceeds allowed range for chunk_size={chunk_size}; using chunk_overlap={chunk_overlap}"
+        )
+
+    return chunk_size, chunk_overlap, embed_limit
 
 
 # ==================== Request Models ====================
@@ -51,7 +87,7 @@ class QueryFileRequest(BaseModel):
     
     user_storage_id: str = Field(..., description="ID của UserStorage")
     query: str = Field(..., description="Câu hỏi về nội dung file")
-    model_type: Annotated[Optional[str], Field(default=None, alias="modelType", description="AI model type")] = None
+    model_type: Optional[str] = Field(default=None, alias="modelType", description="AI model type")
 
 
 class MultiQueryRequest(BaseModel):
@@ -60,7 +96,7 @@ class MultiQueryRequest(BaseModel):
     
     user_storage_id: str = Field(..., description="ID của UserStorage")
     queries: List[str] = Field(..., description="Danh sách câu hỏi")
-    model_type: Annotated[Optional[str], Field(default=None, alias="modelType", description="AI model type")] = None
+    model_type: Optional[str] = Field(default=None, alias="modelType", description="AI model type")
 
 
 # ==================== Helper Functions ====================
@@ -133,6 +169,10 @@ async def process_file(request: ProcessFileRequest):
 
             # Check file type
             is_pdf = file_info.mimetype == "application/pdf" or file_info.url.lower().endswith('.pdf')
+            chunk_size, chunk_overlap, embed_limit = _resolve_text_splitter_config()
+            logger.info(
+                f"Text splitter config: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}, embed_limit={embed_limit}"
+            )
 
             if is_pdf:
                 logger.info("📄 Processing PDF with local Tesseract/PyPDF...")
@@ -143,8 +183,8 @@ async def process_file(request: ProcessFileRequest):
                     # PDF chunks are by pages (10 pages/chunk), need to split text further
                     from langchain_text_splitters import RecursiveCharacterTextSplitter
                     text_splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=1500,  # Max 1500 chars per embedding chunk
-                        chunk_overlap=150,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
                         separators=["\n\n", "\n", ". ", " ", ""]
                     )
 
@@ -190,7 +230,7 @@ async def process_file(request: ProcessFileRequest):
 
                 # Split into chunks
                 from langchain_text_splitters import RecursiveCharacterTextSplitter
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
                 text_chunks = text_splitter.split_text(file_content)
 
                 # Prepare for batch storage

@@ -142,6 +142,12 @@ export class AIRepository {
         });
     }
 
+    async countDocumentsByUserStorageId(userStorageId: string): Promise<number> {
+        return this.prisma.document.count({
+            where: { userStorageId },
+        });
+    }
+
     async markCreditCharged(id: string): Promise<UserStorage> {
         return this.prisma.userStorage.update({
             where: { id },

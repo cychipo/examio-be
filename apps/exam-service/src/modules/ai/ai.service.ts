@@ -204,7 +204,7 @@ export class AIService {
                 }
 
                 // Process async (Generate content + OCR if needed)
-                const typeResult = parseInt(dto.typeResult, 10) || 1;
+                const typeResult = this.normalizeTypeResult(dto.typeResult);
                 const quantityQuizz = dto.quantityQuizz
                     ? parseInt(dto.quantityQuizz, 10)
                     : 10;
@@ -222,7 +222,8 @@ export class AIService {
                     typeResult,
                     quantityQuizz,
                     quantityFlashcard,
-                    dto.modelType
+                    dto.modelType,
+                    existingStorage.processingStatus === 'COMPLETED'
                 ).catch((err) =>
                     this.logger.error(
                         `Reused background processing failed: ${err.message}`
@@ -306,7 +307,7 @@ export class AIService {
 
             // 5. Call AI service directly via HTTP to process OCR + generate content
             // This is more reliable than RabbitMQ events for this use case
-            const typeResult = parseInt(dto.typeResult, 10) || 1;
+            const typeResult = this.normalizeTypeResult(dto.typeResult);
             const quantityQuizz = dto.quantityQuizz
                 ? parseInt(dto.quantityQuizz, 10)
                 : 10;
@@ -351,14 +352,22 @@ export class AIService {
      * Process file asynchronously - call AI service to OCR + generate content
      * This runs in background after returning jobId to client
      */
+    private normalizeTypeResult(typeResult?: number | string): number {
+        const parsed = Number(typeResult);
+        return parsed === 2 ? 2 : 1;
+    }
+
     private async processFileAsync(
         userStorageId: string,
         userId: string,
         typeResult: number,
         quantityQuizz: number,
         quantityFlashcard: number,
-        modelType?: string
+        modelType?: string,
+        ignoreProcessingStatusGuard: boolean = false
     ): Promise<void> {
+        const startTime = Date.now();
+
         try {
             this.logger.log(
                 `Starting async processing for ${userStorageId}...`
@@ -372,7 +381,23 @@ export class AIService {
                 throw new Error(`UserStorage not found: ${userStorageId}`);
             }
 
-            const skipOcr = currentStorage.processingStatus === 'COMPLETED';
+            if (
+                !ignoreProcessingStatusGuard &&
+                currentStorage.processingStatus === 'PROCESSING'
+            ) {
+                this.logger.warn(
+                    `Skip starting duplicate processing job for ${userStorageId} because another job is already PROCESSING`
+                );
+                return;
+            }
+
+            const documentCount =
+                await this.aiRepository.countDocumentsByUserStorageId(userStorageId);
+            const skipOcr = documentCount > 0;
+
+            this.logger.log(
+                `[AI_TIMING] job=${userStorageId} stage=prepare skipOcr=${skipOcr} documentCount=${documentCount} typeResult=${typeResult} qQuiz=${quantityQuizz} qFlash=${quantityFlashcard}`
+            );
 
             // Always mark PROCESSING while this generation job is running
             await this.aiRepository.updateUserStorageStatus(
@@ -389,6 +414,7 @@ export class AIService {
                     ? { user_storage_id: userStorageId, modelType }
                     : { user_storage_id: userStorageId };
 
+                const ocrStart = Date.now();
                 const ocrResponse = await firstValueFrom(
                     this.httpService.post(
                         `${this.aiServiceUrl}/ai/process-file`,
@@ -404,11 +430,14 @@ export class AIService {
                 }
 
                 this.logger.log(
+                    `[AI_TIMING] job=${userStorageId} stage=ocr_ms value=${Date.now() - ocrStart} chunks=${ocrResponse.data.chunks_count}`
+                );
+                this.logger.log(
                     `OCR completed for ${userStorageId}: ${ocrResponse.data.chunks_count} chunks`
                 );
             } else {
                 this.logger.log(
-                    `Skipping OCR for already COMPLETED file: ${userStorageId}`
+                    `Skipping OCR for file with existing embeddings: ${userStorageId} (${documentCount} chunks)`
                 );
             }
 
@@ -432,6 +461,7 @@ export class AIService {
                 `Generating ${count} ${isFlashcard ? 'flashcards' : 'quiz questions'} for ${userStorageId} with model: ${modelType || 'gemini'}...`
             );
 
+            const generationStart = Date.now();
             const generateResponse = await firstValueFrom(
                 this.httpService.post(
                     endpoint,
@@ -458,6 +488,12 @@ export class AIService {
             );
 
             this.logger.log(
+                `[AI_TIMING] job=${userStorageId} stage=generation_ms value=${Date.now() - generationStart} outputType=${isFlashcard ? 'flashcard' : 'quiz'} count=${count}`
+            );
+            this.logger.log(
+                `[AI_TIMING] job=${userStorageId} stage=total_ms value=${Date.now() - startTime} skipOcr=${skipOcr}`
+            );
+            this.logger.log(
                 `Generation completed for ${userStorageId}, historyId: ${generateResponse.data.history_id}`
             );
         } catch (error) {
@@ -465,6 +501,9 @@ export class AIService {
             this.logger.error(
                 `Async processing failed for ${userStorageId}: ${JSON.stringify(errorDetails)}`,
                 error.stack
+            );
+            this.logger.log(
+                `[AI_TIMING] job=${userStorageId} stage=failed_total_ms value=${Date.now() - startTime}`
             );
 
             // Update status to FAILED
@@ -725,7 +764,7 @@ export class AIService {
             this.processFileAsync(
                 upload.id,
                 user.id,
-                dto.typeResult || 1,
+                this.normalizeTypeResult(dto.typeResult),
                 dto.quantityQuizz || dto.count || 10,
                 dto.quantityFlashcard || dto.count || 10,
                 dto.modelType
@@ -748,7 +787,8 @@ export class AIService {
         // OCR is complete, call AI service to generate content
         try {
             // Parse FE request format: typeResult (1=quiz, 2=flashcard)
-            const isFlashcard = dto.typeResult === 2;
+            const normalizedTypeResult = this.normalizeTypeResult(dto.typeResult);
+            const isFlashcard = normalizedTypeResult === 2;
             const outputType = isFlashcard
                 ? 'flashcard'
                 : dto.outputType || 'quiz';
@@ -790,7 +830,7 @@ export class AIService {
             this.processFileAsync(
                 upload.id,
                 user.id,
-                dto.typeResult || 1,
+                normalizedTypeResult,
                 quantityQuizz,
                 quantityFlashcard,
                 dto.modelType

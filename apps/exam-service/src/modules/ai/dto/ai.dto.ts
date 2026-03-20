@@ -28,7 +28,7 @@ export class UploadFileDto extends createZodDto(UploadFileSchema) {
 }
 
 export const RegenerateSchema = z.object({
-    // FE sends typeResult: 0 = flashcard, 1 = quiz
+    // FE sends typeResult: 1 = quiz, 2 = flashcard
     typeResult: z.number().optional(),
     quantityQuizz: z.number().optional(),
     quantityFlashcard: z.number().optional(),
@@ -42,7 +42,7 @@ export const RegenerateSchema = z.object({
 
 export class RegenerateDto extends createZodDto(RegenerateSchema) {
     @ApiProperty({
-        description: 'Loại output: 0 = flashcard, 1 = quiz',
+        description: 'Loại output: 1 = quiz, 2 = flashcard',
         required: false,
     })
     typeResult?: number;

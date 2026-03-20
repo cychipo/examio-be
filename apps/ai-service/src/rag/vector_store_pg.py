@@ -11,6 +11,7 @@ Features:
 import os
 import logging
 import asyncio
+import time
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
@@ -181,42 +182,67 @@ class PgVectorStore:
             return 0
 
         try:
+            total_start = time.perf_counter()
+
             # Tạo batch embeddings
+            embedding_start = time.perf_counter()
             contents = [doc['content'] for doc in documents]
             embeddings = await self.create_embeddings_batch(contents, "retrieval_document", model_type=model_type)
+            embedding_ms = int((time.perf_counter() - embedding_start) * 1000)
 
             pool = await self._get_pool()
             success_count = 0
+            upsert_query = """
+                INSERT INTO "Document" (id, "userStorageId", content, "pageRange", title, embeddings, "createdAt", "updatedAt")
+                VALUES ($1, $2, $3, $4, $5, $6::vector, NOW(), NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    content = EXCLUDED.content,
+                    embeddings = EXCLUDED.embeddings,
+                    "updatedAt" = NOW()
+            """
+            records = [
+                (
+                    doc['id'],
+                    doc['user_storage_id'],
+                    doc['content'],
+                    doc['page_range'],
+                    doc.get('title'),
+                    f"[{','.join(str(v) for v in embeddings[i])}]"
+                )
+                for i, doc in enumerate(documents)
+            ]
 
-            # Insert từng document với embedding tương ứng
-            for i, doc in enumerate(documents):
-                try:
-                    await pool.execute(
-                        """
-                        INSERT INTO "Document" (id, "userStorageId", content, "pageRange", title, embeddings, "createdAt", "updatedAt")
-                        VALUES ($1, $2, $3, $4, $5, $6::vector, NOW(), NOW())
-                        ON CONFLICT (id) DO UPDATE SET
-                            content = EXCLUDED.content,
-                            embeddings = EXCLUDED.embeddings,
-                            "updatedAt" = NOW()
-                        """,
-                        doc['id'],
-                        doc['user_storage_id'],
-                        doc['content'],
-                        doc['page_range'],
-                        doc.get('title'),
-                        f"[{','.join(str(v) for v in embeddings[i])}]"
-                    )
-                    success_count += 1
-                except Exception as e:
-                    logger.error(f"Error storing document {doc['id']}: {e}")
+            store_start = time.perf_counter()
+            try:
+                # Fast path: transaction + executemany to reduce round-trips
+                async with pool.acquire() as conn:
+                    async with conn.transaction():
+                        await conn.executemany(upsert_query, records)
+                success_count = len(records)
+            except Exception as batch_upsert_error:
+                # Fallback path: keep existing per-row upsert behavior
+                logger.warning("Batch upsert failed, falling back to per-row upsert")
+                logger.debug(f"Batch upsert error: {batch_upsert_error}")
+                for i, doc in enumerate(documents):
+                    try:
+                        await pool.execute(upsert_query, *records[i])
+                        success_count += 1
+                    except Exception as row_error:
+                        logger.error(f"Error storing document {doc['id']}: {row_error}")
 
+            store_ms = int((time.perf_counter() - store_start) * 1000)
+            total_ms = int((time.perf_counter() - total_start) * 1000)
+            logger.info(
+                f"[AI_TIMING] stage=vector_store_batch documents={len(documents)} success_count={success_count} "
+                f"embedding_ms={embedding_ms} store_ms={store_ms} total_ms={total_ms}"
+            )
             logger.info(f"Stored {success_count}/{len(documents)} documents with batch embedding")
             return success_count
 
         except Exception as e:
             logger.warning("Error in batch store, falling back to individual document storage")
             logger.debug(f"Batch store error: {e}")
+            fallback_start = time.perf_counter()
             success_count = 0
             for doc in documents:
                 success = await self.store_document(
@@ -229,6 +255,10 @@ class PgVectorStore:
                 )
                 if success:
                     success_count += 1
+            store_ms = int((time.perf_counter() - fallback_start) * 1000)
+            logger.info(
+                f"[AI_TIMING] stage=vector_store_batch_fallback documents={len(documents)} success_count={success_count} store_ms={store_ms}"
+            )
             return success_count
 
     async def search_similar(
