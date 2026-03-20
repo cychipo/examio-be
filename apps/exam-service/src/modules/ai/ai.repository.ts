@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@examio/database';
-import { UserStorage, Prisma } from '@prisma/client';
+import { UserStorage } from '@prisma/client';
 
 @Injectable()
 export class AIRepository {
@@ -63,22 +63,24 @@ export class AIRepository {
                 skip,
                 take: size,
                 include: {
-                    // Include latest quiz history - only metadata, not full quizzes
+                    // Include latest quiz history to compute summary count
                     historyGeneratedQuizz: {
                         orderBy: { createdAt: 'desc' },
                         take: 1,
                         select: {
                             id: true,
                             createdAt: true,
+                            quizzes: true,
                         },
                     },
-                    // Include latest flashcard history - only metadata, not full flashcards
+                    // Include latest flashcard history to compute summary count
                     historyGeneratedFlashcard: {
                         orderBy: { createdAt: 'desc' },
                         take: 1,
                         select: {
                             id: true,
                             createdAt: true,
+                            flashcards: true,
                         },
                     },
                 },
@@ -88,28 +90,40 @@ export class AIRepository {
             }),
         ]);
 
-        // Transform data to match FE expected format - only include IDs, not full data
+        // Transform data to match FE expected format - include summary counts only
         const transformedData = data.map((item) => {
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const {
                 historyGeneratedQuizz,
                 historyGeneratedFlashcard,
                 ...rest
             } = item;
+
+            const latestQuizHistory = historyGeneratedQuizz?.[0];
+            const latestFlashcardHistory = historyGeneratedFlashcard?.[0];
+            const latestQuizzes = latestQuizHistory?.quizzes;
+            const latestFlashcards = latestFlashcardHistory?.flashcards;
+
+            const quizCount = Array.isArray(latestQuizzes)
+                ? latestQuizzes.length
+                : 0;
+            const flashcardCount = Array.isArray(latestFlashcards)
+                ? latestFlashcards.length
+                : 0;
+
             return {
                 ...rest,
-                // FE expects quizHistory (singular) with latest quiz metadata
-                quizHistory: historyGeneratedQuizz?.[0]
+                quizHistory: latestQuizHistory
                     ? {
-                          id: historyGeneratedQuizz[0].id,
-                          createdAt: historyGeneratedQuizz[0].createdAt,
+                          id: latestQuizHistory.id,
+                          createdAt: latestQuizHistory.createdAt,
+                          quizCount,
                       }
                     : null,
-                // FE expects flashcardHistory (singular) with latest flashcard metadata
-                flashcardHistory: historyGeneratedFlashcard?.[0]
+                flashcardHistory: latestFlashcardHistory
                     ? {
-                          id: historyGeneratedFlashcard[0].id,
-                          createdAt: historyGeneratedFlashcard[0].createdAt,
+                          id: latestFlashcardHistory.id,
+                          createdAt: latestFlashcardHistory.createdAt,
+                          flashcardCount,
                       }
                     : null,
             };

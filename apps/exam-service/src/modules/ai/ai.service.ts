@@ -166,6 +166,14 @@ export class AIService {
                     `Duplicate found (${existingStorage.processingStatus}), reusing: ${existingStorage.id}`
                 );
 
+                if (existingStorage.processingStatus === 'PROCESSING') {
+                    return {
+                        jobId: existingStorage.id,
+                        status: 'processing',
+                        message: 'File này đang được xử lý, vui lòng chờ hoàn tất.',
+                    };
+                }
+
                 // Common reuse logic
                 const generateCredits = 5;
                 let newBalance: number | undefined;
@@ -189,14 +197,13 @@ export class AIService {
                         }
                     }
 
-                    // Important: mark PROCESSING immediately to avoid polling reading old history
+                    // Mark PROCESSING immediately so polling does not read stale history
                     await this.aiRepository.updateUserStorageStatus(
                         existingStorage.id,
                         'PROCESSING'
                     );
                 } else {
                     // FAILED/PENDING case: Treat as retry.
-                    // We update status to PENDING to restart flow
                     await this.aiRepository.updateUserStorageStatus(
                         existingStorage.id,
                         'PENDING'
@@ -232,7 +239,7 @@ export class AIService {
 
                 return {
                     jobId: existingStorage.id,
-                    status: 'PROCESSING',
+                    status: 'processing',
                     message:
                         existingStorage.processingStatus === 'COMPLETED'
                             ? 'File đã tồn tại, đang tạo nội dung mới...'
@@ -617,19 +624,7 @@ export class AIService {
             };
         }
 
-        // Delete file from R2 if keyR2 exists
-        if (upload.keyR2) {
-            try {
-                await this.r2ClientService.deleteFile(upload.keyR2);
-                this.logger.log(`Deleted file from R2: ${upload.keyR2}`);
-            } catch (error) {
-                this.logger.warn(
-                    `Failed to delete file from R2: ${upload.keyR2} - ${error.message}`
-                );
-            }
-        }
-
-        // Delete related Documents (embeddings)
+        // Delete related Documents (embeddings) but keep uploaded file
         try {
             await this.aiRepository.deleteDocumentsByUserStorageId(upload.id);
             this.logger.log(
@@ -641,39 +636,11 @@ export class AIService {
             );
         }
 
-        // Refund credits if charged
-        let newBalance: number | undefined;
-        if (upload.creditCharged) {
-            const sizeMB = upload.size / (1024 * 1024);
-            const credits = Math.ceil(sizeMB / 2);
-            if (credits > 0) {
-                try {
-                    const refundResult = await this.financeClient.addCredits(
-                        user.id,
-                        credits,
-                        `Hoàn tiền hủy job: ${upload.filename}`
-                    );
-                    if (refundResult?.success) {
-                        newBalance = refundResult.newBalance;
-                        this.logger.log(
-                            `Refunded ${credits} credits for cancelled job: ${upload.id}`
-                        );
-                    }
-                } catch (error) {
-                    this.logger.warn(
-                        `Failed to refund credits for cancelled job: ${upload.id} - ${error.message}`
-                    );
-                }
-            }
-        }
-
-        // Delete UserStorage
-        await this.aiRepository.deleteUserStorage(upload.id);
+        await this.aiRepository.updateUserStorageStatus(upload.id, 'PENDING');
 
         return {
             success: true,
-            message: 'Đã hủy job và hoàn tiền thành công',
-            newBalance,
+            message: 'Đã hủy tác vụ và giữ lại file đã tải lên',
         };
     }
 
@@ -825,15 +792,16 @@ export class AIService {
             const quantityQuizz = !isFlashcard ? count : 0;
             const quantityFlashcard = isFlashcard ? count : 0;
 
-            // Fire and forget - reuse processFileAsync logic
-            // processFileAsync will skip OCR checking if file is already COMPLETED
+            // Fire and forget - reuse processFileAsync logic.
+            // Pass ignoreProcessingStatusGuard=true because regenerate already claimed this job.
             this.processFileAsync(
                 upload.id,
                 user.id,
                 normalizedTypeResult,
                 quantityQuizz,
                 quantityFlashcard,
-                dto.modelType
+                dto.modelType,
+                true
             ).catch((err) =>
                 this.logger.error(
                     `Background processing failed for regenerate ${upload.id}: ${err.message}`
