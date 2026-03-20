@@ -11,21 +11,22 @@ KHÔNG xử lý: Upload file, tạo UserStorage (NestJS làm)
 import logging
 import os
 import sys
-import uuid
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.rag.retriever import extract_text_from_file, create_in_memory_retriever
+from src.rag.retriever import create_in_memory_retriever
 from src.rag.simple_chat_agent import SimpleChatAgent
 from src.rag.vector_store_pg import get_pg_vector_store
-from src.backend.services.ocr_service import ocr_service
-from src.llm.ollama_embeddings import get_embedding_text_limit
+from src.backend.services.ocr_service import (
+    ocr_service,
+    FileExtractionError,
+    NoContentExtractedError,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,42 +35,6 @@ router = APIRouter()
 
 # Cache retrievers in memory for faster queries
 _retriever_cache: Dict[str, Any] = {}
-
-DEFAULT_OCR_TEXT_CHUNK_OVERLAP = 200
-
-
-def _get_int_env(name: str, default: int, min_value: int = 1) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-        return max(min_value, value)
-    except ValueError:
-        logger.warning(f"Invalid {name}={raw!r}, using default={default}")
-        return default
-
-
-def _resolve_text_splitter_config() -> tuple[int, int, int]:
-    embed_limit = get_embedding_text_limit()
-    configured_chunk_size = _get_int_env("OCR_TEXT_CHUNK_SIZE", embed_limit)
-    chunk_size = min(configured_chunk_size, embed_limit)
-
-    default_overlap = min(DEFAULT_OCR_TEXT_CHUNK_OVERLAP, max(0, chunk_size - 1))
-    configured_overlap = _get_int_env("OCR_TEXT_CHUNK_OVERLAP", default_overlap, min_value=0)
-    chunk_overlap = min(configured_overlap, max(0, chunk_size - 1))
-
-    if configured_chunk_size > chunk_size:
-        logger.info(
-            f"OCR_TEXT_CHUNK_SIZE={configured_chunk_size} exceeds OLLAMA_EMBED_MAX_LENGTH={embed_limit}; using chunk_size={chunk_size}"
-        )
-    if configured_overlap != chunk_overlap:
-        logger.info(
-            f"OCR_TEXT_CHUNK_OVERLAP={configured_overlap} exceeds allowed range for chunk_size={chunk_size}; using chunk_overlap={chunk_overlap}"
-        )
-
-    return chunk_size, chunk_overlap, embed_limit
-
 
 # ==================== Request Models ====================
 
@@ -158,105 +123,18 @@ async def process_file(request: ProcessFileRequest):
         await ocr_service.update_processing_status(user_storage_id, "PROCESSING")
 
         try:
-            # Download file from R2
-            logger.info(f"Downloading file from R2: {file_info.url}")
-            file_bytes, temp_path = await ocr_service.download_file_from_r2(file_info.url)
-
-            # --- LOCAL PROCESSING WITH TESSERACT FALLBACK ---
-            from backend.services.pdf_ocr_service import pdf_ocr_service
-            stored_count = 0
             pg_store = get_pg_vector_store()
-
-            # Check file type
-            is_pdf = file_info.mimetype == "application/pdf" or file_info.url.lower().endswith('.pdf')
-            chunk_size, chunk_overlap, embed_limit = _resolve_text_splitter_config()
-            logger.info(
-                f"Text splitter config: chunk_size={chunk_size}, chunk_overlap={chunk_overlap}, embed_limit={embed_limit}"
+            documents_to_store = await ocr_service.prepare_documents_to_store(
+                user_storage_id=user_storage_id,
+                file_info=file_info,
             )
 
-            if is_pdf:
-                logger.info("📄 Processing PDF with local Tesseract/PyPDF...")
-                try:
-                    # Process PDF with chunks (split by pages + OCR each chunk)
-                    chunk_results = pdf_ocr_service.process_pdf_with_chunks(file_bytes)
-
-                    # PDF chunks are by pages (10 pages/chunk), need to split text further
-                    from langchain_text_splitters import RecursiveCharacterTextSplitter
-                    text_splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=chunk_size,
-                        chunk_overlap=chunk_overlap,
-                        separators=["\n\n", "\n", ". ", " ", ""]
-                    )
-
-                    # Prepare documents for batch storage
-                    documents_to_store = []
-                    chunk_idx = 0
-                    
-                    for page_chunk_index, page_chunk_text in chunk_results:
-                        if not page_chunk_text or not page_chunk_text.strip():
-                            continue
-
-                        # Split large page chunks into smaller text chunks
-                        text_chunks = text_splitter.split_text(page_chunk_text)
-                        logger.info(f"📝 Page chunk {page_chunk_index}: {len(page_chunk_text)} chars → {len(text_chunks)} text chunks")
-                        
-                        for text_chunk in text_chunks:
-                            if not text_chunk.strip():
-                                continue
-                            chunk_id = f"{user_storage_id}_chunk_{chunk_idx}"
-                            documents_to_store.append({
-                                'id': chunk_id,
-                                'user_storage_id': user_storage_id,
-                                'content': text_chunk.strip(),
-                                'page_range': str(page_chunk_index),
-                                'title': f"Chunk {chunk_idx + 1}"
-                            })
-                            chunk_idx += 1
-
-                    if documents_to_store:
-                        logger.info(f"📦 Storing {len(documents_to_store)} text chunks...")
-                        stored_count = await pg_store.store_documents_batch(documents_to_store, model_type=model_type)
-                except Exception as pdf_error:
-                    logger.error(f"PDF processing failed: {pdf_error}")
-                    raise pdf_error
-            else:
-                # Non-PDF: Extract text and chunk
-                logger.info(f"📝 Processing non-PDF file: {file_info.mimetype}")
-                from src.rag.retriever import extract_text_from_file
-                file_content = extract_text_from_file(temp_path, file_info.mimetype)
-
-                if file_content.startswith("Error") or file_content.startswith("Unsupported"):
-                    raise HTTPException(status_code=400, detail=file_content)
-
-                # Split into chunks
-                from langchain_text_splitters import RecursiveCharacterTextSplitter
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-                text_chunks = text_splitter.split_text(file_content)
-
-                # Prepare for batch storage
-                documents_to_store = []
-                for i, chunk_text in enumerate(text_chunks):
-                    chunk_id = f"{user_storage_id}_chunk_{i}"
-                    documents_to_store.append({
-                        'id': chunk_id,
-                        'user_storage_id': user_storage_id,
-                        'content': chunk_text,
-                        'page_range': str(i + 1),
-                        'title': f"Chunk {i + 1}"
-                    })
-
-                if documents_to_store:
-                    stored_count = await pg_store.store_documents_batch(documents_to_store, model_type=model_type)
-
-            # Cleanup temp file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+            logger.info(f"📦 Storing {len(documents_to_store)} text chunks...")
+            stored_count = await pg_store.store_documents_batch(documents_to_store, model_type=model_type)
 
             if stored_count == 0:
-                await ocr_service.update_processing_status(user_storage_id, "FAILED")
-                raise HTTPException(status_code=400, detail="No content could be extracted from file")
+                raise NoContentExtractedError("No content could be extracted from file")
 
-            # Update status to COMPLETED
             await ocr_service.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
 
             logger.info(f"✅ File processed successfully: {user_storage_id}, {stored_count} chunks")
@@ -269,6 +147,12 @@ async def process_file(request: ProcessFileRequest):
                 "user_storage_id": user_storage_id
             }
 
+        except FileExtractionError as e:
+            await ocr_service.update_processing_status(user_storage_id, "FAILED")
+            raise HTTPException(status_code=400, detail=str(e))
+        except NoContentExtractedError as e:
+            await ocr_service.update_processing_status(user_storage_id, "FAILED")
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             await ocr_service.update_processing_status(user_storage_id, "FAILED")
             raise e

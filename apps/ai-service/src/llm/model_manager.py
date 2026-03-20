@@ -93,7 +93,7 @@ class ModelManager:
     def get_ollama_info(self) -> Dict[str, Any]:
         """Lấy cấu hình Ollama từ môi trường."""
         return {
-            "model": self._runtime_ollama_model or os.getenv("RAG_MODEL", "qwen3:32b"),
+            "model": self._runtime_ollama_model or os.getenv("RAG_MODEL", "qwen3:8b"),
             "url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip('/')
         }
 
