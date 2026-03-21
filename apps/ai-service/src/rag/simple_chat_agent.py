@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, Iterator, List, Optional, Union
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from src.llm import get_llm, LLMConfig
@@ -163,7 +163,7 @@ Answer only YES or NO."""
             logger.error(f"Relevance check failed: {e}")
             return True
 
-    def chat_stream(self, message: str, history: Optional[List[Dict[str, str]]] = None):
+    def chat_stream(self, message: str, history: Optional[List[Dict[str, str]]] = None) -> Iterator[str]:
         """Process a chat message and yield response chunks with history, dynamic RAG, and retry rotation"""
         from src.llm.gemini_client import GeminiClient
         import time

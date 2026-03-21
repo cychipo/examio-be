@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from src.rag.retriever import create_in_memory_retriever
 from src.rag.simple_chat_agent import SimpleChatAgent
-from src.rag.vector_store_pg import get_pg_vector_store
+from src.backend.services.hybrid_retrieval_service import hybrid_retrieval_service
 from src.backend.services.ocr_service import (
     ocr_service,
     FileExtractionError,
@@ -82,6 +82,19 @@ async def get_or_create_retriever(user_storage_id: str, model_type: str = "gemin
     return retriever
 
 
+def clear_cached_retriever(user_storage_id: str):
+    for cache_key in list(_retriever_cache.keys()):
+        if cache_key.startswith(f"{user_storage_id}:"):
+            _retriever_cache.pop(cache_key, None)
+    hybrid_retrieval_service.clear_graph_state(user_storage_id)
+
+
+async def clear_graph_db_state(user_storage_id: str):
+    from src.backend.services.graph_storage_service import graph_storage_service
+
+    await graph_storage_service.delete_graph_state(user_storage_id)
+
+
 # ==================== API Endpoints ====================
 
 @router.post("/process-file", response_model=Dict[str, Any])
@@ -110,6 +123,7 @@ async def process_file(request: ProcessFileRequest):
         # Check if already processed
         if file_info.processing_status == "COMPLETED":
             chunks = await ocr_service.get_document_chunks(user_storage_id)
+            clear_cached_retriever(user_storage_id)
             logger.info(f"File already processed: {user_storage_id}, {len(chunks)} chunks")
             return {
                 "success": True,
@@ -123,6 +137,8 @@ async def process_file(request: ProcessFileRequest):
         await ocr_service.update_processing_status(user_storage_id, "PROCESSING")
 
         try:
+            from src.rag.vector_store_pg import get_pg_vector_store
+
             pg_store = get_pg_vector_store()
             documents_to_store = await ocr_service.prepare_documents_to_store(
                 user_storage_id=user_storage_id,
@@ -136,6 +152,7 @@ async def process_file(request: ProcessFileRequest):
                 raise NoContentExtractedError("No content could be extracted from file")
 
             await ocr_service.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
+            clear_cached_retriever(user_storage_id)
 
             logger.info(f"✅ File processed successfully: {user_storage_id}, {stored_count} chunks")
 
@@ -189,11 +206,21 @@ async def query_file(request: QueryFileRequest):
         if not requested_model:
             requested_model = "fayedark" if system_model_type == ModelType.OLLAMA else "gemini"
 
-        # Vector search
-        pg_store = get_pg_vector_store()
-        similar_docs = await pg_store.search_similar([user_storage_id], query, top_k=5, model_type=requested_model)
+        retrieval_result = await hybrid_retrieval_service.retrieve_for_chat(
+            user_storage_id=user_storage_id,
+            query=query,
+            model_type=requested_model,
+            top_k=5,
+        )
+        logger.info(
+            "[AI_RETRIEVAL] mode=%s user_storage_id=%s selected=%s total=%s",
+            retrieval_result.retrieval_mode,
+            user_storage_id,
+            retrieval_result.metadata.get("selected_chunks"),
+            retrieval_result.metadata.get("total_chunks"),
+        )
 
-        if not similar_docs:
+        if not retrieval_result.chunks:
             return {
                 "success": True,
                 "answer": "Không tìm thấy nội dung liên quan trong file.",
@@ -210,8 +237,7 @@ async def query_file(request: QueryFileRequest):
         agent = SimpleChatAgent(custom_retriever=retriever, model_type=requested_model)
         answer = agent.chat(query)
 
-        sources = [{"content": doc.content[:500], "page": doc.page_range, "score": doc.similarity_score}
-                   for doc in similar_docs[:3]]
+        sources = retrieval_result.sources
 
         return {
             "success": True,
@@ -253,22 +279,40 @@ async def multi_query_file(request: MultiQueryRequest):
         if not requested_model:
             requested_model = "fayedark" if system_model_type == ModelType.OLLAMA else "gemini"
 
-        retriever = await get_or_create_retriever(user_storage_id, model_type=requested_model)
-        if not retriever:
-            raise HTTPException(status_code=500, detail="Không thể tạo retriever")
-
-        agent = SimpleChatAgent(custom_retriever=retriever, model_type=requested_model)
-        pg_store = get_pg_vector_store()
-
         results = []
         for query in queries:
+            retrieval_result = await hybrid_retrieval_service.retrieve_for_chat(
+                user_storage_id=user_storage_id,
+                query=query,
+                model_type=requested_model,
+                top_k=5,
+            )
+            logger.info(
+                "[AI_RETRIEVAL] mode=%s user_storage_id=%s selected=%s total=%s multi_query=true",
+                retrieval_result.retrieval_mode,
+                user_storage_id,
+                retrieval_result.metadata.get("selected_chunks"),
+                retrieval_result.metadata.get("total_chunks"),
+            )
+
+            retriever = None
+            if retrieval_result.combined_context:
+                retriever, _ = create_in_memory_retriever(
+                    retrieval_result.combined_context,
+                    model_type=requested_model,
+                )
+
+            agent = SimpleChatAgent(
+                custom_retriever=retriever,
+                model_type=requested_model,
+                pre_context=retrieval_result.combined_context,
+            )
             answer = agent.chat(query)
-            similar_docs = await pg_store.search_similar([user_storage_id], query, top_k=2, model_type=requested_model)
 
             results.append({
                 "query": query,
                 "answer": answer,
-                "sources": [doc.content[:300] for doc in similar_docs]
+                "sources": retrieval_result.sources,
             })
 
         return {
@@ -300,14 +344,30 @@ async def get_file_status(user_storage_id: str):
         "user_storage_id": user_storage_id,
         "filename": file_info.filename,
         "processing_status": file_info.processing_status,
-        "chunks_count": len(chunks)
+        "chunks_count": len(chunks),
+        "graph_cache_path": None,
+    }
+
+
+@router.get("/graph-stats/{user_storage_id}", response_model=Dict[str, Any])
+async def get_graph_stats(user_storage_id: str):
+    """Get Hybrid GraphRAG stats for a processed file"""
+    file_info = await ocr_service.get_file_info(user_storage_id)
+
+    if not file_info:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    stats = await hybrid_retrieval_service.get_graph_stats(user_storage_id)
+    return {
+        "success": True,
+        "filename": file_info.filename,
+        **stats,
     }
 
 
 @router.delete("/clear-cache/{user_storage_id}")
 async def clear_retriever_cache(user_storage_id: str):
     """Clear retriever cache for a file"""
-    if user_storage_id in _retriever_cache:
-        del _retriever_cache[user_storage_id]
-        return {"success": True, "message": "Cache cleared"}
-    return {"success": True, "message": "No cache to clear"}
+    clear_cached_retriever(user_storage_id)
+    await clear_graph_db_state(user_storage_id)
+    return {"success": True, "message": "Cache cleared"}

@@ -148,6 +148,59 @@ export class AIRepository {
         });
     }
 
+    async deleteQuizHistoriesByUserStorageId(
+        userStorageId: string
+    ): Promise<{ count: number }> {
+        return this.prisma.historyGeneratedQuizz.deleteMany({
+            where: { userStorageId },
+        });
+    }
+
+    async deleteFlashcardHistoriesByUserStorageId(
+        userStorageId: string
+    ): Promise<{ count: number }> {
+        return this.prisma.historyGeneratedFlashcard.deleteMany({
+            where: { userStorageId },
+        });
+    }
+
+    async deleteAiChatDocumentsByUserStorageId(
+        userStorageId: string
+    ): Promise<{ count: number }> {
+        return this.prisma.aIChatDocument.deleteMany({
+            where: { documentId: userStorageId },
+        });
+    }
+
+    async deleteUploadAggregate(userStorageId: string) {
+        return this.prisma.$transaction(async (tx) => {
+            const aiChatDocuments = await tx.aIChatDocument.deleteMany({
+                where: { documentId: userStorageId },
+            });
+            const quizHistories = await tx.historyGeneratedQuizz.deleteMany({
+                where: { userStorageId },
+            });
+            const flashcardHistories =
+                await tx.historyGeneratedFlashcard.deleteMany({
+                    where: { userStorageId },
+                });
+            const documents = await tx.document.deleteMany({
+                where: { userStorageId },
+            });
+            const userStorage = await tx.userStorage.delete({
+                where: { id: userStorageId },
+            });
+
+            return {
+                aiChatDocuments: aiChatDocuments.count,
+                quizHistories: quizHistories.count,
+                flashcardHistories: flashcardHistories.count,
+                documents: documents.count,
+                userStorage,
+            };
+        });
+    }
+
     async deleteDocumentsByUserStorageId(
         userStorageId: string
     ): Promise<{ count: number }> {

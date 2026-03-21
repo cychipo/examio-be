@@ -37,6 +37,24 @@ export class AIService {
             process.env.AI_SERVICE_URL || 'http://localhost:8000/api';
     }
 
+    private async clearAiServiceCache(userStorageId: string) {
+        try {
+            await firstValueFrom(
+                this.httpService.delete(
+                    `${this.aiServiceUrl}/ai/clear-cache/${userStorageId}`,
+                    { timeout: 15000 }
+                )
+            );
+            this.logger.log(
+                `Cleared AI service retrieval cache for UserStorage: ${userStorageId}`
+            );
+        } catch (error) {
+            this.logger.warn(
+                `Failed to clear AI service retrieval cache for UserStorage: ${userStorageId} - ${error.message}`
+            );
+        }
+    }
+
     /**
      * Quick upload - uploads file to R2 immediately without OCR processing.
      * OCR happens on-demand when first message is sent.
@@ -230,6 +248,8 @@ export class AIService {
                     quantityQuizz,
                     quantityFlashcard,
                     dto.modelType,
+                    dto.isNarrowSearch === 'true',
+                    dto.keyword?.trim() || undefined,
                     existingStorage.processingStatus === 'COMPLETED'
                 ).catch((err) =>
                     this.logger.error(
@@ -329,7 +349,9 @@ export class AIService {
                 typeResult,
                 quantityQuizz,
                 quantityFlashcard,
-                dto.modelType
+                dto.modelType,
+                dto.isNarrowSearch === 'true',
+                dto.keyword?.trim() || undefined
             ).catch((err) => {
                 this.logger.error(
                     `Background processing failed for ${userStorage.id}: ${err.message}`
@@ -371,6 +393,8 @@ export class AIService {
         quantityQuizz: number,
         quantityFlashcard: number,
         modelType?: string,
+        isNarrowSearch: boolean = false,
+        keyword?: string,
         ignoreProcessingStatusGuard: boolean = false
     ): Promise<void> {
         const startTime = Date.now();
@@ -476,6 +500,8 @@ export class AIService {
                         userStorageId,
                         userId,
                         [isFlashcard ? 'numFlashcards' : 'numQuestions']: count,
+                        isNarrowSearch,
+                        keyword,
                         modelType: modelType || 'gemini',
                     },
                     { timeout: 3600000 } // 60 min timeout for generation
@@ -563,6 +589,7 @@ export class AIService {
      */
     async deleteUpload(uploadId: string, user: User) {
         const upload = await this.getUploadDetail(uploadId, user);
+        let r2DeleteError: Error | null = null;
 
         // Delete file from R2 if keyR2 exists
         if (upload.keyR2) {
@@ -570,24 +597,41 @@ export class AIService {
                 await this.r2ClientService.deleteFile(upload.keyR2);
                 this.logger.log(`Deleted file from R2: ${upload.keyR2}`);
             } catch (error) {
+                r2DeleteError = error;
                 this.logger.warn(
                     `Failed to delete file from R2: ${upload.keyR2} - ${error.message}`
                 );
-                // Continue with database deletion even if R2 deletion fails
             }
         }
 
-        // Delete related Documents (embeddings)
         try {
-            await this.aiRepository.deleteDocumentsByUserStorageId(upload.id);
-            this.logger.log(`Deleted documents for UserStorage: ${upload.id}`);
+            const deletionResult = await this.aiRepository.deleteUploadAggregate(
+                upload.id
+            );
+            this.logger.log(
+                `Deleted upload aggregate for UserStorage: ${upload.id} (documents=${deletionResult.documents}, quizHistories=${deletionResult.quizHistories}, flashcardHistories=${deletionResult.flashcardHistories}, aiChatDocuments=${deletionResult.aiChatDocuments})`
+            );
         } catch (error) {
-            this.logger.warn(
-                `Failed to delete documents for UserStorage: ${upload.id} - ${error.message}`
+            this.logger.error(
+                `Failed to delete upload aggregate for UserStorage: ${upload.id} - ${error.message}`,
+                error.stack
+            );
+            throw new InternalServerErrorException(
+                'Không thể xóa dữ liệu upload khỏi hệ thống'
             );
         }
 
-        await this.aiRepository.deleteUserStorage(upload.id);
+        await this.clearAiServiceCache(upload.id);
+
+        if (r2DeleteError) {
+            return {
+                success: true,
+                message:
+                    'Đã xóa dữ liệu trong hệ thống nhưng không thể xóa file trên Cloudflare R2',
+                warning: r2DeleteError.message,
+            };
+        }
+
         return { success: true, message: 'Xóa thành công' };
     }
 
@@ -635,6 +679,8 @@ export class AIService {
                 `Failed to delete documents for cancelled job: ${upload.id} - ${error.message}`
             );
         }
+
+        await this.clearAiServiceCache(upload.id);
 
         await this.aiRepository.updateUserStorageStatus(upload.id, 'PENDING');
 
@@ -689,7 +735,9 @@ export class AIService {
             dto.typeResult || 1,
             dto.quantityQuizz || 10,
             dto.quantityFlashcard || 10,
-            dto.modelType
+            dto.modelType,
+            dto.isNarrowSearch ?? false,
+            dto.keyword?.trim() || undefined
         ).catch((err) =>
             this.logger.error(`Background processing failed: ${err.message}`)
         );
@@ -734,7 +782,9 @@ export class AIService {
                 this.normalizeTypeResult(dto.typeResult),
                 dto.quantityQuizz || dto.count || 10,
                 dto.quantityFlashcard || dto.count || 10,
-                dto.modelType
+                dto.modelType,
+                dto.isNarrowSearch ?? false,
+                dto.keyword?.trim() || undefined
             ).catch((err) =>
                 this.logger.error(
                     `Background processing failed: ${err.message}`
@@ -801,6 +851,8 @@ export class AIService {
                 quantityQuizz,
                 quantityFlashcard,
                 dto.modelType,
+                dto.isNarrowSearch ?? false,
+                dto.keyword?.trim() || undefined,
                 true
             ).catch((err) =>
                 this.logger.error(

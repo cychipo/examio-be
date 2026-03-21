@@ -4,7 +4,7 @@ Xây dựng graph từ documents với các loại edges khác nhau
 """
 import os
 import logging
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import networkx as nx
 from langchain_core.documents import Document
 from langchain_ollama import OllamaEmbeddings
@@ -19,13 +19,18 @@ OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:l
 logger = logging.getLogger(__name__)
 
 
+def _use_faiss_for_graph() -> bool:
+    raw = os.getenv('AI_GRAPH_USE_FAISS', 'false').strip().lower()
+    return raw in {'1', 'true', 'yes', 'on'}
+
+
 class DocumentGraph:
     """Build and manage document graph with multiple edge types"""
     
     def __init__(self, 
                  semantic_threshold: float = 0.7,  # Increase threshold to reduce noise
                  max_semantic_edges_per_node: int = 5,  # Limit edges per node
-                 embeddings_model: str = None):
+                 embeddings_model: Optional[str] = None):
         """
         Args:
             semantic_threshold: Ngưỡng similarity để tạo semantic edge (default: 0.8)
@@ -198,10 +203,44 @@ class DocumentGraph:
         # Use ANN (FAISS) for faster neighbor search
         edge_count = 0
         embeddings_matrix = np.array(all_embeddings).astype('float32')
-        
+
+        if not _use_faiss_for_graph():
+            logger.info(
+                'FAISS disabled for graph building; using brute-force cosine similarity'
+            )
+            similarities = cosine_similarity(embeddings_matrix)
+
+            for i in range(len(documents)):
+                node_similarities = similarities[i]
+                node_similarities[i] = -1
+
+                if self.max_semantic_edges_per_node > 0:
+                    top_k_indices = np.argsort(node_similarities)[
+                        -self.max_semantic_edges_per_node:
+                    ]
+
+                    for j in top_k_indices:
+                        sim = similarities[i][j]
+                        if sim >= self.semantic_threshold and i != j:
+                            if not self.graph.has_edge(i, j):
+                                self.graph.add_edge(
+                                    i,
+                                    j,
+                                    edge_type='semantic',
+                                    weight=float(sim)
+                                )
+                                edge_count += 1
+
+            logger.info(
+                f"Added {edge_count} semantic edges (avg {edge_count/len(documents):.1f} edges/node)"
+            )
+            return
+
         # Build FAISS index for fast similarity search
+        # Note: some type checkers cannot infer dynamic faiss bindings well.
         logger.info("Building FAISS index for ANN search...")
         try:
+            # pyright: ignore[reportMissingImports]
             import faiss
             
             dim = embeddings_matrix.shape[1]
@@ -243,9 +282,11 @@ class DocumentGraph:
             
             logger.info(f"✅ Added {edge_count} semantic edges using FAISS ANN (avg {edge_count/len(documents):.1f} edges/node)")
             
-        except ImportError:
-            # Fallback to brute-force if FAISS not available
-            logger.warning("FAISS not available, falling back to brute-force similarity...")
+        except Exception as error:
+            # Fallback to brute-force if FAISS is unavailable or unstable in current env
+            logger.warning(
+                f"FAISS failed ({error}), falling back to brute-force similarity..."
+            )
             similarities = cosine_similarity(embeddings_matrix)
             
             for i in range(len(documents)):
@@ -268,7 +309,7 @@ class DocumentGraph:
             
             logger.info(f"Added {edge_count} semantic edges (avg {edge_count/len(documents):.1f} edges/node)")
     
-    def get_neighbors(self, node_id: int, edge_type: str = None) -> List[int]:
+    def get_neighbors(self, node_id: int, edge_type: Optional[str] = None) -> List[int]:
         """Get neighbors of a node, optionally filtered by edge type"""
         if node_id not in self.graph:
             return []

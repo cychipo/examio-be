@@ -46,6 +46,14 @@ async def lifespan(app: FastAPI):
             logger.error(f"Failed to start RabbitMQ consumer (Optional): {e}")
             _consumer_task = None
 
+    try:
+        from .services.graph_storage_service import graph_storage_service
+
+        await graph_storage_service.ensure_graph_schema()
+        logger.info('Graph storage schema ensured')
+    except Exception as e:
+        logger.error(f'Failed to ensure graph storage schema: {e}')
+
     yield
 
     # Shutdown: Close RabbitMQ consumer

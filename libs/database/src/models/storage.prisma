@@ -13,6 +13,8 @@ model UserStorage {
 
     user                      User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
     documents                 Document[]
+    graphState                UserStorageGraph?
+    graphGroups               UserStorageGraphGroup[]
     historyGeneratedQuizz     HistoryGeneratedQuizz[]
     historyGeneratedFlashcard HistoryGeneratedFlashcard[]
     aiChatDocuments           AIChatDocument[]
@@ -29,4 +31,49 @@ model Document {
     createdAt   DateTime    @default(now())
     updatedAt   DateTime    @default(now()) @updatedAt
     userStorage UserStorage @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+}
+
+model UserStorageGraph {
+    id               String   @id @default(cuid())
+    userStorageId    String   @unique
+    graphVersion     Int      @default(1)
+    chunkSignature   String
+    status           String   @default("READY")
+    totalChunks      Int      @default(0)
+    totalEdges       Int      @default(0)
+    totalCommunities Int      @default(0)
+    totalGroups      Int      @default(0)
+    metadata         Json?
+    builtAt          DateTime @default(now())
+    updatedAt        DateTime @default(now()) @updatedAt
+
+    userStorage UserStorage            @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+    groups      UserStorageGraphGroup[]
+
+    @@index([status])
+}
+
+model UserStorageGraphGroup {
+    id             String   @id @default(cuid())
+    graphId        String
+    userStorageId  String
+    groupIndex     Int
+    communityId    Int?
+    pageStart      Int?
+    pageEnd        Int?
+    pageRanges     Json
+    chunkIds       Json
+    estimatedTokens Int    @default(0)
+    charCount      Int      @default(0)
+    weight         Float    @default(1)
+    summary        String?
+    metadata       Json?
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @default(now()) @updatedAt
+
+    graph       UserStorageGraph @relation(fields: [graphId], references: [id], onDelete: Cascade)
+    userStorage UserStorage      @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+
+    @@unique([graphId, groupIndex])
+    @@index([userStorageId, groupIndex])
 }

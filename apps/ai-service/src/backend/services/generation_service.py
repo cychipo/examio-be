@@ -19,8 +19,11 @@ from pydantic import BaseModel, Field
 
 from src.backend.utils.prompt_utils import prompt_utils
 from src.backend.services.ocr_service import ocr_service, DocumentChunk
+from src.backend.services.hybrid_retrieval_service import (
+    hybrid_retrieval_service,
+    GenerationGroup,
+)
 from src.llm.model_manager import model_manager, AIModelType
-from src.rag.vector_store_pg import get_pg_vector_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -94,6 +97,160 @@ class ContentGenerationService:
     MAX_SOURCE_CHUNKS = 8
     MAX_ITEMS_PER_CALL = 6
     DEFAULT_GENERATION_MAX_CONCURRENCY = 1
+    MAX_META_OUTPUT_RETRIES = 1
+
+    def _describe_group(self, group: GenerationGroup) -> Dict[str, Any]:
+        return {
+            'groupIndex': group.group_index,
+            'communityId': group.community_id,
+            'chunkCount': len(group.chunks),
+            'pageStart': group.page_start,
+            'pageEnd': group.page_end,
+            'pageRanges': group.page_ranges,
+            'estimatedTokens': group.estimated_tokens,
+            'charCount': group.char_count,
+            'weight': group.weight,
+            'contentQualityScore': group.metadata.get('content_quality_score'),
+        }
+
+    def _is_meta_document_question(self, text: str) -> bool:
+        normalized = text.lower().strip()
+        if not normalized:
+            return True
+
+        blocked_patterns = [
+            r'trong chương',
+            r'trong mục',
+            r'ở chương',
+            r'ở mục',
+            r'ở trang',
+            r'trang nào',
+            r'mục nào',
+            r'chương nào',
+            r'phần nào',
+            r'tiêu đề nào',
+            r'tệp nào',
+            r'file nào',
+            r'nằm ở đâu trong tài liệu',
+            r'xuất hiện ở đâu trong tài liệu',
+            r'đề cập đến .* ở (chương|mục|trang|phần)',
+            r'vị trí trong tài liệu',
+            r'số thứ tự chương',
+            r'số thứ tự mục',
+        ]
+
+        return any(re.search(pattern, normalized) for pattern in blocked_patterns)
+
+    def _meta_item_ratio(self, items: List[Dict[str, Any]]) -> float:
+        if not items:
+            return 1.0
+        meta_count = sum(
+            1 for item in items if self._is_meta_document_question(str(item.get('question', '')))
+        )
+        return meta_count / len(items)
+
+    def _build_generation_prompt(self, base_prompt: str) -> str:
+        return (
+            base_prompt
+            + "\n\nQUALITY GATE:\n"
+            + "- Before answering, silently reject any candidate question that asks about chapter numbers, section numbers, page numbers, headings, file layout, where information appears, or document navigation.\n"
+            + "- Only keep questions that test learnable knowledge from the content itself.\n"
+            + "- If a sentence looks like a heading, numbering label, table-of-contents entry, or document outline marker, do not use it as the basis of a question.\n"
+            + "- Prefer questions that ask what/why/how, definition, mechanism, condition, comparison, formula, implication, example, or application.\n"
+            + "- IMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
+        )
+
+    def _build_retry_generation_prompt(self, base_prompt: str) -> str:
+        return (
+            self._build_generation_prompt(base_prompt)
+            + "\n\nRETRY RULES:\n"
+            + "- Your previous draft likely produced questions about where content is located in the document. That is wrong.\n"
+            + "- Regenerate from the same content, but every question/flashcard must test knowledge itself, not file navigation.\n"
+            + "- BAD examples: 'Trong chương nào...', 'Mục nào nói về...', 'Ở trang nào...', 'Phần nào đề cập...'.\n"
+            + "- GOOD examples: 'Biến môi trường dùng để làm gì?', 'Định nghĩa ... là gì?', 'Vì sao ...?', 'Ứng dụng của ... là gì?'."
+        )
+
+    async def _generate_with_meta_retry(
+        self,
+        *,
+        base_prompt: str,
+        final_model_enum: AIModelType,
+        response_model: Optional[type[BaseModel]],
+        parser,
+        page_range: str,
+        batch_kind: str,
+        chunk_position: int,
+        batch_idx: int,
+    ) -> List[Dict[str, Any]]:
+        prompt = self._build_generation_prompt(base_prompt)
+        for attempt in range(self.MAX_META_OUTPUT_RETRIES + 1):
+            response = await model_manager.generate_content_with_model(
+                prompt,
+                final_model_enum,
+                response_model=response_model,
+            )
+
+            if response_model is not None:
+                try:
+                    validated = response_model.model_validate_json(response)
+                    parsed_items = parser(validated, page_range)
+                except Exception as error:
+                    logger.error(
+                        'Failed to validate structured output for %s (chunk=%s batch=%s attempt=%s): %s',
+                        batch_kind,
+                        chunk_position + 1,
+                        batch_idx + 1,
+                        attempt + 1,
+                        error,
+                    )
+                    parsed_items = parser(response, page_range)
+            else:
+                parsed_items = parser(response, page_range)
+
+            meta_ratio = self._meta_item_ratio(parsed_items)
+            if meta_ratio <= 0.34 or attempt >= self.MAX_META_OUTPUT_RETRIES:
+                if meta_ratio > 0.34:
+                    logger.warning(
+                        '[AI_RETRY] meta_ratio_still_high kind=%s chunk=%s batch=%s ratio=%.2f attempts=%s',
+                        batch_kind,
+                        chunk_position + 1,
+                        batch_idx + 1,
+                        meta_ratio,
+                        attempt + 1,
+                    )
+                return parsed_items
+
+            logger.info(
+                '[AI_RETRY] retrying kind=%s chunk=%s batch=%s meta_ratio=%.2f attempt=%s',
+                batch_kind,
+                chunk_position + 1,
+                batch_idx + 1,
+                meta_ratio,
+                attempt + 1,
+            )
+            prompt = self._build_retry_generation_prompt(base_prompt)
+
+        return []
+
+    def _parse_structured_quiz_items(
+        self, quiz_list: QuizList, page_range: str
+    ) -> List[Dict[str, Any]]:
+        return [
+            self._normalize_quiz_item(item, page_range)
+            for item in quiz_list.items
+        ]
+
+    def _parse_structured_flashcard_items(
+        self, flashcard_list: FlashcardList, page_range: str
+    ) -> List[Dict[str, Any]]:
+        return [
+            {
+                'question': item.question,
+                'answer': item.answer,
+                'sourcePageRange': item.sourcePageRange or page_range,
+            }
+            for item in flashcard_list.items
+        ]
 
     def __new__(cls):
         if cls._instance is None:
@@ -150,35 +307,27 @@ class ContentGenerationService:
             f"batch {batch_idx + 1}/{num_batches} (size: {current_batch_size})"
         )
 
-        prompt = prompt_utils.generate_quiz_prompt(
+        base_prompt = prompt_utils.generate_quiz_prompt(
             page_range=chunk.page_range,
             num_questions=current_batch_size,
             content=chunk.content
         )
 
-        # Append strict JSON instruction to prompt
-        json_prompt = prompt + "\n\nIMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
-
         is_ollama = final_model_enum == AIModelType.FAYEDARK
-
-        response = await model_manager.generate_content_with_model(
-            json_prompt,
-            final_model_enum,
-            response_model=QuizList if is_ollama else None
+        batch_results = await self._generate_with_meta_retry(
+            base_prompt=base_prompt,
+            final_model_enum=final_model_enum,
+            response_model=QuizList if is_ollama else None,
+            parser=(
+                lambda payload, page_range: self._parse_structured_quiz_items(payload, page_range)
+                if isinstance(payload, QuizList)
+                else self._parse_quiz_response(payload, page_range)
+            ),
+            page_range=chunk.page_range,
+            batch_kind='quiz',
+            chunk_position=chunk_position,
+            batch_idx=batch_idx,
         )
-
-        if is_ollama:
-            try:
-                quiz_list = QuizList.model_validate_json(response)
-                batch_results = [
-                    self._normalize_quiz_item(item, chunk.page_range)
-                    for item in quiz_list.items
-                ]
-            except Exception as e:
-                logger.error(f"Failed to validate structured output (batch {batch_idx + 1}): {e}")
-                batch_results = self._parse_quiz_response(response, chunk.page_range)
-        else:
-            batch_results = self._parse_quiz_response(response, chunk.page_range)
 
         if not batch_results:
             logger.warning(f"No questions generated for chunk {chunk_position + 1} batch {batch_idx + 1}")
@@ -208,39 +357,27 @@ class ContentGenerationService:
             f"batch {batch_idx + 1}/{num_batches} (size: {current_batch_size})"
         )
 
-        prompt = prompt_utils.generate_flashcard_prompt(
+        base_prompt = prompt_utils.generate_flashcard_prompt(
             page_range=chunk.page_range,
             num_flashcards=current_batch_size,
             content=chunk.content
         )
 
-        # Append strict JSON instruction to prompt
-        json_prompt = prompt + "\n\nIMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
-
         is_ollama = final_model_enum == AIModelType.FAYEDARK
-
-        response = await model_manager.generate_content_with_model(
-            json_prompt,
-            final_model_enum,
-            response_model=FlashcardList if is_ollama else None
+        batch_results = await self._generate_with_meta_retry(
+            base_prompt=base_prompt,
+            final_model_enum=final_model_enum,
+            response_model=FlashcardList if is_ollama else None,
+            parser=(
+                lambda payload, page_range: self._parse_structured_flashcard_items(payload, page_range)
+                if isinstance(payload, FlashcardList)
+                else self._parse_flashcard_response(payload, page_range)
+            ),
+            page_range=chunk.page_range,
+            batch_kind='flashcard',
+            chunk_position=chunk_position,
+            batch_idx=batch_idx,
         )
-
-        if is_ollama:
-            try:
-                fc_list = FlashcardList.model_validate_json(response)
-                batch_results = [
-                    {
-                        "question": item.question,
-                        "answer": item.answer,
-                        "sourcePageRange": item.sourcePageRange or chunk.page_range
-                    }
-                    for item in fc_list.items
-                ]
-            except Exception as e:
-                logger.error(f"Failed to validate structured output for flashcards (batch {batch_idx + 1}): {e}")
-                batch_results = self._parse_flashcard_response(response, chunk.page_range)
-        else:
-            batch_results = self._parse_flashcard_response(response, chunk.page_range)
 
         if not batch_results:
             logger.warning(f"No flashcards generated for chunk {chunk_position + 1} batch {batch_idx + 1}")
@@ -339,44 +476,57 @@ class ContentGenerationService:
             model_type_str = "fayedark" if final_model_enum == AIModelType.FAYEDARK else "gemini"
             generation_start = time.perf_counter()
 
-            # Get document chunks
-            chunks = []
-            if request.is_narrow_search and request.keyword:
-                logger.info(f"Generating with Narrow Search for keyword: {request.keyword}")
-                vector_store = get_pg_vector_store()
-                embedding = await vector_store.create_embedding(request.keyword, model_type=model_type_str)
-
-                # Search similar chunks (limit 10 for focused context)
-                similar_results = await ocr_service.search_similar_documents(
-                    [request.user_storage_id],
-                    embedding,
-                    limit=10,
-                    similarity_threshold=0.5
-                )
-                chunks = [res[0] for res in similar_results]
-
-                if not chunks:
-                    logger.warning("Narrow search returned no results, falling back to full content")
-                    chunks = await ocr_service.get_document_chunks(request.user_storage_id)
-            else:
-                chunks = await ocr_service.get_document_chunks(request.user_storage_id)
+            retrieval_result = await hybrid_retrieval_service.retrieve_for_generation(
+                user_storage_id=request.user_storage_id,
+                total_items=request.num_questions,
+                model_type=model_type_str,
+                keyword=request.keyword,
+                is_narrow_search=request.is_narrow_search,
+                max_chunks=self.MAX_SOURCE_CHUNKS,
+            )
+            logger.info(
+                "[AI_RETRIEVAL] mode=%s user_storage_id=%s selected=%s total=%s generation=quiz narrow=%s",
+                retrieval_result.retrieval_mode,
+                request.user_storage_id,
+                retrieval_result.metadata.get("selected_chunks"),
+                retrieval_result.metadata.get("total_chunks"),
+                request.is_narrow_search,
+            )
+            chunks = retrieval_result.chunks
 
             if not chunks:
                 return {"success": False, "error": "No content found in file"}
 
-            original_chunk_count = len(chunks)
-            chunks = self._select_chunks_for_generation(chunks, request.num_questions)
-            selected_chunk_count = len(chunks)
-
-            # Distribute questions across chunks
-            questions_per_chunk = self._distribute_items(request.num_questions, selected_chunk_count)
+            graph_entry = await hybrid_retrieval_service._get_or_build_graph_entry(  # noqa: SLF001
+                request.user_storage_id,
+                await ocr_service.get_document_chunks(request.user_storage_id),
+            )
+            generation_groups = hybrid_retrieval_service.plan_generation_groups(
+                user_storage_id=request.user_storage_id,
+                selected_chunks=chunks,
+                total_items=request.num_questions,
+                graph_entry=graph_entry,
+                seed_chunks=None,
+                keyword=request.keyword,
+            )
+            selected_chunk_count = len(generation_groups)
+            questions_per_chunk = self._allocate_items_to_groups(
+                request.num_questions,
+                generation_groups,
+            )
+            logger.info(
+                '[AI_GROUPS] type=quiz user_storage_id=%s groups=%s allocation=%s',
+                request.user_storage_id,
+                [self._describe_group(group) for group in generation_groups],
+                questions_per_chunk,
+            )
             expected_batches = sum(
                 (items + self.MAX_ITEMS_PER_CALL - 1) // self.MAX_ITEMS_PER_CALL
                 for items in questions_per_chunk
                 if items > 0
             )
             logger.info(
-                f"[AI_TIMING] stage=quiz_prepare user_storage_id={request.user_storage_id} requested={request.num_questions} chunks_total={original_chunk_count} chunks_selected={selected_chunk_count} expected_batches={expected_batches} max_items_per_call={self.MAX_ITEMS_PER_CALL} model={model_type_str}"
+                f"[AI_TIMING] stage=quiz_prepare user_storage_id={request.user_storage_id} requested={request.num_questions} chunks_total={len(chunks)} groups_selected={selected_chunk_count} expected_batches={expected_batches} max_items_per_call={self.MAX_ITEMS_PER_CALL} model={model_type_str}"
             )
 
             generation_max_concurrency = self._get_generation_max_concurrency()
@@ -386,12 +536,13 @@ class ContentGenerationService:
 
             # Build chunk-batch tasks while preserving original selection/distribution logic
             generation_tasks = []
-            for i, chunk in enumerate(chunks):
+            for i, group in enumerate(generation_groups):
                 if questions_per_chunk[i] == 0:
                     continue
 
                 items_needed = questions_per_chunk[i]
                 num_batches = (items_needed + self.MAX_ITEMS_PER_CALL - 1) // self.MAX_ITEMS_PER_CALL
+                group_chunk = self._merge_group_chunks(group)
                 for batch_idx in range(num_batches):
                     current_batch_size = min(
                         self.MAX_ITEMS_PER_CALL,
@@ -400,10 +551,10 @@ class ContentGenerationService:
                     generation_tasks.append({
                         "chunk_index": i,
                         "batch_index": batch_idx,
-                        "runner": lambda c=chunk, ci=i, bi=batch_idx, nb=num_batches, bs=current_batch_size: self._generate_quiz_batch_for_chunk(
+                        "runner": lambda c=group_chunk, ci=i, bi=batch_idx, nb=num_batches, bs=current_batch_size: self._generate_quiz_batch_for_chunk(
                             chunk=c,
                             chunk_position=ci,
-                            total_chunks=len(chunks),
+                            total_chunks=len(generation_groups),
                             batch_idx=bi,
                             num_batches=nb,
                             current_batch_size=bs,
@@ -433,7 +584,7 @@ class ContentGenerationService:
 
             total_ms = int((time.perf_counter() - generation_start) * 1000)
             logger.info(
-                f"[AI_TIMING] stage=quiz_total user_storage_id={request.user_storage_id} total_ms={total_ms} generated={len(all_questions)} actual_batches={actual_batches} expected_batches={expected_batches} chunks_used={selected_chunk_count}"
+                f"[AI_TIMING] stage=quiz_total user_storage_id={request.user_storage_id} total_ms={total_ms} generated={len(all_questions)} actual_batches={actual_batches} expected_batches={expected_batches} groups_used={selected_chunk_count}"
             )
 
             # Save to HistoryGeneratedQuizz
@@ -505,44 +656,57 @@ class ContentGenerationService:
             model_type_str = "fayedark" if final_model_enum == AIModelType.FAYEDARK else "gemini"
             generation_start = time.perf_counter()
 
-            # Get document chunks
-            chunks = []
-            if request.is_narrow_search and request.keyword:
-                logger.info(f"Generating with Narrow Search for keyword: {request.keyword}")
-                vector_store = get_pg_vector_store()
-                embedding = await vector_store.create_embedding(request.keyword, model_type=model_type_str)
-
-                # Search similar chunks (limit 10 for focused context)
-                similar_results = await ocr_service.search_similar_documents(
-                    [request.user_storage_id],
-                    embedding,
-                    limit=10,
-                    similarity_threshold=0.5
-                )
-                chunks = [res[0] for res in similar_results]
-
-                if not chunks:
-                    logger.warning("Narrow search returned no results, falling back to full content")
-                    chunks = await ocr_service.get_document_chunks(request.user_storage_id)
-            else:
-                chunks = await ocr_service.get_document_chunks(request.user_storage_id)
+            retrieval_result = await hybrid_retrieval_service.retrieve_for_generation(
+                user_storage_id=request.user_storage_id,
+                total_items=request.num_flashcards,
+                model_type=model_type_str,
+                keyword=request.keyword,
+                is_narrow_search=request.is_narrow_search,
+                max_chunks=self.MAX_SOURCE_CHUNKS,
+            )
+            logger.info(
+                "[AI_RETRIEVAL] mode=%s user_storage_id=%s selected=%s total=%s generation=flashcard narrow=%s",
+                retrieval_result.retrieval_mode,
+                request.user_storage_id,
+                retrieval_result.metadata.get("selected_chunks"),
+                retrieval_result.metadata.get("total_chunks"),
+                request.is_narrow_search,
+            )
+            chunks = retrieval_result.chunks
 
             if not chunks:
                 return {"success": False, "error": "No content found in file"}
 
-            original_chunk_count = len(chunks)
-            chunks = self._select_chunks_for_generation(chunks, request.num_flashcards)
-            selected_chunk_count = len(chunks)
-
-            # Distribute flashcards across chunks
-            flashcards_per_chunk = self._distribute_items(request.num_flashcards, selected_chunk_count)
+            graph_entry = await hybrid_retrieval_service._get_or_build_graph_entry(  # noqa: SLF001
+                request.user_storage_id,
+                await ocr_service.get_document_chunks(request.user_storage_id),
+            )
+            generation_groups = hybrid_retrieval_service.plan_generation_groups(
+                user_storage_id=request.user_storage_id,
+                selected_chunks=chunks,
+                total_items=request.num_flashcards,
+                graph_entry=graph_entry,
+                seed_chunks=None,
+                keyword=request.keyword,
+            )
+            selected_chunk_count = len(generation_groups)
+            flashcards_per_chunk = self._allocate_items_to_groups(
+                request.num_flashcards,
+                generation_groups,
+            )
+            logger.info(
+                '[AI_GROUPS] type=flashcard user_storage_id=%s groups=%s allocation=%s',
+                request.user_storage_id,
+                [self._describe_group(group) for group in generation_groups],
+                flashcards_per_chunk,
+            )
             expected_batches = sum(
                 (items + self.MAX_ITEMS_PER_CALL - 1) // self.MAX_ITEMS_PER_CALL
                 for items in flashcards_per_chunk
                 if items > 0
             )
             logger.info(
-                f"[AI_TIMING] stage=flashcard_prepare user_storage_id={request.user_storage_id} requested={request.num_flashcards} chunks_total={original_chunk_count} chunks_selected={selected_chunk_count} expected_batches={expected_batches} max_items_per_call={self.MAX_ITEMS_PER_CALL} model={model_type_str}"
+                f"[AI_TIMING] stage=flashcard_prepare user_storage_id={request.user_storage_id} requested={request.num_flashcards} chunks_total={len(chunks)} groups_selected={selected_chunk_count} expected_batches={expected_batches} max_items_per_call={self.MAX_ITEMS_PER_CALL} model={model_type_str}"
             )
 
             generation_max_concurrency = self._get_generation_max_concurrency()
@@ -552,12 +716,13 @@ class ContentGenerationService:
 
             # Build chunk-batch tasks while preserving original selection/distribution logic
             generation_tasks = []
-            for i, chunk in enumerate(chunks):
+            for i, group in enumerate(generation_groups):
                 if flashcards_per_chunk[i] == 0:
                     continue
 
                 items_needed = flashcards_per_chunk[i]
                 num_batches = (items_needed + self.MAX_ITEMS_PER_CALL - 1) // self.MAX_ITEMS_PER_CALL
+                group_chunk = self._merge_group_chunks(group)
                 for batch_idx in range(num_batches):
                     current_batch_size = min(
                         self.MAX_ITEMS_PER_CALL,
@@ -566,10 +731,10 @@ class ContentGenerationService:
                     generation_tasks.append({
                         "chunk_index": i,
                         "batch_index": batch_idx,
-                        "runner": lambda c=chunk, ci=i, bi=batch_idx, nb=num_batches, bs=current_batch_size: self._generate_flashcard_batch_for_chunk(
+                        "runner": lambda c=group_chunk, ci=i, bi=batch_idx, nb=num_batches, bs=current_batch_size: self._generate_flashcard_batch_for_chunk(
                             chunk=c,
                             chunk_position=ci,
-                            total_chunks=len(chunks),
+                            total_chunks=len(generation_groups),
                             batch_idx=bi,
                             num_batches=nb,
                             current_batch_size=bs,
@@ -599,7 +764,7 @@ class ContentGenerationService:
 
             total_ms = int((time.perf_counter() - generation_start) * 1000)
             logger.info(
-                f"[AI_TIMING] stage=flashcard_total user_storage_id={request.user_storage_id} total_ms={total_ms} generated={len(all_flashcards)} actual_batches={actual_batches} expected_batches={expected_batches} chunks_used={selected_chunk_count}"
+                f"[AI_TIMING] stage=flashcard_total user_storage_id={request.user_storage_id} total_ms={total_ms} generated={len(all_flashcards)} actual_batches={actual_batches} expected_batches={expected_batches} groups_used={selected_chunk_count}"
             )
 
             # Save to HistoryGeneratedFlashcard
@@ -639,6 +804,59 @@ class ContentGenerationService:
             distribution[i] += 1
 
         return distribution
+
+    def _allocate_items_to_groups(
+        self, total: int, groups: List[GenerationGroup]
+    ) -> List[int]:
+        if not groups:
+            return []
+
+        total_weight = sum(max(group.weight, 1.0) for group in groups)
+        raw_allocations = [
+            (max(group.weight, 1.0) / total_weight) * total for group in groups
+        ]
+        distribution = [int(allocation) for allocation in raw_allocations]
+        assigned = sum(distribution)
+
+        for index in range(min(total, len(distribution))):
+            if distribution[index] == 0:
+                distribution[index] = 1
+        assigned = sum(distribution)
+
+        while assigned < total:
+            best_index = max(
+                range(len(groups)),
+                key=lambda idx: raw_allocations[idx] - distribution[idx],
+            )
+            distribution[best_index] += 1
+            assigned += 1
+
+        while assigned > total:
+            worst_index = max(
+                [idx for idx, value in enumerate(distribution) if value > 1],
+                key=lambda idx: distribution[idx] - raw_allocations[idx],
+                default=0,
+            )
+            distribution[worst_index] -= 1
+            assigned -= 1
+
+        return distribution
+
+    def _merge_group_chunks(self, group: GenerationGroup) -> DocumentChunk:
+        combined_content = '\n\n'.join(chunk.content for chunk in group.chunks)
+        page_range = (
+            f"{group.page_start}-{group.page_end}"
+            if group.page_start is not None and group.page_end is not None
+            else ','.join(group.page_ranges)
+        )
+        return DocumentChunk(
+            id=f"group_{group.group_index}",
+            user_storage_id=group.chunks[0].user_storage_id,
+            page_range=page_range,
+            title=f"Group {group.group_index + 1}",
+            content=combined_content,
+            created_at=group.chunks[0].created_at,
+        )
 
     def _select_chunks_for_generation(
         self,
