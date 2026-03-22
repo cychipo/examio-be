@@ -45,6 +45,7 @@ pytesseract>=0.3.10
 
 # Graph algorithms
 networkx>=3.0,<4.0
+scikit-learn>=1.5.0,<2.0.0
 
 # Utilities
 requests>=2.31.0,<3.0.0
