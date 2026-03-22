@@ -18,6 +18,7 @@ from src.backend.services.generation_service import (
     GenerateQuizRequest,
     GenerateFlashcardRequest,
 )
+from src.llm.model_manager import ModelUnavailableError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,8 +36,8 @@ class GenerateQuizBody(BaseModel):
     isNarrowSearch: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(default=None, description="Từ khóa cho tìm kiếm hẹp")
     modelType: str = Field(
-        default="gemini",
-        description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
+        default='qwen3_8b',
+        description='Model id tu registry'
     )
 
 
@@ -48,8 +49,8 @@ class GenerateFlashcardBody(BaseModel):
     isNarrowSearch: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(default=None, description="Từ khóa cho tìm kiếm hẹp")
     modelType: str = Field(
-        default="gemini",
-        description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
+        default='qwen3_8b',
+        description='Model id tu registry'
     )
 
 
@@ -84,9 +85,27 @@ async def generate_quiz(body: GenerateQuizBody):
         model_type=body.modelType
     )
 
-    result = await generation_service.generate_quiz(request)
+    try:
+        result = await generation_service.generate_quiz(request)
+    except ModelUnavailableError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": error.code, "message": str(error)},
+        )
 
     if not result.get("success"):
+        if result.get('error_code') in {
+            'MODEL_UNAVAILABLE',
+            'MODEL_INSUFFICIENT_VRAM',
+            'MODEL_RUNTIME_ERROR',
+        }:
+            raise HTTPException(
+                status_code=result.get('status_code', 503),
+                detail={
+                    'code': result.get('error_code'),
+                    'message': result.get('error', 'Model unavailable'),
+                },
+            )
         raise HTTPException(
             status_code=400,
             detail=result.get("error", "Failed to generate quiz")
@@ -124,9 +143,27 @@ async def generate_flashcards(body: GenerateFlashcardBody):
         model_type=body.modelType
     )
 
-    result = await generation_service.generate_flashcards(request)
+    try:
+        result = await generation_service.generate_flashcards(request)
+    except ModelUnavailableError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": error.code, "message": str(error)},
+        )
 
     if not result.get("success"):
+        if result.get('error_code') in {
+            'MODEL_UNAVAILABLE',
+            'MODEL_INSUFFICIENT_VRAM',
+            'MODEL_RUNTIME_ERROR',
+        }:
+            raise HTTPException(
+                status_code=result.get('status_code', 503),
+                detail={
+                    'code': result.get('error_code'),
+                    'message': result.get('error', 'Model unavailable'),
+                },
+            )
         raise HTTPException(
             status_code=400,
             detail=result.get("error", "Failed to generate flashcards")

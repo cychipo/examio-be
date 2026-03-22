@@ -35,6 +35,27 @@ class LLMFactory:
         return cls._create_gemini_model(temperature, max_tokens, callback_manager)
 
     @classmethod
+    def create_llm_for_model(
+        cls,
+        model_id: str,
+        callback_manager: Optional[CallbackManager] = None,
+    ) -> BaseChatModel:
+        model = model_manager.resolve_model(model_id)
+        temperature = model_manager.get_temperature()
+        max_tokens = model_manager.get_max_tokens()
+
+        if model.provider == 'ollama':
+            return ChatOllama(
+                model=model.runtime_model_name,
+                base_url=model_manager.get_ollama_info(model.id)["url"],
+                temperature=temperature,
+                num_predict=max_tokens,
+                callback_manager=callback_manager,
+            )
+
+        return cls._create_gemini_model(temperature, max_tokens, callback_manager)
+
+    @classmethod
     def _create_ollama_model(cls, temperature: float, max_tokens: int,
                             callback_manager: Optional[CallbackManager] = None) -> ChatOllama:
         """Tạo model Ollama."""

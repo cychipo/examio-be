@@ -16,6 +16,8 @@ import httpx
 from dotenv import load_dotenv
 
 import logging
+
+from src.llm.model_manager import model_manager
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -74,7 +76,7 @@ class OllamaEmbeddings:
             return
 
         self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip('/')
-        self.model = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest")
+        self.model = model_manager.get_embedding_info()["model"]
         self.verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
         self.timeout = httpx.Timeout(120.0, connect=30.0)
         self.embed_max_length = get_embedding_text_limit()

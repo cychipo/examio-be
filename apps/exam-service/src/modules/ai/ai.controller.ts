@@ -128,6 +128,16 @@ export class AIController {
         );
     }
 
+    @Get('models')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher', 'student')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lay catalog model AI cho frontend' })
+    @ApiResponse({ status: 200, description: 'Danh sach model AI' })
+    async getModels() {
+        return this.aiService.getModelCatalog();
+    }
+
     @Get('upload/:uploadId')
     @UseGuards(AuthGuard, RolesGuard)
     @Roles('teacher', 'student')

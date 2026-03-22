@@ -74,13 +74,13 @@ class PgVectorStore:
         self,
         text: str,
         task_type: str = "retrieval_document",
-        model_type: str = "fayedark"
+        model_type: str = "qwen3_8b"
     ) -> List[float]:
         """
         Tạo embedding vector cho text bằng Ollama embedding model.
 
         Lưu ý: luôn dùng cùng 1 embedding space để đảm bảo retrieval nhất quán
-        giữa các lần generate (dù model tạo nội dung là gemini hay fayedark).
+        giữa các lần generate, khong phu thuoc model generation do user chon.
 
         Args:
             text: Text cần embedding
@@ -94,7 +94,7 @@ class PgVectorStore:
         self,
         texts: List[str],
         task_type: str = "retrieval_document",
-        model_type: str = "fayedark"
+        model_type: str = "qwen3_8b"
     ) -> List[List[float]]:
         """
         Tạo embeddings cho nhiều texts bằng Ollama embedding model.
@@ -116,7 +116,7 @@ class PgVectorStore:
         content: str,
         page_range: str,
         title: Optional[str] = None,
-        model_type: str = "gemini"
+        model_type: str = "qwen3_8b"
     ) -> bool:
         """
         Lưu document chunk với embedding vào database.
@@ -127,7 +127,7 @@ class PgVectorStore:
             content: Nội dung text
             page_range: Phạm vi trang (vd: "1-3")
             title: Tiêu đề (optional)
-            model_type: "gemini" hoặc "fayedark" cho embedding
+            model_type: Ignored, giu lai de tuong thich interface cu
 
         Returns:
             True nếu thành công
@@ -166,14 +166,14 @@ class PgVectorStore:
     async def store_documents_batch(
         self,
         documents: List[Dict[str, Any]],
-        model_type: str = "gemini"
+        model_type: str = "qwen3_8b"
     ) -> int:
         """
         Lưu nhiều document chunks với batch embedding.
 
         Args:
             documents: List dict với keys: id, user_storage_id, content, page_range, title (optional)
-            model_type: "gemini" hoặc "fayedark" cho embedding
+            model_type: Ignored, giu lai de tuong thich interface cu
 
         Returns:
             Số documents được lưu thành công
@@ -267,7 +267,7 @@ class PgVectorStore:
         query: str,
         top_k: int = None,
         similarity_threshold: float = None,
-        model_type: str = "gemini"
+        model_type: str = "qwen3_8b"
     ) -> List[DocumentChunk]:
         """
         Tìm kiếm documents tương tự bằng vector similarity.
@@ -277,7 +277,7 @@ class PgVectorStore:
             query: Query text
             top_k: Số kết quả trả về (default: 15)
             similarity_threshold: Ngưỡng similarity (default: 0.7)
-            model_type: "gemini" hoặc "fayedark"
+            model_type: Ignored, giu lai de tuong thich interface cu
         """
         top_k = top_k or self.VECTOR_SEARCH_CONFIG["TOP_K"]
         similarity_threshold = similarity_threshold or self.VECTOR_SEARCH_CONFIG["SIMILARITY_THRESHOLD"]

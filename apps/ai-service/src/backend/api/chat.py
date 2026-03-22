@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from src.rag.simple_chat_agent import SimpleChatAgent
 from src.rag.retriever import create_in_memory_retriever
 from src.backend.services.hybrid_retrieval_service import hybrid_retrieval_service
+from src.llm.model_manager import ModelUnavailableError, model_manager
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +32,9 @@ class ChatRequest(BaseModel):
     user_storage_id: Optional[str] = Field(None, description="ID for RAG context from a specific file")
     department: Optional[str] = Field(None, description="Department context for general RAG")
     model_type: Optional[str] = Field(
-        default="gemini",
+        default='qwen3_8b',
         alias="modelType",
-        description="AI model to use: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)"
+        description='Model id tu registry'
     )
     system_prompt: Optional[str] = Field(
         default=None,
@@ -80,7 +81,7 @@ async def query_ai(request: ChatRequest):
     try:
         query = request.query
         user_storage_id = request.user_storage_id
-        model_type = request.model_type or "gemini"
+        model_type = model_manager.resolve_model(request.model_type).id
 
         logger.info(f"Query AI: {query[:50]}... (RAG ID: {user_storage_id}, Model: {model_type})")
 
@@ -136,6 +137,10 @@ async def query_ai(request: ChatRequest):
             sources=sources
         )
 
+    except ModelUnavailableError as e:
+        raise HTTPException(status_code=503, detail={'code': e.code, 'message': str(e)})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error in stateless query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -148,7 +153,7 @@ async def stream_ai(request: ChatRequest):
     try:
         query = request.query
         user_storage_id = request.user_storage_id
-        model_type = request.model_type or "gemini"
+        model_type = model_manager.resolve_model(request.model_type).id
 
         # Log mode: with document or general chat
         if user_storage_id:
@@ -214,11 +219,16 @@ async def stream_ai(request: ChatRequest):
                 yield f"data: {done_data}\n\n"
 
             except Exception as e:
-                err_data = json.dumps({"type": "error", "data": str(e)})
+                error_code = getattr(e, 'code', None)
+                err_data = json.dumps({"type": "error", "data": str(e), "code": error_code})
                 yield f"data: {err_data}\n\n"
 
         return StreamingResponse(iter_response(), media_type="text/event-stream")
 
+    except ModelUnavailableError as e:
+        raise HTTPException(status_code=503, detail={'code': e.code, 'message': str(e)})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error in streaming query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

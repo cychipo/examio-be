@@ -5,7 +5,8 @@ from typing import Dict, Any, Iterator, List, Optional, Union
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from src.llm import get_llm, LLMConfig
-from src.llm.model_manager import AIModelType, model_manager
+from src.llm.llm_factory import LLMFactory
+from src.llm.model_manager import model_manager
 from src.rag.retriever import create_enhanced_hybrid_retriever, smart_retrieve, get_metadata_config, MetadataEnhancedHybridRetriever
 
 # Set up logging
@@ -16,13 +17,13 @@ logger = logging.getLogger(__name__)
 class SimpleChatAgent:
     """Simplified chat agent without LangGraph to avoid recursion issues"""
 
-    def __init__(self, custom_retriever=None, model_name: Optional[str] = None, model_type: str = "gemini", pre_context: Optional[str] = None, system_prompt: Optional[str] = None):
+    def __init__(self, custom_retriever=None, model_name: Optional[str] = None, model_type: str = "qwen3_8b", pre_context: Optional[str] = None, system_prompt: Optional[str] = None):
         """Initialize the Simple Chat Agent
 
         Args:
             custom_retriever: Custom retriever for RAG (optional)
             model_name: Specific model name (optional, deprecated)
-            model_type: AI model type - 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)
+            model_type: Model id tu registry backend
             pre_context: Pre-fetched context from PostgreSQL vector search (optional)
                         If provided, bypasses retriever-based RAG for faster responses.
             system_prompt: Custom system prompt for specialized AI behavior (optional)
@@ -59,25 +60,12 @@ class SimpleChatAgent:
         """Create LLM instance based on model type
 
         Args:
-            model_type: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI (Ollama)
+            model_type: Model id tu registry backend
 
         Returns:
             Configured LLM instance
         """
-        from src.llm.llm_factory import LLMFactory
-        from src.llm.model_manager import ModelType
-
-        # Temporarily set model type for LLMFactory
-        if model_type == "fayedark":
-            model_manager._runtime_model_type = ModelType.OLLAMA
-        else:
-            model_manager._runtime_model_type = ModelType.GEMINI
-
-        try:
-            return LLMFactory.create_llm()
-        finally:
-            # Reset to default after creation
-            model_manager._runtime_model_type = None
+        return LLMFactory.create_llm_for_model(model_type)
 
     def get_default_retriever(self):
         """Get the default hybrid retriever for KMA regulations"""
@@ -212,7 +200,13 @@ Answer only YES or NO."""
             # 1. Convert history
             lc_messages = []
             # Use custom system prompt if provided, otherwise use default
-            system_content = self.system_prompt if self.system_prompt else "Bạn là Sensei, một trợ lý AI thông minh hỗ trợ học tập. Hãy trả lời thân thiện, chính xác và hữu ích."
+            default_system_prompt = (
+                "Bạn là Sensei, một tiến sĩ người Việt và là trợ lý AI hỗ trợ học tập. "
+                "Hãy trả lời chính xác, rõ ràng, tự nhiên, ưu tiên tiếng Việt. "
+                "Chỉ dùng ngôn ngữ khác nếu câu hỏi hoặc tài liệu rõ ràng là môn ngoại ngữ. "
+                "Nếu không chắc, hãy dùng tiếng Việt."
+            )
+            system_content = self.system_prompt if self.system_prompt else default_system_prompt
             lc_messages.append(SystemMessage(content=system_content))
 
             for msg in history:
