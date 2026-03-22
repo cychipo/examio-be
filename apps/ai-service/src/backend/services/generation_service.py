@@ -23,7 +23,7 @@ from src.backend.services.hybrid_retrieval_service import (
     hybrid_retrieval_service,
     GenerationGroup,
 )
-from src.llm.model_manager import model_manager, AIModelType
+from src.llm.model_manager import model_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class GenerateQuizRequest(BaseModel):
     num_questions: int = Field(default=10, ge=1, le=100, description="Số câu hỏi cần tạo (max 100)")
     is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
-    model_type: Optional[str] = Field(default=None, description="AI model: 'gemini' or 'fayedark'")
+    model_type: Optional[str] = Field(default=None, description='Model id tu registry')
 
 
 class GenerateFlashcardRequest(BaseModel):
@@ -69,7 +69,7 @@ class GenerateFlashcardRequest(BaseModel):
     num_flashcards: int = Field(default=10, ge=1, le=100, description="Số flashcard cần tạo (max 100)")
     is_narrow_search: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
     keyword: Optional[str] = Field(None, description="Từ khóa cho tìm kiếm hẹp")
-    model_type: Optional[str] = Field(default=None, description="AI model: 'gemini' or 'fayedark'")
+    model_type: Optional[str] = Field(default=None, description='Model id tu registry')
 
 
 @dataclass
@@ -160,6 +160,9 @@ class ContentGenerationService:
             + "- IMPORTANT: Return ONLY a raw JSON array. Do not wrap in markdown blocks. Do not add explanations."
         )
 
+    def _build_generation_system_prompt(self, content: str) -> str:
+        return prompt_utils.get_generation_system_prompt(content)
+
     def _build_retry_generation_prompt(self, base_prompt: str) -> str:
         return (
             self._build_generation_prompt(base_prompt)
@@ -174,7 +177,7 @@ class ContentGenerationService:
         self,
         *,
         base_prompt: str,
-        final_model_enum: AIModelType,
+        final_model_id: str,
         response_model: Optional[type[BaseModel]],
         parser,
         page_range: str,
@@ -183,11 +186,13 @@ class ContentGenerationService:
         batch_idx: int,
     ) -> List[Dict[str, Any]]:
         prompt = self._build_generation_prompt(base_prompt)
+        system_prompt = self._build_generation_system_prompt(base_prompt)
         for attempt in range(self.MAX_META_OUTPUT_RETRIES + 1):
             response = await model_manager.generate_content_with_model(
                 prompt,
-                final_model_enum,
+                final_model_id,
                 response_model=response_model,
+                system_prompt=system_prompt,
             )
 
             if response_model is not None:
@@ -300,7 +305,7 @@ class ContentGenerationService:
         batch_idx: int,
         num_batches: int,
         current_batch_size: int,
-        final_model_enum: AIModelType,
+        final_model_id: str,
     ) -> List[Dict[str, Any]]:
         logger.info(
             f"Processing chunk {chunk_position + 1}/{total_chunks}, "
@@ -313,10 +318,10 @@ class ContentGenerationService:
             content=chunk.content
         )
 
-        is_ollama = final_model_enum == AIModelType.FAYEDARK
+        is_ollama = model_manager.resolve_model(final_model_id).provider == 'ollama'
         batch_results = await self._generate_with_meta_retry(
             base_prompt=base_prompt,
-            final_model_enum=final_model_enum,
+            final_model_id=final_model_id,
             response_model=QuizList if is_ollama else None,
             parser=(
                 lambda payload, page_range: self._parse_structured_quiz_items(payload, page_range)
@@ -350,7 +355,7 @@ class ContentGenerationService:
         batch_idx: int,
         num_batches: int,
         current_batch_size: int,
-        final_model_enum: AIModelType,
+        final_model_id: str,
     ) -> List[Dict[str, Any]]:
         logger.info(
             f"Processing chunk {chunk_position + 1}/{total_chunks}, "
@@ -363,10 +368,10 @@ class ContentGenerationService:
             content=chunk.content
         )
 
-        is_ollama = final_model_enum == AIModelType.FAYEDARK
+        is_ollama = model_manager.resolve_model(final_model_id).provider == 'ollama'
         batch_results = await self._generate_with_meta_retry(
             base_prompt=base_prompt,
-            final_model_enum=final_model_enum,
+            final_model_id=final_model_id,
             response_model=FlashcardList if is_ollama else None,
             parser=(
                 lambda payload, page_range: self._parse_structured_flashcard_items(payload, page_range)
@@ -415,6 +420,7 @@ class ContentGenerationService:
                     }
                 except Exception as e:
                     import traceback
+                    error_code = getattr(e, 'code', None)
                     logger.error(
                         f"Error generating {kind} for chunk {task['chunk_index'] + 1} batch {task['batch_index'] + 1} | "
                         f"Error type: {type(e).__name__} | Error: {e}\n"
@@ -425,6 +431,7 @@ class ContentGenerationService:
                         "batch_index": task["batch_index"],
                         "items": [],
                         "error": str(e),
+                        "error_code": error_code,
                     }
 
         results = await asyncio.gather(*[_run_one(task) for task in tasks])
@@ -453,27 +460,9 @@ class ContentGenerationService:
             if file_info.processing_status not in ["COMPLETED", "PROCESSING"]:
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
-            # Determine AI model type strictly based on user request first
-            from src.llm.model_manager import model_manager, ModelType
-            
-            # Default to System Setting if request is empty
-            final_model_enum = AIModelType.GEMINI 
-            
-            if request.model_type:
-                if request.model_type.lower() == "gemini":
-                    final_model_enum = AIModelType.GEMINI
-                elif request.model_type.lower() in ["fayedark", "ollama", "local"]:
-                    final_model_enum = AIModelType.FAYEDARK
-            else:
-                # Fallback to system env if not specified
-                system_type = model_manager.get_model_type()
-                if system_type == ModelType.OLLAMA:
-                    final_model_enum = AIModelType.FAYEDARK
-                else:
-                    final_model_enum = AIModelType.GEMINI
-            
-            logger.info(f"Using AI model for quiz: {final_model_enum.value} (Request: {request.model_type})")
-            model_type_str = "fayedark" if final_model_enum == AIModelType.FAYEDARK else "gemini"
+            final_model = model_manager.resolve_model(request.model_type)
+            logger.info(f"Using AI model for quiz: {final_model.id} (Request: {request.model_type})")
+            model_type_str = final_model.id
             generation_start = time.perf_counter()
 
             retrieval_result = await hybrid_retrieval_service.retrieve_for_generation(
@@ -558,7 +547,7 @@ class ContentGenerationService:
                             batch_idx=bi,
                             num_batches=nb,
                             current_batch_size=bs,
-                            final_model_enum=final_model_enum,
+                            final_model_id=final_model.id,
                         )
                     })
 
@@ -567,6 +556,19 @@ class ContentGenerationService:
                 tasks=generation_tasks,
                 max_concurrency=generation_max_concurrency,
                 kind="quiz",
+            )
+
+            model_unavailable_error = next(
+                (
+                    result
+                    for result in generation_results
+                    if result.get('error_code') in {
+                        'MODEL_UNAVAILABLE',
+                        'MODEL_INSUFFICIENT_VRAM',
+                        'MODEL_RUNTIME_ERROR',
+                    }
+                ),
+                None,
             )
 
             all_questions = []
@@ -580,6 +582,13 @@ class ContentGenerationService:
                 logger.info(f"Generated total {per_chunk_counts[chunk_idx]} questions for chunk {chunk_idx + 1}")
 
             if not all_questions:
+                if model_unavailable_error:
+                    return {
+                        'success': False,
+                        'error': model_unavailable_error.get('error'),
+                        'error_code': model_unavailable_error.get('error_code'),
+                        'status_code': 503,
+                    }
                 return {"success": False, "error": "Failed to generate any questions"}
 
             total_ms = int((time.perf_counter() - generation_start) * 1000)
@@ -633,27 +642,9 @@ class ContentGenerationService:
             if file_info.processing_status not in ["COMPLETED", "PROCESSING"]:
                 return {"success": False, "error": f"File not processed yet. Status: {file_info.processing_status}"}
 
-            # Determine AI model type strictly based on user request first
-            from src.llm.model_manager import model_manager, ModelType
-            
-            # Default to System Setting if request is empty
-            final_model_enum = AIModelType.GEMINI
-            
-            if request.model_type:
-                if request.model_type.lower() == "gemini":
-                    final_model_enum = AIModelType.GEMINI
-                elif request.model_type.lower() in ["fayedark", "ollama", "local"]:
-                    final_model_enum = AIModelType.FAYEDARK
-            else:
-                # Fallback to system env if not specified
-                system_type = model_manager.get_model_type()
-                if system_type == ModelType.OLLAMA:
-                    final_model_enum = AIModelType.FAYEDARK
-                else:
-                    final_model_enum = AIModelType.GEMINI
-            
-            logger.info(f"Using AI model for flashcards: {final_model_enum.value} (Request: {request.model_type})")
-            model_type_str = "fayedark" if final_model_enum == AIModelType.FAYEDARK else "gemini"
+            final_model = model_manager.resolve_model(request.model_type)
+            logger.info(f"Using AI model for flashcards: {final_model.id} (Request: {request.model_type})")
+            model_type_str = final_model.id
             generation_start = time.perf_counter()
 
             retrieval_result = await hybrid_retrieval_service.retrieve_for_generation(
@@ -738,7 +729,7 @@ class ContentGenerationService:
                             batch_idx=bi,
                             num_batches=nb,
                             current_batch_size=bs,
-                            final_model_enum=final_model_enum,
+                            final_model_id=final_model.id,
                         )
                     })
 
@@ -747,6 +738,19 @@ class ContentGenerationService:
                 tasks=generation_tasks,
                 max_concurrency=generation_max_concurrency,
                 kind="flashcards",
+            )
+
+            model_unavailable_error = next(
+                (
+                    result
+                    for result in generation_results
+                    if result.get('error_code') in {
+                        'MODEL_UNAVAILABLE',
+                        'MODEL_INSUFFICIENT_VRAM',
+                        'MODEL_RUNTIME_ERROR',
+                    }
+                ),
+                None,
             )
 
             all_flashcards = []
@@ -760,6 +764,13 @@ class ContentGenerationService:
                 logger.info(f"Generated total {per_chunk_counts[chunk_idx]} flashcards for chunk {chunk_idx + 1}")
 
             if not all_flashcards:
+                if model_unavailable_error:
+                    return {
+                        'success': False,
+                        'error': model_unavailable_error.get('error'),
+                        'error_code': model_unavailable_error.get('error_code'),
+                        'status_code': 503,
+                    }
                 return {"success": False, "error": "Failed to generate any flashcards"}
 
             total_ms = int((time.perf_counter() - generation_start) * 1000)

@@ -195,6 +195,20 @@ export class AIProxyController {
         );
     }
 
+    @Get('models')
+    @ApiOperation({ summary: 'Lấy catalog model AI' })
+    async getModels(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/models',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     @Get('upload/:uploadId')
     @ApiOperation({ summary: 'Lấy chi tiết file đã upload' })
     async getUploadDetail(

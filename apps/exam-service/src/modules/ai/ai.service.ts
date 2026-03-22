@@ -4,6 +4,7 @@ import {
     NotFoundException,
     BadRequestException,
     InternalServerErrorException,
+    ServiceUnavailableException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { User } from '@prisma/client';
@@ -35,6 +36,30 @@ export class AIService {
     ) {
         this.aiServiceUrl =
             process.env.AI_SERVICE_URL || 'http://localhost:8000/api';
+    }
+
+    private getDefaultModelId(): string {
+        return 'qwen3_8b';
+    }
+
+    private normalizeModelUnavailableMessage(errorData: unknown): string | null {
+        const payload = errorData as
+            | { detail?: { code?: string; message?: string } | string; message?: string; error?: string }
+            | undefined;
+
+        const detail = payload?.detail;
+        if (detail && typeof detail === 'object' && 'code' in detail) {
+            const code = detail.code;
+            if (
+                code === 'MODEL_UNAVAILABLE' ||
+                code === 'MODEL_INSUFFICIENT_VRAM' ||
+                code === 'MODEL_RUNTIME_ERROR'
+            ) {
+                return 'Model hiện tại không khả dụng, thử model khác.';
+            }
+        }
+
+        return null;
     }
 
     private async clearAiServiceCache(userStorageId: string) {
@@ -489,7 +514,7 @@ export class AIService {
                 : `${this.aiServiceUrl}/generate/quiz`;
 
             this.logger.log(
-                `Generating ${count} ${isFlashcard ? 'flashcards' : 'quiz questions'} for ${userStorageId} with model: ${modelType || 'gemini'}...`
+                `Generating ${count} ${isFlashcard ? 'flashcards' : 'quiz questions'} for ${userStorageId} with model: ${modelType || this.getDefaultModelId()}...`
             );
 
             const generationStart = Date.now();
@@ -502,7 +527,7 @@ export class AIService {
                         [isFlashcard ? 'numFlashcards' : 'numQuestions']: count,
                         isNarrowSearch,
                         keyword,
-                        modelType: modelType || 'gemini',
+                        modelType: modelType || this.getDefaultModelId(),
                     },
                     { timeout: 3600000 } // 60 min timeout for generation
                 )
@@ -531,6 +556,9 @@ export class AIService {
             );
         } catch (error) {
             const errorDetails = error.response?.data || error.message;
+            const normalizedModelError = this.normalizeModelUnavailableMessage(
+                error.response?.data
+            );
             this.logger.error(
                 `Async processing failed for ${userStorageId}: ${JSON.stringify(errorDetails)}`,
                 error.stack
@@ -550,6 +578,29 @@ export class AIService {
                     `Failed to update status to FAILED: ${updateError.message}`
                 );
             }
+
+            if (normalizedModelError) {
+                throw new ServiceUnavailableException(normalizedModelError);
+            }
+        }
+    }
+
+    async getModelCatalog() {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/ai/models`, {
+                    timeout: 15000,
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(
+                `Failed to fetch model catalog: ${error.message}`,
+                error.stack
+            );
+            throw new InternalServerErrorException(
+                'Không thể tải danh sách model AI'
+            );
         }
     }
 
@@ -890,6 +941,16 @@ export class AIService {
             return {
                 jobId: upload.id,
                 status: normalizedStatus,
+                filename: upload.filename,
+                createdAt: upload.createdAt,
+            };
+        }
+
+        if (normalizedStatus === 'failed') {
+            return {
+                jobId: upload.id,
+                status: 'failed',
+                error: 'Model hiện tại không khả dụng, thử model khác.',
                 filename: upload.filename,
                 createdAt: upload.createdAt,
             };

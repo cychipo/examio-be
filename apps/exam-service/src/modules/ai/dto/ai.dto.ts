@@ -34,7 +34,7 @@ export const RegenerateSchema = z.object({
     quantityFlashcard: z.number().optional(),
     isNarrowSearch: z.boolean().optional(),
     keyword: z.string().optional(),
-    modelType: z.string().optional(), // 'gemini' or 'fayedark'
+    modelType: z.string().optional(), // model id tu registry
     // Legacy fields for backward compatibility
     outputType: z.enum(['quiz', 'flashcard']).optional(),
     count: z.number().optional(),
@@ -60,7 +60,7 @@ export class RegenerateDto extends createZodDto(RegenerateSchema) {
     keyword?: string;
 
     @ApiProperty({
-        description: 'Model AI: gemini hoặc fayedark',
+        description: 'Model AI id tu registry',
         required: false,
     })
     modelType?: string;
@@ -122,7 +122,7 @@ export class GenerateFromFileDto extends createZodDto(GenerateFromFileSchema) {
     keyword?: string;
 
     @ApiProperty({
-        description: 'Model AI: gemini hoặc fayedark',
+        description: 'Model AI id tu registry',
         required: false,
     })
     modelType?: string;

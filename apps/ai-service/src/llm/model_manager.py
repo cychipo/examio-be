@@ -1,44 +1,49 @@
 """
-Model Manager Module để quản lý các mô hình LLM (Stateless version).
-Chỉ tập trung vào Gemini và Ollama.
+Model Manager Module de quan ly da model generation/chat va embedding.
 """
-import os
-from typing import Dict, Any, Optional
-from dotenv import load_dotenv
-from enum import Enum
 
-# Load environment variables
 import logging
+import os
+from enum import Enum
+from typing import Any, Dict, Optional
+
+import httpx
+
+from dotenv import load_dotenv
+
+from src.llm.model_registry import (
+    get_default_generation_model,
+    get_embedding_model,
+    get_frontend_model_catalog,
+    resolve_generation_model,
+)
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 
 class ModelType(str, Enum):
-    """Internal model type enum"""
-    OLLAMA = "ollama"
-    GEMINI = "gemini"
+    OLLAMA = 'ollama'
+    GEMINI = 'gemini'
 
 
 class AIModelType(str, Enum):
-    """
-    AI Model types exposed to API.
-    - gemini: Google Gemini AI with key/model rotation
-    - fayedark: FayeDark AI using Ollama local LLM
-    """
-    GEMINI = "gemini"
-    FAYEDARK = "fayedark"
+    GEMINI = 'gemini'
+    QWEN3_8B = 'qwen3_8b'
+    QWEN3_32B = 'qwen3_32b'
+    GLM4_9B = 'glm4_9b'
+    GEMMA2_9B = 'gemma2_9b'
+    FAYEDARK = 'fayedark'
 
-    @classmethod
-    def to_model_type(cls, ai_model: "AIModelType") -> ModelType:
-        """Convert AIModelType to internal ModelType"""
-        if ai_model == cls.FAYEDARK:
-            return ModelType.OLLAMA
-        return ModelType.GEMINI
+
+class ModelUnavailableError(Exception):
+    def __init__(self, message: str, code: str = 'MODEL_UNAVAILABLE') -> None:
+        super().__init__(message)
+        self.code = code
+
 
 class ModelManager:
-    """Quản lý các mô hình LLM và tham số của chúng (Stateless)."""
-
     _instance = None
 
     def __new__(cls):
@@ -51,68 +56,168 @@ class ModelManager:
         if self._initialized:
             return
 
-        # Cache cho active model params
-        self._active_model_params = None
-
-        # Runtime model override
-        self._runtime_model_type = None
-        self._runtime_ollama_model = None
-        self._runtime_gemini_model = None
-
+        self._runtime_model_id: Optional[str] = None
+        self._runtime_model_type: Optional[ModelType] = None
+        self._runtime_ollama_model: Optional[str] = None
+        self._runtime_gemini_model: Optional[str] = None
         self._initialized = True
 
     def get_model_parameter(self, param_name: str, default_value: Any = None) -> Any:
-        """Lấy giá trị tham số từ environment hoặc mặc định."""
         env_map = {
-            "temperature": "DEFAULT_TEMPERATURE",
-            "max_tokens": "DEFAULT_MAX_TOKENS",
+            'temperature': 'DEFAULT_TEMPERATURE',
+            'max_tokens': 'DEFAULT_MAX_TOKENS',
         }
-
         env_key = env_map.get(param_name)
         if env_key:
             val = os.getenv(env_key)
             if val:
                 try:
-                    if param_name == "temperature": return float(val)
-                    if param_name == "max_tokens": return int(val)
-                except:
+                    if param_name == 'temperature':
+                        return float(val)
+                    if param_name == 'max_tokens':
+                        return int(val)
+                except Exception:
                     pass
-
         return default_value
 
-    def get_model_type(self) -> ModelType:
-        """Lấy loại model đang hoạt động."""
-        if self._runtime_model_type:
-            return self._runtime_model_type
-
-        model_type_str = os.getenv("DEFAULT_MODEL_TYPE", "gemini").lower()
-        if "ollama" in model_type_str:
-            return ModelType.OLLAMA
-        return ModelType.GEMINI
-
-    def get_ollama_info(self) -> Dict[str, Any]:
-        """Lấy cấu hình Ollama từ môi trường."""
-        return {
-            "model": self._runtime_ollama_model or os.getenv("RAG_MODEL", "qwen3:8b"),
-            "url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip('/')
-        }
-
-    def get_gemini_info(self) -> Dict[str, Any]:
-        """Lấy cấu hình Gemini."""
-        return {
-            "model": self._runtime_gemini_model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-        }
-
     def get_temperature(self) -> float:
-        val = self.get_model_parameter("temperature", 0.7)
+        val = self.get_model_parameter('temperature', 0.7)
         return float(val) if val is not None else 0.7
 
     def get_max_tokens(self) -> int:
-        val = self.get_model_parameter("max_tokens", 2048)
+        val = self.get_model_parameter('max_tokens', 2048)
         return int(val) if val is not None else 2048
+
+    def get_default_model_id(self) -> str:
+        env_model = os.getenv('DEFAULT_MODEL_ID')
+        if env_model:
+            try:
+                return resolve_generation_model(env_model).id
+            except ValueError:
+                logger.warning('Invalid DEFAULT_MODEL_ID=%s, using registry default', env_model)
+        return get_default_generation_model().id
+
+    def resolve_model(self, model_id: str | None = None):
+        runtime_model_id = model_id or self._runtime_model_id or self.get_default_model_id()
+        return resolve_generation_model(runtime_model_id)
+
+    def get_model_type(self) -> ModelType:
+        if self._runtime_model_type is not None:
+            return self._runtime_model_type
+        model = self.resolve_model()
+        return ModelType(model.provider)
+
+    def get_current_model_id(self) -> str:
+        return self.resolve_model().id
+
+    def get_ollama_info(self, model_id: str | None = None) -> Dict[str, Any]:
+        model = self.resolve_model(model_id)
+        return {
+            'model': self._runtime_ollama_model or model.runtime_model_name,
+            'url': os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/'),
+            'id': model.id,
+        }
+
+    def get_gemini_info(self, model_id: str | None = None) -> Dict[str, Any]:
+        model = self.resolve_model(model_id)
+        return {
+            'model': self._runtime_gemini_model or os.getenv('GEMINI_MODEL', 'gemini-2.5-flash'),
+            'id': model.id,
+            'runtime_model_name': model.runtime_model_name,
+        }
+
+    def get_embedding_info(self) -> Dict[str, Any]:
+        model = get_embedding_model()
+        return {
+            'id': model.id,
+            'model': model.runtime_model_name,
+            'url': os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/'),
+        }
+
+    async def check_generation_model_availability(
+        self,
+        model_id: str,
+    ) -> Dict[str, Any]:
+        model = self.resolve_model(model_id)
+
+        if model.provider == 'gemini':
+            return {
+                'modelId': model.id,
+                'available': True,
+                'reason': None,
+            }
+
+        ollama_info = self.get_ollama_info(model.id)
+        verify_ssl = os.getenv('OLLAMA_VERIFY_SSL', 'true').lower() == 'true'
+        tags_url = f"{ollama_info['url'].rstrip('/')}/api/tags"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0, verify=verify_ssl, trust_env=False) as client:
+                response = await client.get(tags_url)
+                response.raise_for_status()
+                data = response.json()
+                models = data.get('models', [])
+                installed_names = {
+                    item.get('name')
+                    for item in models
+                    if isinstance(item, dict) and item.get('name')
+                }
+
+            if model.runtime_model_name not in installed_names:
+                return {
+                    'modelId': model.id,
+                    'available': False,
+                    'reason': 'Model chua duoc cai dat tren runtime.',
+                }
+
+            return {
+                'modelId': model.id,
+                'available': True,
+                'reason': None,
+            }
+        except Exception as error:
+            normalized_error = self._normalize_model_error(error)
+            return {
+                'modelId': model.id,
+                'available': False,
+                'reason': str(normalized_error),
+                'code': normalized_error.code,
+            }
+
+    async def ensure_generation_model_ready(self, model_id: str) -> None:
+        availability = await self.check_generation_model_availability(model_id)
+        if not availability.get('available'):
+            raise ModelUnavailableError(
+                availability.get('reason') or 'Model is unavailable',
+                code=availability.get('code', 'MODEL_UNAVAILABLE'),
+            )
+
+    async def get_frontend_model_catalog(self) -> Dict[str, Any]:
+        availability_map: Dict[str, Dict[str, Any]] = {}
+        for model_id in [
+            'qwen3_8b',
+            'qwen3_32b',
+            'gemini',
+            'glm4_9b',
+            'gemma2_9b',
+        ]:
+            availability_map[model_id] = await self.check_generation_model_availability(
+                model_id
+            )
+
+        return get_frontend_model_catalog(availability=availability_map)
 
     def set_active_model_type(self, model_type: ModelType) -> None:
         self._runtime_model_type = model_type
+
+    def set_active_model_id(self, model_id: str) -> None:
+        model = resolve_generation_model(model_id)
+        self._runtime_model_id = model.id
+        self._runtime_model_type = ModelType(model.provider)
+        if model.provider == 'ollama':
+            self._runtime_ollama_model = model.runtime_model_name
+        else:
+            self._runtime_gemini_model = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 
     def set_ollama_model(self, ollama_model: str) -> None:
         self._runtime_ollama_model = ollama_model
@@ -123,258 +228,192 @@ class ModelManager:
         self.set_active_model_type(ModelType.GEMINI)
 
     async def generate_content(self, prompt: str) -> str:
-        """
-        Generate content using the active LLM model.
+        return await self.generate_content_with_model(prompt, self.get_current_model_id())
 
-        Args:
-            prompt: The prompt to send to the model
+    def _normalize_model_error(self, error: Exception) -> ModelUnavailableError:
+        message = str(error)
+        lower_message = message.lower()
 
-        Returns:
-            Generated text response
-        """
-        model_type = self.get_model_type()
+        if 'vram' in lower_message or 'memory' in lower_message or 'insufficient' in lower_message:
+            return ModelUnavailableError(message, code='MODEL_INSUFFICIENT_VRAM')
+        if 'not found' in lower_message or '404' in lower_message or 'pull' in lower_message:
+            return ModelUnavailableError(message, code='MODEL_UNAVAILABLE')
+        if 'connect' in lower_message or 'timeout' in lower_message:
+            return ModelUnavailableError(message, code='MODEL_UNAVAILABLE')
+        return ModelUnavailableError(message, code='MODEL_RUNTIME_ERROR')
 
-        if model_type == ModelType.GEMINI:
-            return await self._generate_with_gemini(prompt)
-        else:
-            return await self._generate_with_ollama(prompt)
-
-    async def _generate_with_gemini(self, prompt: str) -> str:
-        """Generate content using Gemini API with key/model rotation on quota errors"""
-        import google.generativeai as genai
+    async def _generate_with_gemini(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+    ) -> str:
         import asyncio
+        import google.generativeai as genai  # type: ignore[import-untyped]
         from google.api_core.exceptions import ResourceExhausted
 
-        logger.debug("Starting Gemini generation")
-
-        # Get API key(s)
-        api_keys_str = os.getenv("GEMINI_API_KEYS", "")
-        api_keys = [k.strip() for k in api_keys_str.split(",") if k.strip()]
+        api_keys_str = os.getenv('GEMINI_API_KEYS', '')
+        api_keys = [k.strip() for k in api_keys_str.split(',') if k.strip()]
 
         if not api_keys:
-            single_key = os.getenv("GEMINI_API_KEY", "")
+            single_key = os.getenv('GEMINI_API_KEY', '')
             if single_key:
                 api_keys = [single_key]
 
         if not api_keys:
-            logger.error("No Gemini API key configured")
-            raise ValueError("No Gemini API key configured")
+            raise ValueError('No Gemini API key configured')
 
-        logger.debug(f"Found {len(api_keys)} API keys")
+        model_names_str = os.getenv(
+            'GEMINI_MODEL_NAMES',
+            'gemini-2.5-flash-lite,gemini-2.5-flash,gemini-2.5-pro,gemini-3-pro-preview,gemini-2.0-flash,gemini-2.0-flash-001,gemini-2.0-flash-lite,gemini-2.0-flash-lite-001',
+        )
+        model_names = [m.strip() for m in model_names_str.split(',') if m.strip()]
 
-        # Get model names
-        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.5-flash-lite,gemini-2.5-flash,gemini-2.5-pro,gemini-3-pro-preview,gemini-2.0-flash,gemini-2.0-flash-001,gemini-2.0-flash-lite,gemini-2.0-flash-lite-001")
-        model_names = [m.strip() for m in model_names_str.split(",") if m.strip()]
-
-        logger.debug(f"Using models: {model_names}")
-
-        # If runtime model is set, use it first
         if self._runtime_gemini_model and self._runtime_gemini_model not in model_names:
             model_names.insert(0, self._runtime_gemini_model)
 
         last_error = None
-
-        # Try all combinations of API keys and models
-        for key_idx, api_key in enumerate(api_keys):
-            for model_idx, model_name in enumerate(model_names):
+        for api_key in api_keys:
+            for model_name in model_names:
                 try:
-                    logger.debug(f"Trying Gemini model: {model_name}")
+                    configure = getattr(genai, 'configure')
+                    generative_model_cls = getattr(genai, 'GenerativeModel')
+                    generation_types = getattr(genai, 'types')
 
-                    genai.configure(api_key=api_key)
-                    model = genai.GenerativeModel(model_name)
-
-                    logger.debug(f"Making API call to Gemini for model {model_name}")
-
-                    temperature_val = self.get_temperature()
-                    max_tokens_val = self.get_max_tokens()
-
-                    logger.debug(f"Using temperature: {temperature_val}, max_tokens: {max_tokens_val}")
-
-                    # Run blocking generation in thread pool to avoid blocking event loop
+                    configure(api_key=api_key)
+                    model = generative_model_cls(model_name)
                     loop = asyncio.get_running_loop()
+                    final_prompt = (
+                        f"{system_prompt}\n\nUSER TASK:\n{prompt}"
+                        if system_prompt
+                        else prompt
+                    )
                     response = await loop.run_in_executor(
                         None,
                         lambda: model.generate_content(
-                            prompt,
-                            generation_config=genai.types.GenerationConfig(
-                                temperature=temperature_val,
-                                max_output_tokens=max_tokens_val,
-                            )
-                        )
+                            final_prompt,
+                            generation_config=generation_types.GenerationConfig(
+                                temperature=self.get_temperature(),
+                                max_output_tokens=self.get_max_tokens(),
+                            ),
+                        ),
                     )
-
-                    logger.info(f"Successfully generated with Gemini model: {model_name}")
                     return response.text
-
-                except ResourceExhausted as e:
-                    logger.warning(f"Quota exceeded for key {key_idx + 1}, model {model_name}. Trying next...")
-                    last_error = e
+                except ResourceExhausted as error:
+                    last_error = error
                     continue
-                except Exception as e:
-                    logger.error(f"Error with key {key_idx + 1}, model {model_name}: {e}")
-                    logger.error(f"Exception type: {type(e)}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    last_error = e
+                except Exception as error:
+                    last_error = error
                     continue
 
-        # All combinations failed
-        logger.error(f"All combinations failed. Last error: {last_error}")
-        raise last_error or ValueError("All API keys and models exhausted")
+        raise last_error or ValueError('All API keys and models exhausted')
 
-    async def _generate_with_ollama(self, prompt: str, response_model: Any = None) -> str:
-        """Generate content using Ollama with retry logic and SSL options"""
-        import httpx
+    async def _generate_with_ollama(
+        self,
+        prompt: str,
+        model_id: str,
+        response_model: Any = None,
+        system_prompt: str | None = None,
+    ) -> str:
         import asyncio
+        import httpx
 
-        ollama_info = self.get_ollama_info()
+        ollama_info = self.get_ollama_info(model_id)
         base_url = ollama_info['url'].rstrip('/')
         url = f"{base_url}/api/generate"
-        
-        # SSL Verification option
-        verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
-        
-        max_retries = 3
-        last_error = None
+        verify_ssl = os.getenv('OLLAMA_VERIFY_SSL', 'true').lower() == 'true'
 
         payload = {
-            "model": ollama_info["model"],
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": self.get_temperature(),
-                "num_predict": self.get_max_tokens(),
-                "num_ctx": 4096,
-            }
+            'model': ollama_info['model'],
+            'prompt': prompt,
+            'stream': False,
+            'options': {
+                'temperature': self.get_temperature(),
+                'num_predict': self.get_max_tokens(),
+                'num_ctx': 4096,
+            },
         }
 
-        # Apply structured output format if provided
+        if system_prompt:
+            payload['system'] = system_prompt
+
         if response_model:
-             payload["format"] = response_model.model_json_schema()
-        
+            payload['format'] = response_model.model_json_schema()
+
+        max_retries = 3
+        last_error = None
         for attempt in range(max_retries):
             try:
-                # Use trust_env=False to ignore system proxies and connect directly
                 async with httpx.AsyncClient(timeout=3600.0, verify=verify_ssl, trust_env=False) as client:
-                    logger.debug(f"Calling Ollama (Attempt {attempt+1}): {url} with model {ollama_info['model']}")
-                    
                     response = await client.post(url, json=payload)
                     response.raise_for_status()
                     data = response.json()
-                    
-                    resp_text = data.get("response", "")
-                    if len(resp_text) < 200:
-                        logger.warning(f"Ollama response too short: {resp_text}")
-                        
-                    if os.getenv("LOG_OLLAMA_RESPONSE") == "true":
-                        logger.debug(f"Ollama response data: {data}")
-                        
-                    return resp_text
-            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-                last_error = e
+                    return data.get('response', '')
+            except httpx.HTTPStatusError as error:
+                last_error = error
+                if error.response.status_code >= 500 and attempt < max_retries - 1:
+                    if attempt == 0 and 'format' in payload:
+                        payload = {k: v for k, v in payload.items() if k != 'format'}
+                    await asyncio.sleep((attempt + 1) * 2)
+                    continue
+                raise self._normalize_model_error(error)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+                last_error = error
                 if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2
-                    logger.warning(f"Ollama connection failed to {url} (Attempt {attempt+1}/{max_retries}). Retrying in {wait_time}s...")
-                    await asyncio.sleep(wait_time)
-                else:
-                    logger.error(f"Failed to connect to Ollama at {url} after {max_retries} attempts: {e}")
-                    raise
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                status_code = e.response.status_code
-                try:
-                    response_body = e.response.text[:2000]  # Limit to first 2000 chars
-                except Exception:
-                    response_body = "(could not read response body)"
-                logger.error(
-                    f"[Ollama] HTTP {status_code} from {url} | "
-                    f"Attempt {attempt+1}/{max_retries} | "
-                    f"Model: {ollama_info['model']} | "
-                    f"Response body: {response_body}"
-                )
-                if status_code >= 500 and attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2
-                    logger.warning(f"Retrying in {wait_time}s...")
-                    # On first 500, try removing the 'format' field — some servers don't support structured output
-                    if attempt == 0 and "format" in payload:
-                        logger.warning("Removing 'format' field from payload and retrying (server may not support structured output)")
-                        payload = {k: v for k, v in payload.items() if k != "format"}
-                    await asyncio.sleep(wait_time)
-                else:
-                    raise
-            except Exception as e:
-                logger.error(f"Error calling Ollama at {url}: {e}")
-                raise
+                    await asyncio.sleep((attempt + 1) * 2)
+                    continue
+                raise self._normalize_model_error(error)
+            except Exception as error:
+                raise self._normalize_model_error(error)
 
-        raise last_error or Exception("Ollama generation failed")
+        raise self._normalize_model_error(last_error or Exception('Ollama generation failed'))
 
     async def generate_content_with_model(
         self,
         prompt: str,
-        ai_model_type: AIModelType = AIModelType.GEMINI,
-        response_model: Any = None
+        ai_model_type: AIModelType | str = AIModelType.GEMINI,
+        response_model: Any = None,
+        system_prompt: str | None = None,
     ) -> str:
-        """
-        Generate content using a specific AI model type (thread-safe).
+        model_id = ai_model_type.value if isinstance(ai_model_type, AIModelType) else str(ai_model_type)
+        model = self.resolve_model(model_id)
 
-        This method does NOT change global state, making it safe for concurrent requests.
+        await self.ensure_generation_model_ready(model.id)
 
-        Args:
-            prompt: The prompt to send to the model
-            ai_model_type: The AI model to use (gemini or fayedark)
-            response_model: Optional Pydantic model for structured output (Ollama only)
+        if model.provider == 'gemini':
+            return await self._generate_with_gemini(prompt, system_prompt=system_prompt)
+        return await self._generate_with_ollama(
+            prompt,
+            model.id,
+            response_model,
+            system_prompt=system_prompt,
+        )
 
-        Returns:
-            Generated text response
-        """
-        logger.info(f"Generating content with model type: {ai_model_type.value}")
-        model_type = AIModelType.to_model_type(ai_model_type)
-
-        if model_type == ModelType.GEMINI:
-            logger.info("Using Gemini model")
-            return await self._generate_with_gemini(prompt)
-        else:
-            logger.info("Using Ollama model")
-            return await self._generate_with_ollama(prompt, response_model)
-
-
-    def get_langchain_model(self, ai_model_type: AIModelType = AIModelType.GEMINI):
-        """
-        Get a LangChain Chat Model instance for structured output and advanced chains
-        """
+    def get_langchain_model(self, ai_model_type: AIModelType | str = AIModelType.GEMINI):
         from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_ollama import ChatOllama
-        
-        model_type = AIModelType.to_model_type(ai_model_type)
-        
-        if model_type == ModelType.GEMINI:
-            gemini_info = self.get_gemini_info()
-            api_keys_str = os.getenv("GEMINI_API_KEYS", "")
-            # Pick first available key for now (rotation handled inside ChatGoogleGenerativeAI if configured, but here we pick one)
-            api_key = api_keys_str.split(",")[0].strip() if api_keys_str else os.getenv("GEMINI_API_KEY")
-            
+
+        model_id = ai_model_type.value if isinstance(ai_model_type, AIModelType) else str(ai_model_type)
+        model = self.resolve_model(model_id)
+
+        if model.provider == 'gemini':
+            gemini_info = self.get_gemini_info(model.id)
+            api_keys_str = os.getenv('GEMINI_API_KEYS', '')
+            api_key = api_keys_str.split(',')[0].strip() if api_keys_str else os.getenv('GEMINI_API_KEY')
             return ChatGoogleGenerativeAI(
-                model=gemini_info["model"],
+                model=gemini_info['model'],
                 google_api_key=api_key,
                 temperature=self.get_temperature(),
                 max_output_tokens=self.get_max_tokens(),
-                convert_system_message_to_human=True
-            )
-        else:
-            ollama_info = self.get_ollama_info()
-            verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
-            # Using trust_env=False equivalent for LangChain is implicit if base_url is local or correctly routed,
-            # but ChatOllama uses httpx under the hood. Currently no direct way to pass client kwargs in constructor easily
-            # without custom client, but standard usually works if URL is correct.
-            
-            return ChatOllama(
-                base_url=ollama_info["url"],
-                model=ollama_info["model"],
-                temperature=self.get_temperature(),
-                # num_predict=self.get_max_tokens(), # LangChain uses different param mapping
-                format="json", # Force JSON mode natively
+                convert_system_message_to_human=True,
             )
 
+        ollama_info = self.get_ollama_info(model.id)
+        return ChatOllama(
+            base_url=ollama_info['url'],
+            model=ollama_info['model'],
+            temperature=self.get_temperature(),
+            format='json' if model.supports_structured_output else '',
+        )
 
-# Singleton instance
+
 model_manager = ModelManager()

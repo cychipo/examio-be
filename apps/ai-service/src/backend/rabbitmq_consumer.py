@@ -83,10 +83,11 @@ class RabbitMQConsumer:
                 quantity_flashcard = payload.get("quantityFlashcard", 10)
                 
                 # Model type override from payload or system default
-                from src.llm.model_manager import model_manager, ModelType
-                system_model_type = model_manager.get_model_type()
-                default_model = "fayedark" if system_model_type == ModelType.OLLAMA else "gemini"
-                model_type = payload.get("modelType", default_model)
+                from src.llm.model_manager import model_manager
+
+                model_type = model_manager.resolve_model(
+                    payload.get("modelType")
+                ).id
 
                 if not user_storage_id:
                     logger.error("Missing userStorageId in message")
@@ -140,7 +141,7 @@ class RabbitMQConsumer:
         type_result: int,
         quantity_quizz: int,
         quantity_flashcard: int,
-        model_type: str = "gemini"
+        model_type: str = "qwen3_8b"
     ):
         """
         Auto-generate quiz or flashcard after OCR completes.
