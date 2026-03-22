@@ -158,6 +158,12 @@ The migration container runs automatically on startup. Check its logs:
 docker compose logs migration
 ```
 
+Lưu ý quan trọng:
+- các service ứng dụng (`gateway`, `auth`, `exam`, `finance`, `r2`, `ai`) hiện phụ thuộc vào container `migration` với điều kiện `service_completed_successfully`;
+- nghĩa là khi bạn `docker compose build && docker compose up -d`, migration sẽ chạy trước, sau đó các service mới khởi động;
+- migration hiện dùng `prisma migrate deploy`, đây là cơ chế áp dụng migration an toàn theo migration files đã commit, không phải `prisma db push`, nên không chủ động làm mất dữ liệu cũ;
+- tuy vậy, nếu bạn thay đổi schema mới, hãy tạo migration chuẩn trước khi deploy để tránh lệch schema giữa code và DB.
+
 ## Container Ports
 
 External ports exposed to host:

@@ -320,8 +320,16 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
-        res.redirect(`${frontendUrl}/`);
+        const frontendUrl = (
+            process.env.FRONTEND_URL || 'http://localhost:3001'
+        ).replace(/\/+$/, '');
+
+        const role = req.user.user?.role;
+        const targetPath =
+            role === 'teacher'
+                ? '/k/dashboard-teacher'
+                : '/k/dashboard-student';
+        res.redirect(`${frontendUrl}${targetPath}`);
     }
 
     @Get('facebook')
@@ -351,8 +359,16 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
-        res.redirect(`${frontendUrl}/`);
+        const frontendUrl = (
+            process.env.FRONTEND_URL || 'http://localhost:3001'
+        ).replace(/\/+$/, '');
+
+        const role = req.user.user?.role;
+        const targetPath =
+            role === 'teacher'
+                ? '/k/dashboard-teacher'
+                : '/k/dashboard-student';
+        res.redirect(`${frontendUrl}${targetPath}`);
     }
 
     @Get('github')
@@ -382,8 +398,16 @@ export class AuthController {
             res.cookie('session_id', sessionId, cookieConfig);
         }
 
-        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3001').replace(/\/+$/, '');
-        res.redirect(`${frontendUrl}/`);
+        const frontendUrl = (
+            process.env.FRONTEND_URL || 'http://localhost:3001'
+        ).replace(/\/+$/, '');
+
+        const role = req.user.user?.role;
+        const targetPath =
+            role === 'teacher'
+                ? '/k/dashboard-teacher'
+                : '/k/dashboard-student';
+        res.redirect(`${frontendUrl}${targetPath}`);
     }
 
     @Get('me')

@@ -260,6 +260,63 @@ Then you can run the application with various options:
 ./run.sh --help
 ```
 
+## Benchmark Hybrid GraphRAG
+
+Bạn có thể benchmark nhanh sự khác nhau giữa `vector` và `hybrid` retrieval trên một tài liệu đã OCR bằng script sau:
+
+```bash
+cd examio-be/apps/ai-service
+./venv/bin/python src/backend/scripts/benchmark_hybrid_retrieval.py \
+  --user-storage-id <userStorageId> \
+  --query "Tóm tắt nội dung chính" \
+  --query "Các khái niệm quan trọng là gì?" \
+  --model-type gemini \
+  --top-k 8 \
+  --output benchmark-result.json
+```
+
+Script sẽ:
+- chạy cùng một query với `AI_RETRIEVAL_MODE=vector` và `AI_RETRIEVAL_MODE=hybrid`;
+- in ra số chunk được chọn, seed chunks, độ dài context, page range, chunk ids;
+- ghi JSON kết quả nếu truyền `--output`.
+
+Tiêu chí bạn nên so sánh:
+- `selected_chunks`: hybrid có gom được cụm chunk liên quan hơn không;
+- `pages`: hybrid có phủ được các trang liên quan tốt hơn không;
+- `context_length`: context có đầy đủ hơn nhưng vẫn không quá dài không;
+- `elapsed_ms`: độ trễ có tăng trong mức chấp nhận được không.
+
+Để benchmark retrieval cho flow generate quiz/flashcard, dùng script sau:
+
+```bash
+cd examio-be/apps/ai-service
+./venv/bin/python src/backend/scripts/benchmark_generation_modes.py \
+  --user-storage-id <userStorageId> \
+  --generation-type quiz \
+  --requested-items 12 \
+  --keyword "kiến trúc hệ thống" \
+  --model-type gemini \
+  --output benchmark-generation.json
+```
+
+Script này không gọi LLM generate toàn bộ nội dung, mà tập trung đo:
+- retrieval mode nào chọn được source chunks tốt hơn cho generation;
+- phân phối số item trên các chunk (`distribution`) có hợp lý không;
+- narrow search có được graph mở rộng tốt hơn không.
+
+Nếu muốn xem graph stats của một file đã OCR:
+
+```bash
+curl http://localhost:8000/api/ai/graph-stats/<userStorageId>
+```
+
+Endpoint này trả về:
+- số chunks của file;
+- số nodes/edges trong graph;
+- số communities;
+- artifact path;
+- graph đang có trong RAM hay chỉ nằm ở persisted artifact.
+
 ### Run Script Features
 
 - **Flexible Configuration**: Easily specify which components to run

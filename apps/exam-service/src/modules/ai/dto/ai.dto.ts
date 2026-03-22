@@ -28,7 +28,7 @@ export class UploadFileDto extends createZodDto(UploadFileSchema) {
 }
 
 export const RegenerateSchema = z.object({
-    // FE sends typeResult: 0 = flashcard, 1 = quiz
+    // FE sends typeResult: 1 = quiz, 2 = flashcard
     typeResult: z.number().optional(),
     quantityQuizz: z.number().optional(),
     quantityFlashcard: z.number().optional(),
@@ -42,7 +42,7 @@ export const RegenerateSchema = z.object({
 
 export class RegenerateDto extends createZodDto(RegenerateSchema) {
     @ApiProperty({
-        description: 'Loại output: 0 = flashcard, 1 = quiz',
+        description: 'Loại output: 1 = quiz, 2 = flashcard',
         required: false,
     })
     typeResult?: number;
@@ -93,9 +93,18 @@ export class UploadImageDto extends createZodDto(UploadImageSchema) {
 }
 
 // DTO for generate-from-file endpoint (multipart form data)
-export class GenerateFromFileDto {
+export const GenerateFromFileSchema = z.object({
+    typeResult: z.string(),
+    quantityQuizz: z.string().optional(),
+    quantityFlashcard: z.string().optional(),
+    isNarrowSearch: z.string().optional(), // Form data sends boolean as string 'true'/'false'
+    keyword: z.string().optional(),
+    modelType: z.string().optional(),
+});
+
+export class GenerateFromFileDto extends createZodDto(GenerateFromFileSchema) {
     @ApiProperty({ description: 'Loại output: 0 = flashcard, 1 = quiz' })
-    typeResult: string; // Comes as string from form-data
+    typeResult: string;
 
     @ApiProperty({ description: 'Số câu hỏi quiz', required: false })
     quantityQuizz?: string;
@@ -103,7 +112,10 @@ export class GenerateFromFileDto {
     @ApiProperty({ description: 'Số flashcard', required: false })
     quantityFlashcard?: string;
 
-    @ApiProperty({ description: 'Tìm kiếm hẹp', required: false })
+    @ApiProperty({
+        description: 'Tìm kiếm hẹp (true/false string)',
+        required: false,
+    })
     isNarrowSearch?: string;
 
     @ApiProperty({ description: 'Từ khóa tìm kiếm', required: false })

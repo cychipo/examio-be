@@ -43,46 +43,28 @@ export class AuthProxyController {
             body,
             headers: this.extractHeaders(req),
         });
-        if (result.token) {
-            const cookieOptions = {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax' as const,
-                maxAge: 30 * 24 * 60 * 60 * 1000,
-            };
-            // Set both cookies for compatibility
-            res.cookie('token', result.token, cookieOptions);
-            res.cookie('accessToken', result.token, cookieOptions);
-        }
-        if (result.sessionId) {
-            res.cookie('session_id', result.sessionId, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax' as const,
-                maxAge: 30 * 24 * 60 * 60 * 1000,
-            });
-        }
-        if (result.refreshToken) {
-            res.cookie('refreshToken', result.refreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax' as const,
-                maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-            });
-        }
+
+        this.setAuthCookies(res, result, req);
         return res.json(result);
     }
 
     @Post('register')
     @ApiOperation({ summary: 'Đăng ký tài khoản mới' })
     @ApiResponse({ status: 201, description: 'Đăng ký thành công' })
-    async register(@Body() body: any, @Req() req: Request) {
-        return this.proxyService.forward('auth', {
+    async register(
+        @Body() body: any,
+        @Req() req: Request,
+        @Res() res: Response
+    ) {
+        const result = await this.proxyService.forward('auth', {
             method: 'POST',
             path: '/api/v1/auth/register',
             body,
             headers: this.extractHeaders(req),
         });
+
+        this.setAuthCookies(res, result, req);
+        return res.json(result);
     }
 
     @Post('send-code-reset-password')
@@ -219,10 +201,22 @@ export class AuthProxyController {
             },
             this.extractToken(req)
         );
-        res.clearCookie('accessToken');
-        res.clearCookie('token');
-        res.clearCookie('session_id');
-        res.clearCookie('refreshToken');
+        const cookieOptions: any = {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: (process.env.NODE_ENV === 'production'
+                ? 'none'
+                : 'lax') as any,
+            path: '/',
+        };
+        if (process.env.NODE_ENV === 'production') {
+            cookieOptions.domain = '.fayedark.com';
+        }
+
+        res.clearCookie('accessToken', cookieOptions);
+        res.clearCookie('token', cookieOptions);
+        res.clearCookie('session_id', cookieOptions);
+        res.clearCookie('refreshToken', cookieOptions);
         return res.json(result);
     }
 
@@ -304,6 +298,40 @@ export class AuthProxyController {
         if (authHeader?.startsWith('Bearer ')) return authHeader.substring(7);
         // Check both cookie names for compatibility
         return req.cookies?.token || req.cookies?.accessToken || '';
+    }
+
+    private setAuthCookies(res: Response, result: any, req: Request): void {
+        if (!result || !result.token) return;
+
+        const isProduction = process.env.NODE_ENV === 'production';
+        const feOrigin = req.headers.origin;
+        const isLocalFE =
+            feOrigin?.includes('localhost') || feOrigin?.includes('127.0.0.1');
+
+        const cookieOptions: any = {
+            httpOnly: true,
+            secure: isProduction && !isLocalFE,
+            sameSite: isProduction && !isLocalFE ? 'none' : 'lax',
+            maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+            path: '/',
+        };
+
+        // BẮT BUỘC: Set domain cho production để share giữa subdomains
+        if (isProduction && !isLocalFE) {
+            cookieOptions.domain = '.fayedark.com';
+        }
+
+        // Set token cookies
+        res.cookie('token', result.token, cookieOptions);
+        res.cookie('accessToken', result.token, cookieOptions);
+
+        if (result.sessionId) {
+            res.cookie('session_id', result.sessionId, cookieOptions);
+        }
+
+        if (result.refreshToken) {
+            res.cookie('refreshToken', result.refreshToken, cookieOptions);
+        }
     }
 
     private handleOAuthCallback(result: any, res: Response): void {

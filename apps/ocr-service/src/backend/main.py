@@ -17,19 +17,14 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# Try to import fallback OCR services
-try:
-    # Add ai-service src to path if needed to reuse PdfOcrService
-    AI_SERVICE_SRC = Path(__file__).parent.parent.parent.parent / "ai-service" / "src"
-    if AI_SERVICE_SRC.exists():
-        sys.path.append(str(AI_SERVICE_SRC))
+# Fallback OCR services
+import pytesseract
+from pdf2image import convert_from_path
+from pypdf import PdfReader
+import io
 
-    from backend.services.pdf_ocr_service import pdf_ocr_service
-    FALLBACK_AVAILABLE = True
-    logger_msg = "Fallback OCR (Tesseract) is available"
-except ImportError:
-    FALLBACK_AVAILABLE = False
-    logger_msg = "Fallback OCR (Tesseract) is NOT available"
+FALLBACK_AVAILABLE = True
+logger_msg = "Built-in Tesseract OCR fallback is available"
 
 # Configure logging
 logging.basicConfig(
@@ -39,7 +34,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info(logger_msg)
 
-# ... (FastAPI setup remains same)
+# FastAPI App Setup
+app = FastAPI(
+    title="OCR Service",
+    description="OCR microservice using olmocr with Tesseract fallback",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Create upload and output directories
+UPLOAD_DIR = Path("/app/apps/ocr-service/uploads")
+OUTPUT_DIR = Path("/app/apps/ocr-service/outputs")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def run_olmocr(pdf_path: Path, output_dir: Path) -> tuple[Path, int]:
     """
@@ -52,10 +67,24 @@ def run_olmocr(pdf_path: Path, output_dir: Path) -> tuple[Path, int]:
         # We try to run it with --help first to see if it exists
         check_cmd = ["python", "-m", "olmocr.pipeline", "--help"]
         try:
-            subprocess.run(check_cmd, capture_output=True, check=True, timeout=10)
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-            logger.warning("olmocr is not found or not working correctly. Failing over.")
-            raise RuntimeError("olmocr not available")
+            result = subprocess.run(check_cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                logger.error(f"olmocr check failed with return code: {result.returncode}")
+                logger.error(f"olmocr STDOUT: {result.stdout}")
+                logger.error(f"olmocr STDERR: {result.stderr}")
+                raise RuntimeError(f"olmocr check failed: {result.stderr}")
+            logger.info("olmocr is available and working")
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"olmocr check timed out after 30s: {e}")
+            raise RuntimeError("olmocr check timed out")
+        except FileNotFoundError as e:
+            logger.error(f"olmocr module not found: {e}")
+            raise RuntimeError(f"olmocr module not found: {e}")
+        except Exception as e:
+            logger.error(f"olmocr check failed with exception: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise RuntimeError(f"olmocr not available: {e}")
 
         cmd = [
             "python",
@@ -117,29 +146,30 @@ def run_olmocr(pdf_path: Path, output_dir: Path) -> tuple[Path, int]:
 
 def run_fallback_ocr(pdf_path: Path) -> Tuple[str, int]:
     """
-    Fallback OCR method using Tesseract
+    Fallback OCR method using Tesseract directly
     """
-    if not FALLBACK_AVAILABLE:
-        raise RuntimeError("Fallback OCR service not available")
-
-    logger.info(f"Running fallback OCR for: {pdf_path}")
+    logger.info(f"Running fallback OCR (Tesseract) for: {pdf_path}")
     try:
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
-
-        # Use PdfOcrService from ai-service
-        text = pdf_ocr_service.extract_text_from_pdf(pdf_bytes)
-
-        # Try to get page count
-        from pypdf import PdfReader
-        import io
-        reader = PdfReader(io.BytesIO(pdf_bytes))
+        # Get page count
+        reader = PdfReader(str(pdf_path))
         page_count = len(reader.pages)
-
+        
+        # Convert PDF to images
+        images = convert_from_path(str(pdf_path))
+        
+        full_text = []
+        for i, image in enumerate(images):
+            logger.info(f"Processing page {i+1}/{page_count} with Tesseract")
+            # Run OCR on each page
+            text = pytesseract.image_to_string(image, lang='vie+eng')
+            full_text.append(f"## Trang {i+1}\n\n{text}")
+            
         logger.info(f"Fallback OCR completed successfully ({page_count} pages)")
-        return text, page_count
+        return "\n\n".join(full_text), page_count
     except Exception as e:
         logger.error(f"Fallback OCR failed: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise RuntimeError(f"Fallback OCR failed: {str(e)}")
 
 
@@ -244,8 +274,9 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8003))
     logger.info(f"Starting OCR Service Backend on port {port}")
     uvicorn.run(
-        "main:app",
-        host="127.0.0.1",
+        "src.backend.main:app",
+        host="0.0.0.0",
         port=port,
-        reload=True
+        reload=True,
+        reload_dirs=["/app"]
     )

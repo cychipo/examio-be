@@ -8,7 +8,10 @@ from dotenv import load_dotenv
 from enum import Enum
 
 # Load environment variables
+import logging
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class ModelType(str, Enum):
@@ -88,10 +91,10 @@ class ModelManager:
         return ModelType.GEMINI
 
     def get_ollama_info(self) -> Dict[str, Any]:
-        """Lấy cấu hình Ollama."""
+        """Lấy cấu hình Ollama từ môi trường."""
         return {
             "model": self._runtime_ollama_model or os.getenv("RAG_MODEL", "qwen3:8b"),
-            "url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            "url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip('/')
         }
 
     def get_gemini_info(self) -> Dict[str, Any]:
@@ -139,12 +142,10 @@ class ModelManager:
     async def _generate_with_gemini(self, prompt: str) -> str:
         """Generate content using Gemini API with key/model rotation on quota errors"""
         import google.generativeai as genai
+        import asyncio
         from google.api_core.exceptions import ResourceExhausted
-        import logging
 
-        logger = logging.getLogger(__name__)
-
-        logger.info("Starting Gemini generation")
+        logger.debug("Starting Gemini generation")
 
         # Get API key(s)
         api_keys_str = os.getenv("GEMINI_API_KEYS", "")
@@ -159,13 +160,13 @@ class ModelManager:
             logger.error("No Gemini API key configured")
             raise ValueError("No Gemini API key configured")
 
-        logger.info(f"Found {len(api_keys)} API keys")
+        logger.debug(f"Found {len(api_keys)} API keys")
 
         # Get model names
-        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.0-flash,gemini-2.5-flash-lite,gemini-1.5-flash")
+        model_names_str = os.getenv("GEMINI_MODEL_NAMES", "gemini-2.5-flash-lite,gemini-2.5-flash,gemini-2.5-pro,gemini-3-pro-preview,gemini-2.0-flash,gemini-2.0-flash-001,gemini-2.0-flash-lite,gemini-2.0-flash-lite-001")
         model_names = [m.strip() for m in model_names_str.split(",") if m.strip()]
 
-        logger.info(f"Using models: {model_names}")
+        logger.debug(f"Using models: {model_names}")
 
         # If runtime model is set, use it first
         if self._runtime_gemini_model and self._runtime_gemini_model not in model_names:
@@ -177,27 +178,32 @@ class ModelManager:
         for key_idx, api_key in enumerate(api_keys):
             for model_idx, model_name in enumerate(model_names):
                 try:
-                    logger.info(f"Trying key {key_idx + 1}/{len(api_keys)}, model: {model_name}")
+                    logger.debug(f"Trying Gemini model: {model_name}")
 
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel(model_name)
 
-                    logger.info(f"Making API call to Gemini for model {model_name}")
+                    logger.debug(f"Making API call to Gemini for model {model_name}")
 
                     temperature_val = self.get_temperature()
                     max_tokens_val = self.get_max_tokens()
 
-                    logger.info(f"Using temperature: {temperature_val}, max_tokens: {max_tokens_val}")
+                    logger.debug(f"Using temperature: {temperature_val}, max_tokens: {max_tokens_val}")
 
-                    response = model.generate_content(
-                        prompt,
-                        generation_config=genai.types.GenerationConfig(
-                            temperature=temperature_val,
-                            max_output_tokens=max_tokens_val,
+                    # Run blocking generation in thread pool to avoid blocking event loop
+                    loop = asyncio.get_running_loop()
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: model.generate_content(
+                            prompt,
+                            generation_config=genai.types.GenerationConfig(
+                                temperature=temperature_val,
+                                max_output_tokens=max_tokens_val,
+                            )
                         )
                     )
 
-                    logger.info(f"Successfully generated with key {key_idx + 1}, model: {model_name}")
+                    logger.info(f"Successfully generated with Gemini model: {model_name}")
                     return response.text
 
                 except ResourceExhausted as e:
@@ -216,31 +222,97 @@ class ModelManager:
         logger.error(f"All combinations failed. Last error: {last_error}")
         raise last_error or ValueError("All API keys and models exhausted")
 
-    async def _generate_with_ollama(self, prompt: str) -> str:
-        """Generate content using Ollama"""
+    async def _generate_with_ollama(self, prompt: str, response_model: Any = None) -> str:
+        """Generate content using Ollama with retry logic and SSL options"""
         import httpx
+        import asyncio
 
         ollama_info = self.get_ollama_info()
-        url = f"{ollama_info['url']}/api/generate"
+        base_url = ollama_info['url'].rstrip('/')
+        url = f"{base_url}/api/generate"
+        
+        # SSL Verification option
+        verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
+        
+        max_retries = 3
+        last_error = None
 
-        async with httpx.AsyncClient(timeout=3600.0) as client:  # 60 minutes for large quiz generation
-            response = await client.post(url, json={
-                "model": ollama_info["model"],
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": self.get_temperature(),
-                    "num_predict": self.get_max_tokens(),
-                }
-            })
-            response.raise_for_status()
-            data = response.json()
-            return data.get("response", "")
+        payload = {
+            "model": ollama_info["model"],
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": self.get_temperature(),
+                "num_predict": self.get_max_tokens(),
+                "num_ctx": 4096,
+            }
+        }
+
+        # Apply structured output format if provided
+        if response_model:
+             payload["format"] = response_model.model_json_schema()
+        
+        for attempt in range(max_retries):
+            try:
+                # Use trust_env=False to ignore system proxies and connect directly
+                async with httpx.AsyncClient(timeout=3600.0, verify=verify_ssl, trust_env=False) as client:
+                    logger.debug(f"Calling Ollama (Attempt {attempt+1}): {url} with model {ollama_info['model']}")
+                    
+                    response = await client.post(url, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    resp_text = data.get("response", "")
+                    if len(resp_text) < 200:
+                        logger.warning(f"Ollama response too short: {resp_text}")
+                        
+                    if os.getenv("LOG_OLLAMA_RESPONSE") == "true":
+                        logger.debug(f"Ollama response data: {data}")
+                        
+                    return resp_text
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2
+                    logger.warning(f"Ollama connection failed to {url} (Attempt {attempt+1}/{max_retries}). Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Failed to connect to Ollama at {url} after {max_retries} attempts: {e}")
+                    raise
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                status_code = e.response.status_code
+                try:
+                    response_body = e.response.text[:2000]  # Limit to first 2000 chars
+                except Exception:
+                    response_body = "(could not read response body)"
+                logger.error(
+                    f"[Ollama] HTTP {status_code} from {url} | "
+                    f"Attempt {attempt+1}/{max_retries} | "
+                    f"Model: {ollama_info['model']} | "
+                    f"Response body: {response_body}"
+                )
+                if status_code >= 500 and attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2
+                    logger.warning(f"Retrying in {wait_time}s...")
+                    # On first 500, try removing the 'format' field — some servers don't support structured output
+                    if attempt == 0 and "format" in payload:
+                        logger.warning("Removing 'format' field from payload and retrying (server may not support structured output)")
+                        payload = {k: v for k, v in payload.items() if k != "format"}
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"Error calling Ollama at {url}: {e}")
+                raise
+
+        raise last_error or Exception("Ollama generation failed")
 
     async def generate_content_with_model(
         self,
         prompt: str,
-        ai_model_type: AIModelType = AIModelType.GEMINI
+        ai_model_type: AIModelType = AIModelType.GEMINI,
+        response_model: Any = None
     ) -> str:
         """
         Generate content using a specific AI model type (thread-safe).
@@ -250,13 +322,11 @@ class ModelManager:
         Args:
             prompt: The prompt to send to the model
             ai_model_type: The AI model to use (gemini or fayedark)
+            response_model: Optional Pydantic model for structured output (Ollama only)
 
         Returns:
             Generated text response
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         logger.info(f"Generating content with model type: {ai_model_type.value}")
         model_type = AIModelType.to_model_type(ai_model_type)
 
@@ -265,7 +335,45 @@ class ModelManager:
             return await self._generate_with_gemini(prompt)
         else:
             logger.info("Using Ollama model")
-            return await self._generate_with_ollama(prompt)
+            return await self._generate_with_ollama(prompt, response_model)
+
+
+    def get_langchain_model(self, ai_model_type: AIModelType = AIModelType.GEMINI):
+        """
+        Get a LangChain Chat Model instance for structured output and advanced chains
+        """
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_ollama import ChatOllama
+        
+        model_type = AIModelType.to_model_type(ai_model_type)
+        
+        if model_type == ModelType.GEMINI:
+            gemini_info = self.get_gemini_info()
+            api_keys_str = os.getenv("GEMINI_API_KEYS", "")
+            # Pick first available key for now (rotation handled inside ChatGoogleGenerativeAI if configured, but here we pick one)
+            api_key = api_keys_str.split(",")[0].strip() if api_keys_str else os.getenv("GEMINI_API_KEY")
+            
+            return ChatGoogleGenerativeAI(
+                model=gemini_info["model"],
+                google_api_key=api_key,
+                temperature=self.get_temperature(),
+                max_output_tokens=self.get_max_tokens(),
+                convert_system_message_to_human=True
+            )
+        else:
+            ollama_info = self.get_ollama_info()
+            verify_ssl = os.getenv("OLLAMA_VERIFY_SSL", "true").lower() == "true"
+            # Using trust_env=False equivalent for LangChain is implicit if base_url is local or correctly routed,
+            # but ChatOllama uses httpx under the hood. Currently no direct way to pass client kwargs in constructor easily
+            # without custom client, but standard usually works if URL is correct.
+            
+            return ChatOllama(
+                base_url=ollama_info["url"],
+                model=ollama_info["model"],
+                temperature=self.get_temperature(),
+                # num_predict=self.get_max_tokens(), # LangChain uses different param mapping
+                format="json", # Force JSON mode natively
+            )
 
 
 # Singleton instance

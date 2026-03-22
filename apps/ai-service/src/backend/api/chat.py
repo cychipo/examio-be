@@ -2,21 +2,18 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import List, Dict, Optional, Any, Literal
-from enum import Enum
+from typing import List, Dict, Optional, Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.rag.simple_chat_agent import SimpleChatAgent
 from src.rag.retriever import create_in_memory_retriever
-from src.backend.services.ocr_service import ocr_service
-from src.rag.vector_store_pg import get_pg_vector_store
-from src.llm.model_manager import AIModelType
+from src.backend.services.hybrid_retrieval_service import hybrid_retrieval_service
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +41,16 @@ class ChatRequest(BaseModel):
         description="Custom system prompt for the AI model"
     )
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 class ChatResponse(BaseModel):
     answer: str
     sources: List[Dict[str, Any]] = []
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+def _ensure_text(value: Any) -> str:
+    return str(value)
 
 # ==================== Helper Functions ====================
 
@@ -86,23 +86,37 @@ async def query_ai(request: ChatRequest):
 
         retriever = None
         sources = []
+        pre_context = None
 
         # 1. Setup RAG if ID provided
         if user_storage_id:
-            chunks = await ocr_service.get_document_chunks(user_storage_id)
-            if chunks:
-                combined_content = "\n\n".join([c.content for c in chunks])
-                retriever, _ = create_in_memory_retriever(combined_content)
+            retrieval_result = await hybrid_retrieval_service.retrieve_for_chat(
+                user_storage_id=user_storage_id,
+                query=query,
+                model_type=model_type,
+            )
+            logger.info(
+                "[AI_RETRIEVAL] mode=%s user_storage_id=%s selected=%s total=%s chat=query",
+                retrieval_result.retrieval_mode,
+                user_storage_id,
+                retrieval_result.metadata.get("selected_chunks"),
+                retrieval_result.metadata.get("total_chunks"),
+            )
+            pre_context = retrieval_result.combined_context
+            sources = retrieval_result.sources
 
-                # Get sources for display
-                pg_store = get_pg_vector_store()
-                similar_docs = await pg_store.search_similar([user_storage_id], query, top_k=3)
-                sources = [{"content": doc.content[:300], "page": doc.page_range} for doc in similar_docs]
+            if pre_context:
+                retriever, _ = create_in_memory_retriever(pre_context)
 
         # 2. Use Agent to answer with specified model type
         # Note: In a stateless model, we pass history to the agent if supported,
         # or we prefix the query with context.
-        agent = SimpleChatAgent(custom_retriever=retriever, model_type=model_type, system_prompt=None)
+        agent = SimpleChatAgent(
+            custom_retriever=retriever,
+            model_type=model_type,
+            pre_context=pre_context,
+            system_prompt=None,
+        )
 
         # If we have history, we should ideally use it.
         # For SimpleChatAgent, we might need to modify it to accept history or just use a generic LangChain chain.
@@ -145,31 +159,44 @@ async def stream_ai(request: ChatRequest):
         # Use PostgreSQL vector search instead of in-memory FAISS
         # This uses pre-computed embeddings from database (no re-embedding!)
         pre_context = None
+        sources: List[Dict[str, Any]] = []
         if user_storage_id:
-            pg_store = get_pg_vector_store()
-            pre_context = await pg_store.search_and_combine(
-                [user_storage_id],
-                query,
+            retrieval_result = await hybrid_retrieval_service.retrieve_for_chat(
+                user_storage_id=user_storage_id,
+                query=query,
+                model_type=model_type,
                 top_k=8,
-                max_content_length=8000
+                max_content_length=8000,
             )
+            logger.info(
+                "[AI_RETRIEVAL] mode=%s user_storage_id=%s selected=%s total=%s chat=stream",
+                retrieval_result.retrieval_mode,
+                user_storage_id,
+                retrieval_result.metadata.get("selected_chunks"),
+                retrieval_result.metadata.get("total_chunks"),
+            )
+            pre_context = retrieval_result.combined_context
+            sources = retrieval_result.sources
             logger.info(f"Retrieved {len(pre_context) if pre_context else 0} chars context from PostgreSQL")
 
         # Create agent with pre-fetched context (fast path - no retriever creation)
         agent = SimpleChatAgent(pre_context=pre_context, model_type=model_type, system_prompt=request.system_prompt)
 
         # History setup
-        history_dicts = []
+        history_dicts: List[Dict[str, str]] = []
         if request.history:
-            history_dicts = [{"role": m.role, "content": m.content} for m in request.history]
+            history_dicts = [
+                {"role": m.role, "content": str(m.content)} for m in request.history
+            ]
 
         def iter_response():
             import json
-            full_answer = ""
+            full_answer: str = ""
             try:
                 for chunk in agent.chat_stream(query, history=history_dicts):
-                    full_answer += chunk
-                    data = json.dumps({"type": "chunk", "data": chunk})
+                    chunk_text = _ensure_text(chunk)
+                    full_answer += chunk_text
+                    data = json.dumps({"type": "chunk", "data": chunk_text})
                     yield f"data: {data}\n\n"
 
                 # Done event
@@ -180,7 +207,8 @@ async def stream_ai(request: ChatRequest):
                             "role": "assistant",
                             "content": full_answer,
                             "createdAt": datetime.now().isoformat()
-                        }
+                        },
+                        "sources": sources,
                     }
                 })
                 yield f"data: {done_data}\n\n"
@@ -197,4 +225,4 @@ async def stream_ai(request: ChatRequest):
 
 @router.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "ai-stateless-node"}
+    return {"status": "ok", "service": "ai-service-chat"}

@@ -8,7 +8,7 @@ Endpoints:
 - GET /generate/flashcards/:historyId - Get generated flashcards by history ID
 """
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -29,36 +29,28 @@ router = APIRouter()
 
 class GenerateQuizBody(BaseModel):
     """Request body for quiz generation"""
-    user_storage_id: str = Field(..., alias="userStorageId", description="ID của UserStorage")
-    user_id: str = Field(..., alias="userId", description="ID của user")
-    num_questions: int = Field(default=10, alias="numQuestions", ge=1, le=100)
-    is_narrow_search: bool = Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")
-    keyword: str | None = Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")
-    model_type: str = Field(
+    userStorageId: str = Field(..., description="ID của UserStorage")
+    userId: str = Field(..., description="ID của user")
+    numQuestions: int = Field(default=10, ge=1, le=100)
+    isNarrowSearch: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
+    keyword: Optional[str] = Field(default=None, description="Từ khóa cho tìm kiếm hẹp")
+    modelType: str = Field(
         default="gemini",
-        alias="modelType",
         description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
     )
-
-    class Config:
-        populate_by_name = True
 
 
 class GenerateFlashcardBody(BaseModel):
     """Request body for flashcard generation"""
-    user_storage_id: str = Field(..., alias="userStorageId", description="ID của UserStorage")
-    user_id: str = Field(..., alias="userId", description="ID của user")
-    num_flashcards: int = Field(default=10, alias="numFlashcards", ge=1, le=100)
-    is_narrow_search: bool = Field(default=False, alias="isNarrowSearch", description="Chế độ tìm kiếm hẹp")
-    keyword: str | None = Field(default=None, alias="keyword", description="Từ khóa cho tìm kiếm hẹp")
-    model_type: str = Field(
+    userStorageId: str = Field(..., description="ID của UserStorage")
+    userId: str = Field(..., description="ID của user")
+    numFlashcards: int = Field(default=10, ge=1, le=100)
+    isNarrowSearch: bool = Field(default=False, description="Chế độ tìm kiếm hẹp")
+    keyword: Optional[str] = Field(default=None, description="Từ khóa cho tìm kiếm hẹp")
+    modelType: str = Field(
         default="gemini",
-        alias="modelType",
         description="AI model: 'gemini' for Gemini AI or 'fayedark' for FayeDark AI"
     )
-
-    class Config:
-        populate_by_name = True
 
 
 # ==================== API Endpoints ====================
@@ -81,15 +73,15 @@ async def generate_quiz(body: GenerateQuizBody):
     - quizzes: array of generated questions
     - count: number of questions generated
     """
-    logger.info(f"Generate quiz request: {body.user_storage_id}, {body.num_questions} questions, model: {body.model_type}")
+    logger.info(f"Generate quiz request: {body.userStorageId}, {body.numQuestions} questions, model: {body.modelType}")
 
     request = GenerateQuizRequest(
-        user_storage_id=body.user_storage_id,
-        user_id=body.user_id,
-        num_questions=body.num_questions,
-        is_narrow_search=body.is_narrow_search,
+        user_storage_id=body.userStorageId,
+        user_id=body.userId,
+        num_questions=body.numQuestions,
+        is_narrow_search=body.isNarrowSearch,
         keyword=body.keyword,
-        model_type=body.model_type
+        model_type=body.modelType
     )
 
     result = await generation_service.generate_quiz(request)
@@ -121,15 +113,15 @@ async def generate_flashcards(body: GenerateFlashcardBody):
     - flashcards: array of generated flashcards
     - count: number of flashcards generated
     """
-    logger.info(f"Generate flashcards request: {body.user_storage_id}, {body.num_flashcards} flashcards, model: {body.model_type}")
+    logger.info(f"Generate flashcards request: {body.userStorageId}, {body.numFlashcards} flashcards, model: {body.modelType}")
 
     request = GenerateFlashcardRequest(
-        user_storage_id=body.user_storage_id,
-        user_id=body.user_id,
-        num_flashcards=body.num_flashcards,
-        is_narrow_search=body.is_narrow_search,
+        user_storage_id=body.userStorageId,
+        user_id=body.userId,
+        num_flashcards=body.numFlashcards,
+        is_narrow_search=body.isNarrowSearch,
         keyword=body.keyword,
-        model_type=body.model_type
+        model_type=body.modelType
     )
 
     result = await generation_service.generate_flashcards(request)

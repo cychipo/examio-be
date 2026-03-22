@@ -21,7 +21,7 @@ async function bootstrap() {
     // CORS - hardcoded for production
     app.enableCors({
         origin: [
-            'https://examio.fayedark.com',
+            'https://kma.fayedark.com',
             'http://localhost:5173',
             'http://localhost:3001',
             'http://127.0.0.1:5173',

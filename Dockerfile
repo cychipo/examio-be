@@ -91,4 +91,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=30s \
     CMD wget -q --spider http://localhost:${PORT:-3000}/api/v1/health || exit 1
 
-CMD ["sh", "-c", "node dist/apps/${SERVICE_NAME}/main"]
+# Run seed only for exam-service before start
+CMD ["sh", "-c", "if [ \"$SERVICE_NAME\" = \"exam-service\" ]; then node_modules/.bin/ts-node libs/database/prisma/seed.ts; fi && node dist/apps/${SERVICE_NAME}/main"]

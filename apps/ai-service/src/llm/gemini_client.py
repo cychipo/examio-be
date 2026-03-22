@@ -67,17 +67,19 @@ class GeminiClient:
         if self.api_keys:
             genai.configure(api_key=self.api_keys[0])
 
+        import logging
+        self.logger = logging.getLogger(__name__)
+        
         self._initialized = True
-        print(f"🔧 GeminiClient initialized: {len(self.api_keys)} keys, {len(self.model_names)} models")
+        self.logger.debug(f"GeminiClient initialized with {len(self.api_keys)} keys")
 
     def get_next_key(self) -> str:
         """Lấy API key tiếp theo, bỏ qua các keys đã failed."""
         if not self.api_keys:
             raise ValueError("Không có API keys được cấu hình. Set GEMINI_API_KEYS hoặc GOOGLE_API_KEY.")
 
-        # Reset failed keys nếu hết thời gian
         if time.time() > self.key_reset_time:
-            print("🔄 Reset danh sách failed keys...")
+            self.logger.debug("Resetting failed keys list")
             self.failed_keys.clear()
             self.key_reset_time = time.time() + 60
 
@@ -92,7 +94,6 @@ class GeminiClient:
         selected_key = available_keys[key_index]
         self.current_key_index = (self.current_key_index + 1) % len(available_keys)
 
-        print(f"🔑 Sử dụng API key {key_index + 1}/{len(available_keys)} (masked: {selected_key[:8]}...)")
         return selected_key
 
     def get_next_model(self) -> str:
@@ -102,7 +103,7 @@ class GeminiClient:
 
         # Reset failed models nếu hết thời gian
         if time.time() > self.model_reset_time:
-            print("🔄 Reset danh sách failed models...")
+            self.logger.debug("Resetting failed models list")
             self.failed_models_per_key.clear()
             self.model_reset_time = time.time() + 60
 
@@ -122,13 +123,13 @@ class GeminiClient:
         model_index = self.current_model_index % len(available_models)
         selected_model = available_models[model_index]
 
-        print(f"🤖 Sử dụng model {model_index + 1}/{len(available_models)}: {selected_model}")
+        self.logger.info(f"Using model {selected_model}")
         return selected_model
 
     def mark_key_failed(self, api_key: str):
         """Đánh dấu API key đã hết quota."""
         self.failed_keys.add(api_key)
-        print(f"❌ Đánh dấu API key failed. Tổng failed: {len(self.failed_keys)}/{len(self.api_keys)}")
+        self.logger.warning(f"Marked API key as failed. Total failed: {len(self.failed_keys)}/{len(self.api_keys)}")
 
     def mark_model_failed(self, model: str) -> bool:
         """
@@ -143,11 +144,11 @@ class GeminiClient:
         self.failed_models_per_key[current_key].add(model)
         failed_count = len(self.failed_models_per_key[current_key])
 
-        print(f"❌ Đánh dấu model '{model}' failed. Tổng: {failed_count}/{len(self.model_names)}")
+        self.logger.warning(f"Marked model '{model}' as failed. Total: {failed_count}/{len(self.model_names)}")
 
         # Nếu tất cả models đều failed, báo hiệu cần rotate key
         if failed_count >= len(self.model_names):
-            print("⚠️ Tất cả models đều fail cho key hiện tại, chuyển sang key tiếp theo...")
+            self.logger.warning("All models failed for current key, rotating key...")
             self.current_model_index = 0
             return True
 
@@ -267,9 +268,7 @@ class GeminiClient:
         """
         Tạo embedding vector với key rotation và retry.
 
-        Hỗ trợ các embedding models:
-        - models/embedding-001 (768 dims)
-        - models/text-embedding-004 (768 dims)
+        Sử dụng langchain-google-genai với v1 API (không phải v1beta deprecated).
 
         Args:
             text: Text cần tạo embedding
@@ -278,10 +277,12 @@ class GeminiClient:
         Returns:
             List[float] embedding vector
         """
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        
         # Embedding models để xoay vòng khi bị rate limit
         embedding_models = [
-            "models/text-embedding-004",  # Mới hơn, performance tốt hơn
-            "models/embedding-001",        # Legacy nhưng ổn định
+            "models/gemini-embedding-exp-03-07",  # Newest experimental model
+            "models/embedding-001",               # Legacy stable model
         ]
 
         last_error = None
@@ -289,14 +290,17 @@ class GeminiClient:
         for model_idx, embed_model in enumerate(embedding_models):
             async def _embed():
                 api_key = self.get_next_key()
-                genai.configure(api_key=api_key)
-
-                result = genai.embed_content(
+                
+                # Use LangChain embeddings with v1 API
+                embeddings = GoogleGenerativeAIEmbeddings(
                     model=embed_model,
-                    content=text,
+                    google_api_key=api_key,
                     task_type=task_type
                 )
-                return result['embedding']
+                
+                # embed_query returns list of floats
+                result = embeddings.embed_query(text)
+                return result
 
             try:
                 return await self.retry_with_backoff(_embed, max_retries=3)
@@ -304,9 +308,9 @@ class GeminiClient:
                 last_error = e
                 error_str = str(e).lower()
 
-                # Nếu là lỗi rate limit/quota, thử model tiếp theo
-                if "429" in error_str or "quota" in error_str or "rate" in error_str:
-                    print(f"⚠️ Embedding model {embed_model} bị rate limit, thử model tiếp theo...")
+                # Nếu là lỗi rate limit/quota hoặc 404, thử model tiếp theo
+                if any(x in error_str for x in ["429", "quota", "rate", "404", "not found"]):
+                    print(f"⚠️ Embedding model {embed_model} failed, trying next model...")
                     continue
                 else:
                     # Lỗi khác thì raise ngay

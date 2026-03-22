@@ -18,15 +18,23 @@ class PromptUtils:
         return f"""
 You are an expert in creating multiple choice tests.
 
-Based on the following content (pages {page_range}), create {num_questions} multiple choice questions that focus on knowledge, facts, concepts, meanings, connections, practical applications, or specific information that appears in the document. (If there are formulas or calculations, there are exercises too)
-Note: Because the content is OCRed from a pdf file, the characters may be corrupted. Please use your knowledge and understanding to understand the exact content for those corrupted characters. It will have the same meaning, it's just that the characters are corrupted, so sometimes it won't be understood.
+Based on the following content (pages {page_range}), create EXACTLY {num_questions} multiple choice questions that focus on knowledge, facts, concepts, meanings, connections, practical applications, or specific information that appears in the document.
+
+Note: Because the content is OCRed from a pdf file, the characters may be corrupted. Please use your knowledge and understanding to understand the exact content for those corrupted characters.
 
 Requirements:
+- GENERATE EXACTLY {num_questions} QUESTIONS. NO MORE, NO LESS.
+- ALL QUESTIONS AND ANSWERS MUST BE IN VIETNAMESE language (Unless it is a foreign language subject). Translate if necessary.
 - Do not ask about titles, tables of contents, chapters, sections, or general questions like "What is the main content?".
+- Do not ask meta questions about the document structure itself, such as chapter numbers, section numbers, page numbers, headings, filenames, where something appears in the file, or which section/chapter contains a topic.
+- Do not create questions in the style of "Trong chương/mục nào...", "Ở trang nào...", "Phần nào đề cập...", "Mục nào nói về...", or questions that test navigation inside the file instead of testing knowledge.
+- Ignore numbering-only lines, heading lines, table-of-contents lines, chapter labels, section labels, and navigation markers when deciding what to ask.
+- If the content mentions a chapter, section, page, heading, or numbering label, treat it as document structure noise unless it is itself the knowledge being taught.
 - Only ask about knowledge, information, facts, concepts, definitions, figures, or specific content in the document.
+- Prioritize conceptual understanding, definitions, mechanisms, causes, consequences, examples, formulas, comparisons, and practical applications that a learner should remember after studying.
 - Each question has 4 answers (A, B, C, D), only 1 answer is correct.
 - The correct answer is clearly marked.
-- The result content for the fields in json must be in Vietnamese (field name is in English and the content is in Vietnamese or numbers). Except in the case where the uploaded file is for a foreign language subject (for example, English, Korean, ...). It must be the question in the original language in the file (note that it is the question for a foreign language subject such as English, Chinese, ... and not based on the language in the file).
+- The result content for the fields in json must be in Vietnamese (field name is in English and the content is in Vietnamese or numbers). Except in the case where the uploaded file is for a foreign language subject.
 - The result returns a JSON array, each item has the form:
 {{
   "question": "...",
@@ -53,16 +61,24 @@ Content:
         return f"""
 You are an expert in creating flashcards for learning.
 
-Based on the following content (pages {page_range}), create {num_flashcards} flashcards that focus on knowledge, facts, concepts, meanings, connections, practical applications, or specific information that appears in the document. (If there are formulas or calculations, create Q&A exercises too)
-Note: Because the content is OCRed from a pdf file, the characters may be corrupted. Please use your knowledge and understanding to understand the exact content for those corrupted characters. It will have the same meaning, it's just that the characters are corrupted, so sometimes it won't be understood.
+Based on the following content (pages {page_range}), create EXACTLY {num_flashcards} flashcards that focus on knowledge, facts, concepts, meanings, connections, practical applications, or specific information that appears in the document.
+
+Note: Because the content is OCRed from a pdf file, the characters may be corrupted. Please use your knowledge and understanding to understand the exact content for those corrupted characters.
 
 Requirements:
+- GENERATE EXACTLY {num_flashcards} FLASHCARDS. NO MORE, NO LESS.
+- ALL CONTENT MUST BE IN VIETNAMESE language.
 - Do not create flashcards about titles, tables of contents, chapters, sections, or general questions like "What is the main content?".
+- Do not create flashcards about chapter numbers, section numbers, page numbers, headings, filenames, or where a concept is located in the file.
+- Do not create flashcards in the style of "Khái niệm này nằm ở mục nào/chương nào/trang nào?".
+- Ignore numbering-only lines, heading lines, table-of-contents lines, chapter labels, section labels, and navigation markers when creating flashcards.
+- If a sentence mainly describes where something is located in the file, do not use that sentence as the basis for a flashcard.
 - Only create questions about knowledge, information, facts, concepts, definitions, figures, or specific content in the document.
+- Prioritize key knowledge a learner should memorize or understand, not navigation inside the document.
 - Each flashcard has:
   - A short question (≤ 20 words, in Vietnamese).
   - A concise and precise answer (1–3 sentences, in Vietnamese).
-- The result content for the fields in JSON must be in Vietnamese (field name is in English, content in Vietnamese or numbers). Except in the case where the uploaded file is for a foreign language subject (for example, English, Korean, ...). It must be the question in the original language in the file (note that it is the question for a foreign language subject such as English, Chinese, ... and not based on the language in the file).
+- The result content for the fields in JSON must be in Vietnamese (field name is in English, content in Vietnamese or numbers). Except in the case where the uploaded file is for a foreign language subject.
 - The result returns a JSON array, each item has the form:
 {{
     "question": "...",

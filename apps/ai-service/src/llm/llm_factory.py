@@ -26,7 +26,9 @@ class LLMFactory:
             try:
                 return cls._create_ollama_model(temperature, max_tokens, callback_manager)
             except Exception as e:
-                print(f"⚠️ Ollama failed: {e}, falling back to Gemini")
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Ollama connection unsuccessful, falling back to Gemini: {e}")
                 return cls._create_gemini_model(temperature, max_tokens, callback_manager)
 
         # Default is Gemini
