@@ -7,10 +7,13 @@ config({ path: join(process.cwd(), 'apps', 'auth-service', '.env') });
 import { NestFactory } from '@nestjs/core';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { AuthServiceModule } from './auth-service.module';
+import * as cookieParser from 'cookie-parser';
 
 async function bootstrap() {
     // Create HTTP application
     const app = await NestFactory.create(AuthServiceModule);
+
+    app.use(cookieParser());
 
     // Global prefix to match gateway proxy paths
     app.setGlobalPrefix('api/v1');

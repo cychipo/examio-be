@@ -95,6 +95,11 @@ export class ProxyService {
             url,
             headers: {
                 ...request.headers,
+                ...(request.cookies && {
+                    Cookie: Object.entries(request.cookies)
+                        .map(([key, value]) => `${key}=${value}`)
+                        .join('; '),
+                }),
             },
             params: request.query,
             maxRedirects: 0, // Không follow redirects

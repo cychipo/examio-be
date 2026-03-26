@@ -55,6 +55,42 @@ import * as crypto from 'crypto';
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
 
+    private parseOAuthState(state?: string): {
+        redirect?: string;
+    } {
+        if (!state) {
+            return {};
+        }
+
+        try {
+            const parsed = JSON.parse(
+                Buffer.from(state, 'base64url').toString('utf8')
+            );
+
+            return {
+                redirect:
+                    typeof parsed?.redirect === 'string'
+                        ? parsed.redirect
+                        : undefined,
+            };
+        } catch {
+            return {};
+        }
+    }
+
+    private resolveFrontendTarget(
+        frontendUrl: string,
+        role?: 'teacher' | 'student',
+        redirectPath?: string
+    ) {
+        const safeRedirect =
+            redirectPath && redirectPath.startsWith('/') ? redirectPath : null;
+        const dashboardPath =
+            role === 'teacher' ? '/k/dashboard-teacher' : '/k/dashboard-student';
+
+        return `${frontendUrl}${safeRedirect || dashboardPath}`;
+    }
+
     @Post('register')
     @ApiOperation({ summary: 'Register a new user' })
     @ApiResponse({
@@ -323,13 +359,20 @@ export class AuthController {
         const frontendUrl = (
             process.env.FRONTEND_URL || 'http://localhost:3001'
         ).replace(/\/+$/, '');
+        const redirectFromCookie = request.cookies?.oauth_redirect;
+        const oauthState = this.parseOAuthState(
+            request.query.state as string | undefined
+        );
+        res.clearCookie('oauth_role');
+        res.clearCookie('oauth_redirect');
 
-        const role = req.user.user?.role;
-        const targetPath =
-            role === 'teacher'
-                ? '/k/dashboard-teacher'
-                : '/k/dashboard-student';
-        res.redirect(`${frontendUrl}${targetPath}`);
+        res.redirect(
+            this.resolveFrontendTarget(
+                frontendUrl,
+                req.user.user?.role as 'teacher' | 'student' | undefined,
+                redirectFromCookie || oauthState.redirect
+            )
+        );
     }
 
     @Get('facebook')
@@ -362,13 +405,20 @@ export class AuthController {
         const frontendUrl = (
             process.env.FRONTEND_URL || 'http://localhost:3001'
         ).replace(/\/+$/, '');
+        const redirectFromCookie = request.cookies?.oauth_redirect;
+        const oauthState = this.parseOAuthState(
+            request.query.state as string | undefined
+        );
+        res.clearCookie('oauth_role');
+        res.clearCookie('oauth_redirect');
 
-        const role = req.user.user?.role;
-        const targetPath =
-            role === 'teacher'
-                ? '/k/dashboard-teacher'
-                : '/k/dashboard-student';
-        res.redirect(`${frontendUrl}${targetPath}`);
+        res.redirect(
+            this.resolveFrontendTarget(
+                frontendUrl,
+                req.user.user?.role as 'teacher' | 'student' | undefined,
+                redirectFromCookie || oauthState.redirect
+            )
+        );
     }
 
     @Get('github')
@@ -401,13 +451,20 @@ export class AuthController {
         const frontendUrl = (
             process.env.FRONTEND_URL || 'http://localhost:3001'
         ).replace(/\/+$/, '');
+        const redirectFromCookie = request.cookies?.oauth_redirect;
+        const oauthState = this.parseOAuthState(
+            request.query.state as string | undefined
+        );
+        res.clearCookie('oauth_role');
+        res.clearCookie('oauth_redirect');
 
-        const role = req.user.user?.role;
-        const targetPath =
-            role === 'teacher'
-                ? '/k/dashboard-teacher'
-                : '/k/dashboard-student';
-        res.redirect(`${frontendUrl}${targetPath}`);
+        res.redirect(
+            this.resolveFrontendTarget(
+                frontendUrl,
+                req.user.user?.role as 'teacher' | 'student' | undefined,
+                redirectFromCookie || oauthState.redirect
+            )
+        );
     }
 
     @Get('me')

@@ -37,6 +37,8 @@ export interface DeviceInfo {
     ipAddress?: string;
 }
 
+type OAuthRole = 'teacher' | 'student';
+
 @Injectable()
 export class AuthService {
     constructor(
@@ -526,9 +528,17 @@ export class AuthService {
         email: string,
         username: string,
         avatar?: string,
-        deviceInfo?: DeviceInfo
+        deviceInfo?: DeviceInfo,
+        role: OAuthRole = 'student'
     ) {
         let existingUser = await this.userRepository.findByEmail(email, false);
+
+        console.log('[OAuth][AuthService] Incoming OAuth login', {
+            email,
+            username,
+            requestedRole: role,
+            userExists: Boolean(existingUser),
+        });
 
         if (!existingUser) {
             existingUser = await this.prisma.$transaction(async (tx) => {
@@ -538,6 +548,7 @@ export class AuthService {
                         email,
                         username,
                         avatar,
+                        role,
                         isVerified: true,
                         password: null,
                     },
@@ -556,6 +567,12 @@ export class AuthService {
                 return user;
             });
 
+            console.log('[OAuth][AuthService] Created new OAuth user', {
+                email: existingUser.email,
+                userId: existingUser.id,
+                savedRole: existingUser.role,
+            });
+
             // Publish USER_CREATED event for wallet creation and other services (fire-and-forget to avoid timeout)
             this.eventPublisher
                 .publishAuthEvent(EventType.USER_CREATED, {
@@ -569,6 +586,13 @@ export class AuthService {
                         error
                     );
                 });
+        } else {
+            console.log('[OAuth][AuthService] Existing OAuth user reused', {
+                email: existingUser.email,
+                userId: existingUser.id,
+                existingRole: existingUser.role,
+                requestedRole: role,
+            });
         }
 
         const token = this.jwtService.sign({ userId: existingUser.id });
@@ -595,13 +619,21 @@ export class AuthService {
         };
     }
 
-    async googleLogin(user: any, deviceInfo?: DeviceInfo) {
+    async googleLogin(
+        user: any,
+        deviceInfo?: DeviceInfo,
+        role: OAuthRole = 'student'
+    ) {
         const { email, picture } = user;
         const username = email.split('@')[0];
-        return this.handleOAuthLogin(email, username, picture, deviceInfo);
+        return this.handleOAuthLogin(email, username, picture, deviceInfo, role);
     }
 
-    async facebookLogin(user: any, deviceInfo?: DeviceInfo) {
+    async facebookLogin(
+        user: any,
+        deviceInfo?: DeviceInfo,
+        role: OAuthRole = 'student'
+    ) {
         const { email, picture, username } = user;
         if (!email) {
             throw new BadRequestException(
@@ -612,17 +644,23 @@ export class AuthService {
             email,
             username || email.split('@')[0],
             picture,
-            deviceInfo
+            deviceInfo,
+            role
         );
     }
 
-    async githubLogin(user: any, deviceInfo?: DeviceInfo) {
+    async githubLogin(
+        user: any,
+        deviceInfo?: DeviceInfo,
+        role: OAuthRole = 'student'
+    ) {
         const { email, avatar, username } = user;
         return this.handleOAuthLogin(
             email,
             username || email.split('@')[0],
             avatar,
-            deviceInfo
+            deviceInfo,
+            role
         );
     }
 

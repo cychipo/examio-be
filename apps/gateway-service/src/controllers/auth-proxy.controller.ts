@@ -92,12 +92,19 @@ export class AuthProxyController {
     @Get('google')
     @ApiOperation({ summary: 'Đăng nhập bằng Google' })
     async googleAuth(@Req() req: Request, @Res() res: Response) {
+        const queryString = req.url.split('?')[1];
         // Proxy to auth service - get OAuth redirect URL without following
         const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
-            path: '/api/v1/auth/google',
+            path: queryString
+                ? `/api/v1/auth/google?${queryString}`
+                : '/api/v1/auth/google',
             headers: this.extractHeaders(req),
+            cookies: req.cookies,
         });
+        if (result.headers && result.headers['set-cookie']) {
+            res.setHeader('Set-Cookie', result.headers['set-cookie']);
+        }
         // Redirect browser to OAuth provider
         if (result.redirectUrl) {
             return res.redirect(result.redirectUrl);
@@ -113,6 +120,7 @@ export class AuthProxyController {
             method: 'GET',
             path: `/api/v1/auth/google/callback?${queryString}`,
             headers: this.extractHeaders(req),
+            cookies: req.cookies,
         });
         // Handle auth response - set cookies and redirect to frontend
         return this.handleOAuthCallback(result, res);
@@ -121,11 +129,18 @@ export class AuthProxyController {
     @Get('facebook')
     @ApiOperation({ summary: 'Đăng nhập bằng Facebook' })
     async facebookAuth(@Req() req: Request, @Res() res: Response) {
+        const queryString = req.url.split('?')[1];
         const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
-            path: '/api/v1/auth/facebook',
+            path: queryString
+                ? `/api/v1/auth/facebook?${queryString}`
+                : '/api/v1/auth/facebook',
             headers: this.extractHeaders(req),
+            cookies: req.cookies,
         });
+        if (result.headers && result.headers['set-cookie']) {
+            res.setHeader('Set-Cookie', result.headers['set-cookie']);
+        }
         if (result.redirectUrl) {
             return res.redirect(result.redirectUrl);
         }
@@ -140,6 +155,7 @@ export class AuthProxyController {
             method: 'GET',
             path: `/api/v1/auth/facebook/callback?${queryString}`,
             headers: this.extractHeaders(req),
+            cookies: req.cookies,
         });
         return this.handleOAuthCallback(result, res);
     }
@@ -147,11 +163,18 @@ export class AuthProxyController {
     @Get('github')
     @ApiOperation({ summary: 'Đăng nhập bằng GitHub' })
     async githubAuth(@Req() req: Request, @Res() res: Response) {
+        const queryString = req.url.split('?')[1];
         const result = await this.proxyService.forwardWithRedirect('auth', {
             method: 'GET',
-            path: '/api/v1/auth/github',
+            path: queryString
+                ? `/api/v1/auth/github?${queryString}`
+                : '/api/v1/auth/github',
             headers: this.extractHeaders(req),
+            cookies: req.cookies,
         });
+        if (result.headers && result.headers['set-cookie']) {
+            res.setHeader('Set-Cookie', result.headers['set-cookie']);
+        }
         if (result.redirectUrl) {
             return res.redirect(result.redirectUrl);
         }
@@ -166,6 +189,7 @@ export class AuthProxyController {
             method: 'GET',
             path: `/api/v1/auth/github/callback?${queryString}`,
             headers: this.extractHeaders(req),
+            cookies: req.cookies,
         });
         return this.handleOAuthCallback(result, res);
     }
