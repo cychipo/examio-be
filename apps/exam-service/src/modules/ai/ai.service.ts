@@ -634,6 +634,25 @@ export class AIService {
             throw new BadRequestException('No file provided for tutor knowledge upload');
         }
 
+        const allowedMimeTypes = new Set([
+            'application/pdf',
+            'application/json',
+            'text/json',
+        ]);
+        const allowedExtensions = new Set(['.pdf', '.json']);
+        const extension = file.originalname.slice(
+            Math.max(0, file.originalname.lastIndexOf('.'))
+        ).toLowerCase();
+
+        if (
+            !allowedMimeTypes.has(file.mimetype) &&
+            !allowedExtensions.has(extension)
+        ) {
+            throw new BadRequestException(
+                'Chỉ hỗ trợ file PDF hoặc JSON cho kho tri thức GenAI'
+            );
+        }
+
         try {
             const sanitizedName = `${Date.now()}-${sanitizeFilename(file.originalname)}`;
             const keyR2 = await this.r2ClientService.uploadFile(
@@ -796,6 +815,47 @@ export class AIService {
         return response.data;
     }
 
+    async listTutorDatasetCatalog() {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports/catalog`)
+        );
+        return response.data;
+    }
+
+    async createTutorDatasetImport(user: User, payload: { folderId?: string; datasetKey: string }) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports`, {
+                userId: user.id,
+                folderId: payload.folderId,
+                datasetKey: payload.datasetKey,
+            })
+        );
+        return response.data;
+    }
+
+    async listTutorDatasetImports(user: User) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async getTutorDatasetImportJob(jobId: string) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}`)
+        );
+        return response.data;
+    }
+
+    async cancelTutorDatasetImportJob(jobId: string) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}/cancel`, {})
+        );
+        return response.data;
+    }
+
     async searchTutorKnowledgeFiles(
         user: User,
         query: {
@@ -937,6 +997,18 @@ export class AIService {
         } catch (error) {
             this.logger.error(`Tutor graph by document failed: ${error.message}`);
             throw new NotFoundException('Tutor graph theo document không tồn tại');
+        }
+    }
+
+    async getTutorKnowledgeFileGraph(fileId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-files/${fileId}/graph`)
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor graph by knowledge file failed: ${error.message}`);
+            throw new NotFoundException('Graph tri thức theo file không tồn tại');
         }
     }
 

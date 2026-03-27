@@ -253,6 +253,54 @@ export class AIController {
         return this.aiService.listTutorKnowledgeFiles(req.user);
     }
 
+    @Get('tutor/dataset-imports/catalog')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy catalog dataset có thể nạp vào kho tri thức' })
+    async listTutorDatasetCatalog() {
+        return this.aiService.listTutorDatasetCatalog();
+    }
+
+    @Post('tutor/dataset-imports')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Tạo job nạp dataset vào kho tri thức tutor' })
+    async createTutorDatasetImport(
+        @Req() req: AuthenticatedRequest,
+        @Body() body: { folderId?: string; datasetKey: string }
+    ) {
+        return this.aiService.createTutorDatasetImport(req.user, body);
+    }
+
+    @Get('tutor/dataset-imports')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy danh sách job nạp dataset tutor' })
+    async listTutorDatasetImports(@Req() req: AuthenticatedRequest) {
+        return this.aiService.listTutorDatasetImports(req.user);
+    }
+
+    @Get('tutor/dataset-imports/:jobId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy trạng thái job nạp dataset tutor' })
+    async getTutorDatasetImportJob(@Param('jobId') jobId: string) {
+        return this.aiService.getTutorDatasetImportJob(jobId);
+    }
+
+    @Post('tutor/dataset-imports/:jobId/cancel')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Hủy job nạp dataset tutor' })
+    async cancelTutorDatasetImportJob(@Param('jobId') jobId: string) {
+        return this.aiService.cancelTutorDatasetImportJob(jobId);
+    }
+
     @Get('tutor/knowledge-files/search')
     @UseGuards(AuthGuard, RolesGuard)
     @Roles('teacher')
@@ -358,6 +406,15 @@ export class AIController {
     @ApiOperation({ summary: 'Xem graph tutor theo document' })
     async getTutorGraphByDocument(@Param('documentId') documentId: string) {
         return this.aiService.getTutorGraphByDocument(documentId);
+    }
+
+    @Get('tutor/knowledge-files/:fileId/graph')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Xem graph theo file tri thức tutor' })
+    async getTutorKnowledgeFileGraph(@Param('fileId') fileId: string) {
+        return this.aiService.getTutorKnowledgeFileGraph(fileId);
     }
 
     @Get('upload/:uploadId')

@@ -346,6 +346,77 @@ export class AIProxyController {
         );
     }
 
+    @Get('tutor/dataset-imports/catalog')
+    @ApiOperation({ summary: 'Lấy catalog dataset tutor' })
+    async listTutorDatasetCatalog(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/dataset-imports/catalog',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/dataset-imports')
+    @ApiOperation({ summary: 'Tạo job nạp dataset tutor' })
+    async createTutorDatasetImport(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai/tutor/dataset-imports',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/dataset-imports')
+    @ApiOperation({ summary: 'Lấy danh sách job nạp dataset tutor' })
+    async listTutorDatasetImports(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/dataset-imports',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/dataset-imports/:jobId')
+    @ApiOperation({ summary: 'Lấy trạng thái job nạp dataset tutor' })
+    async getTutorDatasetImportJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/dataset-imports/${jobId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/dataset-imports/:jobId/cancel')
+    @ApiOperation({ summary: 'Hủy job nạp dataset tutor' })
+    async cancelTutorDatasetImportJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai/tutor/dataset-imports/${jobId}/cancel`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     @Get('tutor/knowledge-stats')
     @ApiOperation({ summary: 'Lấy thống kê kho tri thức tutor' })
     async getTutorKnowledgeStats(@Req() req: Request) {
@@ -548,6 +619,23 @@ export class AIProxyController {
             {
                 method: 'GET',
                 path: `/api/v1/ai/tutor/graph/document/${documentId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-files/:fileId/graph')
+    @ApiOperation({ summary: 'Xem graph theo file tri thức tutor' })
+    async getTutorKnowledgeFileGraph(
+        @Param('fileId') fileId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/knowledge-files/${fileId}/graph`,
                 headers: this.h(req),
             },
             this.t(req)

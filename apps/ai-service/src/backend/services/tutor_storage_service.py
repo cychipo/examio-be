@@ -3,21 +3,50 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import asyncpg
 
 logger = logging.getLogger(__name__)
 
+_QUERY_STOPWORDS = {
+    'la',
+    'gi',
+    'the',
+    'nao',
+    'cach',
+    'cho',
+    'mot',
+    'nhung',
+    'voi',
+    'and',
+    'the',
+    'for',
+    'with',
+}
+
 
 def _normalize_timestamp(value: Any) -> Any:
-    if value is None or isinstance(value, datetime):
+    if value is None:
+        return value
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
         return value
     if isinstance(value, str):
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
     return value
+
+
+def _extract_query_entities(query_text: str) -> list[str]:
+    tokens = re.findall(r'[A-Za-z0-9_]{3,}', query_text.lower())
+    return [token for token in tokens if token not in _QUERY_STOPWORDS][:8]
 
 
 @dataclass
@@ -626,6 +655,11 @@ class TutorStorageService:
 
         return [self._map_job_row(row, [], []) for row in rows]
 
+    async def delete_job_data(self, job_id: str) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute('DELETE FROM "TutorIngestJob" WHERE id = $1', job_id)
+
     async def search_chunks(
         self,
         *,
@@ -674,6 +708,128 @@ class TutorStorageService:
             INNER JOIN "TutorKnowledgeDocument" doc ON doc.id = chunk."documentId"
             WHERE {where_clause}
             ORDER BY chunk.embeddings <=> $1::vector ASC
+            LIMIT ${next_index}
+        """
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+
+        return [
+            TutorRetrievedChunk(
+                chunk_id=row['id'],
+                document_id=row['documentId'],
+                dataset_version=row['datasetVersion'],
+                content=row['content'],
+                content_type=row['contentType'],
+                language=row['language'],
+                topic=row['topic'],
+                difficulty=row['difficulty'],
+                source_path=row['sourcePath'],
+                title=row['title'],
+                chunk_index=row['chunkIndex'],
+                similarity_score=row['similarity_score'],
+            )
+            for row in rows
+        ]
+
+    async def search_chunks_hybrid(
+        self,
+        *,
+        query_embedding: list[float],
+        course_code: str,
+        language: Optional[str],
+        topic: Optional[str],
+        difficulty: Optional[str],
+        top_k: int,
+        query_text: str,
+    ) -> list[TutorRetrievedChunk]:
+        vector_hits = await self.search_chunks(
+            query_embedding=query_embedding,
+            course_code=course_code,
+            language=language,
+            topic=topic,
+            difficulty=difficulty,
+            top_k=max(top_k, 6),
+        )
+
+        graph_hits = await self.search_chunks_by_entities(
+            query_text=query_text,
+            course_code=course_code,
+            language=language,
+            topic=topic,
+            difficulty=difficulty,
+            limit=max(top_k, 6),
+        )
+
+        ranked: dict[str, TutorRetrievedChunk] = {}
+        for item in vector_hits:
+            ranked[item.chunk_id] = item
+
+        for item in graph_hits:
+            current = ranked.get(item.chunk_id)
+            if current is None or item.similarity_score > current.similarity_score:
+                ranked[item.chunk_id] = item
+
+        merged = sorted(ranked.values(), key=lambda item: item.similarity_score, reverse=True)
+        return merged[:top_k]
+
+    async def search_chunks_by_entities(
+        self,
+        *,
+        query_text: str,
+        course_code: str,
+        language: Optional[str],
+        topic: Optional[str],
+        difficulty: Optional[str],
+        limit: int,
+    ) -> list[TutorRetrievedChunk]:
+        entity_tokens = _extract_query_entities(query_text)
+        if not entity_tokens:
+            return []
+
+        pool = await self._get_pool()
+        filters = ['doc."courseCode" = $1']
+        params: list[Any] = [course_code]
+        next_index = 2
+
+        if language:
+            filters.append(f'chunk.language = ${next_index}')
+            params.append(language)
+            next_index += 1
+        if topic:
+            filters.append(f'chunk.topic = ${next_index}')
+            params.append(topic)
+            next_index += 1
+        if difficulty:
+            filters.append(f'chunk.difficulty = ${next_index}')
+            params.append(difficulty)
+            next_index += 1
+
+        filters.append(f'e."canonicalName" = ANY(${next_index}::text[])')
+        params.append(entity_tokens)
+        next_index += 1
+        params.append(limit)
+
+        where_clause = ' AND '.join(filters)
+        query = f"""
+            SELECT
+                chunk.id,
+                chunk."documentId",
+                chunk."datasetVersion",
+                chunk.content,
+                chunk."contentType",
+                chunk.language,
+                chunk.topic,
+                chunk.difficulty,
+                doc."sourcePath",
+                doc.title,
+                chunk."chunkIndex",
+                0.95::double precision AS similarity_score
+            FROM "TutorGraphEntity" e
+            INNER JOIN "TutorKnowledgeChunk" chunk ON chunk.id = e."chunkId"
+            INNER JOIN "TutorKnowledgeDocument" doc ON doc.id = chunk."documentId"
+            WHERE {where_clause}
+            ORDER BY chunk."updatedAt" DESC
             LIMIT ${next_index}
         """
 

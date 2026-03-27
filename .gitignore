@@ -33,3 +33,7 @@ __pycache__/
 *$py.class
 *.so
 #python
+
+/data-source/
+data-source/
+apps/ai-service/data-source/

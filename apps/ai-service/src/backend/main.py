@@ -72,6 +72,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f'Failed to ensure tutor knowledge storage schema: {e}')
 
+    try:
+        from .services.tutor_dataset_import_service import tutor_dataset_import_service
+
+        await tutor_dataset_import_service.ensure_schema()
+        logger.info('Tutor dataset import schema ensured')
+    except Exception as e:
+        logger.error(f'Failed to ensure tutor dataset import schema: {e}')
+
     yield
 
     # Shutdown: Close RabbitMQ consumer

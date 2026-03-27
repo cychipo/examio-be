@@ -101,6 +101,7 @@ class TutorKnowledgeStorageService:
                 \"vectorCount\" INTEGER NOT NULL DEFAULT 0,
                 \"embeddingModel\" TEXT,
                 \"errorMessage\" TEXT,
+                \"graphDocumentId\" TEXT,
                 metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                 \"createdAt\" TIMESTAMP NOT NULL DEFAULT NOW(),
                 \"updatedAt\" TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -108,6 +109,7 @@ class TutorKnowledgeStorageService:
             )
             """,
             'ALTER TABLE "TutorKnowledgeFile" ADD COLUMN IF NOT EXISTS description TEXT',
+            'ALTER TABLE "TutorKnowledgeFile" ADD COLUMN IF NOT EXISTS "graphDocumentId" TEXT',
             """
             CREATE TABLE IF NOT EXISTS \"TutorKnowledgeVector\" (
                 id TEXT PRIMARY KEY,
@@ -143,12 +145,12 @@ class TutorKnowledgeStorageService:
                 id, "userId", filename, description, url, "keyR2", "mimeType", size, status, progress,
                 "folderId", "folderName", "folderDescription", "courseCode", language,
                 topic, difficulty, "sourceType", "chunkCount", "vectorCount", "embeddingModel",
-                "errorMessage", metadata, "createdAt", "updatedAt", "completedAt"
+                "errorMessage", "graphDocumentId", metadata, "createdAt", "updatedAt", "completedAt"
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15,
                 $16, $17, $18, $19, $20, $21,
-                $22, $23::jsonb, $24, $25, $26
+                $22, $23, $24::jsonb, $25, $26, $27
             )
         """
         async with pool.acquire() as conn:
@@ -176,6 +178,7 @@ class TutorKnowledgeStorageService:
                 payload.get('vectorCount', 0),
                 payload.get('embeddingModel'),
                 payload.get('errorMessage'),
+                payload.get('graphDocumentId'),
                 json.dumps(payload.get('metadata', {})),
                 _normalize_timestamp(payload['createdAt']),
                 _normalize_timestamp(payload['updatedAt']),
@@ -292,9 +295,10 @@ class TutorKnowledgeStorageService:
                 "vectorCount" = $5,
                 "embeddingModel" = $6,
                 "errorMessage" = $7,
-                metadata = $8::jsonb,
-                "updatedAt" = $9,
-                "completedAt" = $10
+                "graphDocumentId" = $8,
+                metadata = $9::jsonb,
+                "updatedAt" = $10,
+                "completedAt" = $11
             WHERE id = $1
         """
         async with pool.acquire() as conn:
@@ -307,6 +311,7 @@ class TutorKnowledgeStorageService:
                 payload.get('vectorCount', 0),
                 payload.get('embeddingModel'),
                 payload.get('errorMessage'),
+                payload.get('graphDocumentId'),
                 json.dumps(payload.get('metadata', {})),
                 _normalize_timestamp(payload['updatedAt']),
                 _normalize_timestamp(payload.get('completedAt')),
@@ -387,6 +392,7 @@ class TutorKnowledgeStorageService:
             'chunkCount': row['chunkCount'],
             'vectorCount': row['vectorCount'],
             'embeddingModel': row['embeddingModel'],
+            'graphDocumentId': row['graphDocumentId'],
             'errorMessage': row['errorMessage'],
             'metadata': row['metadata'] or {},
             'createdAt': row['createdAt'].isoformat() if row['createdAt'] else None,
@@ -461,6 +467,7 @@ class TutorKnowledgeStorageService:
                     'chunkCount': row['chunkCount'],
                     'vectorCount': row['vectorCount'],
                     'embeddingModel': row['embeddingModel'],
+                    'graphDocumentId': row['graphDocumentId'],
                     'errorMessage': row['errorMessage'],
                     'metadata': row['metadata'] or {},
                     'createdAt': row['createdAt'].isoformat() if row['createdAt'] else None,

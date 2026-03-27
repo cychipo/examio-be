@@ -18,6 +18,9 @@ from src.llm.model_manager import ModelUnavailableError, model_manager
 from src.backend.services.tutor_knowledge_storage_service import (
     tutor_knowledge_storage_service,
 )
+from src.backend.services.tutor_dataset_import_service import (
+    tutor_dataset_import_service,
+)
 from src.rag.simple_chat_agent import SimpleChatAgent
 from src.backend.services.tutor_storage_service import tutor_storage_service
 from src.genai_tutor.knowledge_base.knowledge_file_worker import (
@@ -92,7 +95,23 @@ class TutorKnowledgeFileResponse(BaseModel):
     chunk_count: int = Field(..., alias='chunkCount')
     vector_count: int = Field(..., alias='vectorCount')
     error_message: Optional[str] = Field(default=None, alias='errorMessage')
+    metadata: dict[str, Any] = Field(default_factory=dict)
     url: str
+
+
+class TutorDatasetImportRequest(BaseModel):
+    user_id: str = Field(..., alias='userId')
+    folder_id: Optional[str] = Field(default=None, alias='folderId')
+    dataset_key: str = Field(..., alias='datasetKey')
+
+
+class TutorDatasetImportResponse(BaseModel):
+    job_id: str = Field(..., alias='jobId')
+    dataset_key: str = Field(..., alias='datasetKey')
+    status: str
+    progress: int
+    stage: str
+    message: Optional[str] = None
 
 
 class TutorMessage(BaseModel):
@@ -134,13 +153,14 @@ async def _retrieve_tutor_context(
         request.query,
         task_type='retrieval_query',
     )
-    retrieved = await tutor_storage_service.search_chunks(
+    retrieved = await tutor_storage_service.search_chunks_hybrid(
         query_embedding=query_embedding,
         course_code=request.course_code,
         language=request.language,
         topic=request.topic,
         difficulty=request.difficulty,
         top_k=request.top_k,
+        query_text=request.query,
     )
 
     if not retrieved:
@@ -285,11 +305,67 @@ async def create_tutor_knowledge_file(
             chunkCount=0,
             vectorCount=0,
             errorMessage=None,
+            metadata={
+                'stage': 'queued',
+                'graphStage': 'queued',
+                'sourceType': Path(request.filename).suffix.lower().lstrip('.'),
+            },
             url=request.url,
         )
     except Exception as exc:
         logger.error('Failed to create tutor knowledge file job: %s', exc)
         raise HTTPException(status_code=500, detail='Failed to create tutor knowledge file job') from exc
+
+
+@router.get('/dataset-imports/catalog', response_model=list[dict[str, Any]])
+async def list_tutor_dataset_catalog() -> list[dict[str, Any]]:
+    return tutor_dataset_import_service.list_catalog()
+
+
+@router.post('/dataset-imports', response_model=TutorDatasetImportResponse)
+async def create_tutor_dataset_import(
+    request: TutorDatasetImportRequest,
+) -> TutorDatasetImportResponse:
+    try:
+        job = await tutor_dataset_import_service.create_job(
+            user_id=request.user_id,
+            folder_id=request.folder_id,
+            dataset_key=request.dataset_key,
+        )
+        return TutorDatasetImportResponse(
+            jobId=job['jobId'],
+            datasetKey=job['datasetKey'],
+            status=job['status'],
+            progress=job['progress'],
+            stage=job['stage'],
+            message=job.get('message'),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error('Failed to create dataset import job: %s', exc)
+        raise HTTPException(status_code=500, detail='Failed to create dataset import job') from exc
+
+
+@router.get('/dataset-imports', response_model=list[dict[str, Any]])
+async def list_tutor_dataset_import_jobs(user_id: str) -> list[dict[str, Any]]:
+    return await tutor_dataset_import_service.list_jobs(user_id)
+
+
+@router.get('/dataset-imports/{job_id}', response_model=dict[str, Any])
+async def get_tutor_dataset_import_job(job_id: str) -> dict[str, Any]:
+    job = await tutor_dataset_import_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail='Tutor dataset import job not found')
+    return job
+
+
+@router.post('/dataset-imports/{job_id}/cancel', response_model=dict[str, Any])
+async def cancel_tutor_dataset_import_job(job_id: str) -> dict[str, Any]:
+    try:
+        return await tutor_dataset_import_service.cancel_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post('/knowledge-folders', response_model=dict[str, Any])
@@ -377,6 +453,19 @@ async def get_tutor_knowledge_file(file_id: str) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail='Tutor knowledge file not found')
     return record
+
+
+@router.get('/knowledge-files/{file_id}/graph', response_model=dict[str, Any])
+async def get_tutor_knowledge_file_graph(file_id: str) -> dict[str, Any]:
+    record = await tutor_knowledge_storage_service.get_file(file_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail='Tutor knowledge file not found')
+
+    graph_document_id = record.get('graphDocumentId') or record['fileId']
+    snapshot = await tutor_storage_service.get_graph_snapshot_by_document(graph_document_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail='Tutor graph snapshot not found for knowledge file')
+    return snapshot
 
 
 @router.get('/knowledge-files', response_model=dict[str, Any])

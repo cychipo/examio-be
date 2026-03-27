@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +14,13 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from src.backend.services.pdf_ocr_service import pdf_ocr_service
+from src.backend.services.tutor_storage_service import tutor_storage_service
 from src.backend.services.tutor_knowledge_storage_service import (
     tutor_knowledge_storage_service,
+)
+from src.genai_tutor.knowledge_base.graph_extractor import extract_knowledge_graph
+from src.genai_tutor.knowledge_base.json_dataset_parser import (
+    normalize_json_dataset,
 )
 from src.llm.model_manager import model_manager
 from src.rag.vector_store_pg import get_pg_vector_store
@@ -26,6 +32,7 @@ CODE_FILE_EXTENSIONS = {'.py', '.c', '.h'}
 IMAGE_FILE_EXTENSIONS = {'.png', '.jpg', '.jpeg'}
 DEFAULT_TEXT_CHUNK_SIZE = 1200
 DEFAULT_CODE_CHUNK_SIZE = 1800
+DEFAULT_JSON_CHUNK_SIZE = 1500
 
 
 def _utc_now() -> datetime:
@@ -146,10 +153,24 @@ class TutorKnowledgeFileWorker:
             if not extracted_text.strip():
                 raise RuntimeError('No text extracted from file')
 
+            await tutor_knowledge_storage_service.update_file(
+                {
+                    **file_payload,
+                    'status': 'PROCESSING',
+                    'progress': 50,
+                    'updatedAt': _utc_now().isoformat(),
+                    'metadata': {
+                        'stage': 'chunking',
+                        'sourceType': Path(file_payload['filename']).suffix.lower().lstrip('.'),
+                    },
+                }
+            )
+
             chunks = self._build_chunks(
                 file_id=file_id,
                 extracted_text=extracted_text,
                 content_type=content_type,
+                source_type=file_payload.get('sourceType'),
             )
             await tutor_knowledge_storage_service.update_file(
                 {
@@ -158,7 +179,11 @@ class TutorKnowledgeFileWorker:
                     'progress': 60,
                     'chunkCount': len(chunks),
                     'updatedAt': _utc_now().isoformat(),
-                    'metadata': {'stage': 'embedding'},
+                    'metadata': {
+                        'stage': 'embedding',
+                        'graphStage': 'pending',
+                        'sourceType': file_payload.get('sourceType'),
+                    },
                 }
             )
 
@@ -174,6 +199,36 @@ class TutorKnowledgeFileWorker:
                 vectors=chunks,
                 embeddings=embeddings,
             )
+
+            graph_document_id = await self._upsert_graph_document(
+                file_payload=file_payload,
+                file_bytes=file_bytes,
+                extracted_text=extracted_text,
+                content_type=content_type,
+                chunks=chunks,
+                embeddings=embeddings,
+                embedding_model=embedding_model,
+            )
+
+            await tutor_knowledge_storage_service.update_file(
+                {
+                    **file_payload,
+                    'status': 'PROCESSING',
+                    'progress': 85,
+                    'chunkCount': len(chunks),
+                    'vectorCount': len(chunks),
+                    'embeddingModel': embedding_model,
+                    'graphDocumentId': graph_document_id,
+                    'updatedAt': _utc_now().isoformat(),
+                    'metadata': {
+                        'stage': 'graphing',
+                        'graphStage': 'building',
+                        'sourceType': file_payload.get('sourceType'),
+                        'contentType': content_type,
+                    },
+                }
+            )
+
             await tutor_knowledge_storage_service.update_file(
                 {
                     **file_payload,
@@ -182,9 +237,15 @@ class TutorKnowledgeFileWorker:
                     'chunkCount': len(chunks),
                     'vectorCount': len(chunks),
                     'embeddingModel': embedding_model,
+                    'graphDocumentId': graph_document_id,
                     'updatedAt': _utc_now().isoformat(),
                     'completedAt': _utc_now().isoformat(),
-                    'metadata': {'stage': 'completed'},
+                    'metadata': {
+                        'stage': 'completed',
+                        'graphStage': 'completed',
+                        'sourceType': file_payload.get('sourceType'),
+                        'contentType': content_type,
+                    },
                 }
             )
         except Exception as exc:
@@ -197,7 +258,11 @@ class TutorKnowledgeFileWorker:
                     'errorMessage': str(exc),
                     'updatedAt': _utc_now().isoformat(),
                     'completedAt': _utc_now().isoformat(),
-                    'metadata': {'stage': 'failed'},
+                    'metadata': {
+                        'stage': 'failed',
+                        'graphStage': 'failed',
+                        'sourceType': file_payload.get('sourceType'),
+                    },
                 }
             )
 
@@ -230,6 +295,14 @@ class TutorKnowledgeFileWorker:
             extracted = await asyncio.to_thread(pdf_ocr_service.extract_text_from_pdf, file_bytes)
             return extracted, 'text'
 
+        if suffix == '.json' or mime_type in {'application/json', 'text/json'}:
+            text = file_bytes.decode('utf-8', errors='ignore')
+            try:
+                normalized, _dataset_type = normalize_json_dataset(text)
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+            return normalized, 'json'
+
         if suffix in IMAGE_FILE_EXTENSIONS or mime_type.startswith('image/'):
             try:
                 import pytesseract
@@ -252,9 +325,12 @@ class TutorKnowledgeFileWorker:
         file_id: str,
         extracted_text: str,
         content_type: str,
+        source_type: str | None = None,
     ) -> list[dict[str, Any]]:
         if content_type == 'code':
             chunk_contents = _split_code_chunks(extracted_text, DEFAULT_CODE_CHUNK_SIZE)
+        elif content_type == 'json' or source_type == 'json':
+            chunk_contents = _split_text_chunks(extracted_text, DEFAULT_JSON_CHUNK_SIZE)
         else:
             chunk_contents = _split_text_chunks(extracted_text, DEFAULT_TEXT_CHUNK_SIZE)
 
@@ -269,10 +345,168 @@ class TutorKnowledgeFileWorker:
                 'metadata': {
                     'fileId': file_id,
                     'contentType': content_type,
+                    'sourceType': source_type,
                 },
             }
             for index, content in enumerate(chunk_contents)
         ]
+
+    async def _upsert_graph_document(
+        self,
+        *,
+        file_payload: dict[str, Any],
+        file_bytes: bytes,
+        extracted_text: str,
+        content_type: str,
+        chunks: list[dict[str, Any]],
+        embeddings: list[list[float]],
+        embedding_model: str,
+    ) -> str:
+        document_id = file_payload.get('graphDocumentId') or file_payload['fileId']
+        dataset_version = f"knowledge-file:{file_payload['userId']}"
+        job_id = f"knowledge-file:{file_payload['fileId']}"
+        source_type = file_payload.get('sourceType') or Path(file_payload['filename']).suffix.lower().lstrip('.')
+        language = (file_payload.get('language') or content_type or 'text').lower()
+
+        await tutor_storage_service.create_job(
+            {
+                'jobId': job_id,
+                'datasetVersion': dataset_version,
+                'status': 'completed',
+                'sourcePath': file_payload['filename'],
+                'triggeredBy': 'knowledge-file-upload',
+                'courseCode': file_payload.get('courseCode') or 'KNOWLEDGE_BASE',
+                'language': language,
+                'topic': file_payload.get('topic'),
+                'difficulty': file_payload.get('difficulty'),
+                'reindexMode': 'incremental',
+                'licenseTag': None,
+                'dryRun': False,
+                'summary': {
+                    'chunkCount': len(chunks),
+                    'vectorCount': len(chunks),
+                    'sourceType': source_type,
+                },
+                'warnings': [],
+                'errors': [],
+                'createdAt': _utc_now().isoformat(),
+                'startedAt': _utc_now().isoformat(),
+                'finishedAt': _utc_now().isoformat(),
+            }
+        )
+
+        await tutor_storage_service.upsert_document(
+            {
+                'document_id': document_id,
+                'source_path': file_payload['filename'],
+                'source_type': source_type,
+                'checksum': _sha256_bytes(file_bytes),
+                'title': file_payload['filename'],
+                'language': language,
+                'course_code': file_payload.get('courseCode') or 'KNOWLEDGE_BASE',
+                'topic': file_payload.get('topic'),
+                'difficulty': file_payload.get('difficulty'),
+                'license_tag': None,
+                'status': 'completed',
+                'chunk_count': len(chunks),
+                'error': None,
+            },
+            job_id,
+            dataset_version,
+        )
+
+        graph_chunks = [
+            {
+                'chunk_id': chunk['id'],
+                'content': chunk['content'],
+                'content_type': chunk['contentType'],
+                'language': language,
+                'topic': file_payload.get('topic'),
+                'difficulty': file_payload.get('difficulty'),
+                'token_count': chunk['tokenCount'],
+                'checksum': chunk['checksum'],
+                'chunk_index': chunk['chunkIndex'],
+                'start_offset': extracted_text.find(chunk['content']),
+                'end_offset': extracted_text.find(chunk['content']) + len(chunk['content']),
+            }
+            for chunk in chunks
+        ]
+
+        await tutor_storage_service.replace_document_chunks(
+            job_id=job_id,
+            dataset_version=dataset_version,
+            document_id=document_id,
+            embedding_model=embedding_model,
+            chunks=graph_chunks,
+            embeddings=embeddings,
+        )
+
+        await tutor_storage_service.update_job(
+            {
+                'jobId': job_id,
+                'datasetVersion': dataset_version,
+                'status': 'completed',
+                'sourcePath': file_payload['filename'],
+                'triggeredBy': 'knowledge-file-upload',
+                'courseCode': file_payload.get('courseCode') or 'KNOWLEDGE_BASE',
+                'language': language,
+                'topic': file_payload.get('topic'),
+                'difficulty': file_payload.get('difficulty'),
+                'reindexMode': 'incremental',
+                'licenseTag': None,
+                'dryRun': False,
+                'summary': {
+                    'chunkCount': len(chunks),
+                    'vectorCount': len(chunks),
+                    'sourceType': source_type,
+                },
+                'warnings': [],
+                'errors': [],
+                'startedAt': _utc_now().isoformat(),
+                'finishedAt': _utc_now().isoformat(),
+            }
+        )
+
+        for chunk in chunks:
+            graph = extract_knowledge_graph(
+                content=chunk['content'],
+                content_type=chunk['contentType'],
+                language=file_payload.get('language') or content_type,
+                metadata={
+                    'sourceType': source_type,
+                    'filename': file_payload['filename'],
+                },
+            )
+            entities = [
+                {
+                    'entityId': f"tge_{uuid4().hex[:12]}",
+                    'entityType': entity.entity_type,
+                    'name': entity.name,
+                    'canonicalName': entity.canonical_name,
+                    'language': entity.language,
+                    'properties': entity.properties,
+                }
+                for entity in graph.entities
+            ]
+            relations = [
+                {
+                    'relationId': f"tgr_{uuid4().hex[:12]}",
+                    'relationType': relation.relation_type,
+                    'fromCanonicalName': relation.from_name,
+                    'toCanonicalName': relation.to_name,
+                    'weight': relation.weight,
+                }
+                for relation in graph.relations
+            ]
+            await tutor_storage_service.replace_chunk_graph(
+                dataset_version=dataset_version,
+                document_id=document_id,
+                chunk_id=chunk['id'],
+                entities=entities,
+                relations=relations,
+            )
+
+        return document_id
 
 
 tutor_knowledge_file_worker = TutorKnowledgeFileWorker()
