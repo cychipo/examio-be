@@ -106,7 +106,15 @@ export class AuthController {
         // Extract device info from request
         const deviceInfo = this.extractDeviceInfo(request);
 
-        const { token, user, success, sessionId, deviceId, message } =
+        const {
+            token,
+            user,
+            success,
+            sessionId,
+            refreshToken,
+            deviceId,
+            message,
+        } =
             await this.authService.register(registerDto, deviceInfo);
 
         const cookieConfig = getCookieConfig({
@@ -119,12 +127,16 @@ export class AuthController {
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
         }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
+        }
 
         return {
             message,
             user,
             success,
             token,
+            refreshToken,
             deviceId,
         };
     }
@@ -149,7 +161,7 @@ export class AuthController {
         // Extract device info from request
         const deviceInfo = this.extractDeviceInfo(request);
 
-        const { token, user, success, sessionId, deviceId } =
+        const { token, user, success, sessionId, refreshToken, deviceId } =
             await this.authService.login(loginDto, deviceInfo);
 
         const cookieConfig = getCookieConfig({
@@ -161,11 +173,15 @@ export class AuthController {
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
         }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
+        }
 
         return {
             user,
             success,
             token,
+            refreshToken,
             deviceId,
         };
     }
@@ -183,6 +199,11 @@ export class AuthController {
         @Req() request: Request,
         @Res({ passthrough: true }) response: ExpressResponse
     ) {
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
+
         // Extract session ID from cookie
         const sessionId = request.cookies?.session_id;
 
@@ -192,9 +213,10 @@ export class AuthController {
         }
 
         // Clear cookies
-        response.clearCookie('token');
-        response.clearCookie('refreshToken');
-        response.clearCookie('session_id');
+        response.clearCookie('token', cookieConfig);
+        response.clearCookie('accessToken', cookieConfig);
+        response.clearCookie('refreshToken', cookieConfig);
+        response.clearCookie('session_id', cookieConfig);
         return { success: true };
     }
 
@@ -232,6 +254,8 @@ export class AuthController {
             return {
                 success: true,
                 token: result.token,
+                refreshToken: result.refreshToken,
+                user: result.user,
             };
         } catch (error) {
             throw new UnauthorizedException('Invalid or expired refresh token');
@@ -344,7 +368,7 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId } = req.user;
+        const { token, sessionId, refreshToken } = req.user;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -354,6 +378,9 @@ export class AuthController {
         res.cookie('token', token, cookieConfig);
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
+        }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
         }
 
         const frontendUrl = (
@@ -390,7 +417,7 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId } = req.user;
+        const { token, sessionId, refreshToken } = req.user;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -400,6 +427,9 @@ export class AuthController {
         res.cookie('token', token, cookieConfig);
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
+        }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
         }
 
         const frontendUrl = (
@@ -436,7 +466,7 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId } = req.user;
+        const { token, sessionId, refreshToken } = req.user;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -446,6 +476,9 @@ export class AuthController {
         res.cookie('token', token, cookieConfig);
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
+        }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
         }
 
         const frontendUrl = (

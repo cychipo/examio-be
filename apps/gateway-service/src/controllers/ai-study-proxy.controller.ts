@@ -269,34 +269,6 @@ export class AIProxyController {
         return response.data;
     }
 
-    @Get('tutor/knowledge-files/:fileId')
-    @ApiOperation({ summary: 'Lấy trạng thái file tri thức tutor' })
-    async getTutorKnowledgeFileStatus(@Param('fileId') fileId: string, @Req() req: Request) {
-        return this.proxyService.forwardWithAuth(
-            'exam',
-            {
-                method: 'GET',
-                path: `/api/v1/ai/tutor/knowledge-files/${fileId}`,
-                headers: this.h(req),
-            },
-            this.t(req)
-        );
-    }
-
-    @Delete('tutor/knowledge-files/:fileId')
-    @ApiOperation({ summary: 'Xóa file tri thức tutor' })
-    async deleteTutorKnowledgeFile(@Param('fileId') fileId: string, @Req() req: Request) {
-        return this.proxyService.forwardWithAuth(
-            'exam',
-            {
-                method: 'DELETE',
-                path: `/api/v1/ai/tutor/knowledge-files/${fileId}`,
-                headers: this.h(req),
-            },
-            this.t(req)
-        );
-    }
-
     @Post('tutor/knowledge-folders')
     @ApiOperation({ summary: 'Tạo folder tri thức tutor' })
     async createTutorKnowledgeFolder(@Body() body: any, @Req() req: Request) {
@@ -412,6 +384,34 @@ export class AIProxyController {
             {
                 method: 'GET',
                 path: `/api/v1/ai/tutor/knowledge-files/search${queryString}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-files/:fileId')
+    @ApiOperation({ summary: 'Lấy trạng thái file tri thức tutor' })
+    async getTutorKnowledgeFileStatus(@Param('fileId') fileId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/knowledge-files/${fileId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete('tutor/knowledge-files/:fileId')
+    @ApiOperation({ summary: 'Xóa file tri thức tutor' })
+    async deleteTutorKnowledgeFile(@Param('fileId') fileId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/ai/tutor/knowledge-files/${fileId}`,
                 headers: this.h(req),
             },
             this.t(req)

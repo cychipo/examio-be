@@ -54,6 +54,19 @@ export class UserSessionRepository {
         });
     }
 
+    async rotateRefreshToken(
+        sessionId: string,
+        refreshToken: string
+    ): Promise<void> {
+        await this.prisma.userSession.update({
+            where: { sessionId },
+            data: {
+                refreshToken,
+                lastActivity: new Date(),
+            },
+        });
+    }
+
     async deactivateSession(id: string): Promise<void> {
         await this.prisma.userSession.update({
             where: { id },

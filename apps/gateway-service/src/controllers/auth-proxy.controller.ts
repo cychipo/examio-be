@@ -89,6 +89,21 @@ export class AuthProxyController {
         });
     }
 
+    @Post('refresh')
+    @ApiOperation({ summary: 'Làm mới access token' })
+    @ApiResponse({ status: 200, description: 'Làm mới token thành công' })
+    async refresh(@Req() req: Request, @Res() res: Response) {
+        const result = await this.proxyService.forward('auth', {
+            method: 'POST',
+            path: '/api/v1/auth/refresh',
+            headers: this.extractHeaders(req),
+            cookies: req.cookies,
+        });
+
+        this.setAuthCookies(res, result, req);
+        return res.json(result);
+    }
+
     @Get('google')
     @ApiOperation({ summary: 'Đăng nhập bằng Google' })
     async googleAuth(@Req() req: Request, @Res() res: Response) {

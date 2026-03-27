@@ -2,6 +2,7 @@ import {
     Controller,
     Get,
     Post,
+    Put,
     Delete,
     Body,
     Param,
@@ -167,24 +168,6 @@ export class AIController {
         @Body() dto: TutorKnowledgeUploadDto
     ) {
         return this.aiService.uploadTutorKnowledgeFile(req.user, file, dto);
-    }
-
-    @Get('tutor/knowledge-files/:fileId')
-    @UseGuards(AuthGuard, RolesGuard)
-    @Roles('teacher')
-    @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Lấy trạng thái xử lý file tri thức tutor' })
-    async getTutorKnowledgeFileStatus(@Param('fileId') fileId: string) {
-        return this.aiService.getTutorKnowledgeFileStatus(fileId);
-    }
-
-    @Delete('tutor/knowledge-files/:fileId')
-    @UseGuards(AuthGuard, RolesGuard)
-    @Roles('teacher')
-    @ApiCookieAuth('cookie-auth')
-    @ApiOperation({ summary: 'Xóa file tri thức tutor và object trên R2' })
-    async deleteTutorKnowledgeFile(@Param('fileId') fileId: string) {
-        return this.aiService.deleteTutorKnowledgeFile(fileId);
     }
 
     @Post('tutor/knowledge-folders')

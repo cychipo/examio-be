@@ -41,6 +41,8 @@ type OAuthRole = 'teacher' | 'student';
 
 @Injectable()
 export class AuthService {
+    private readonly sessionTtlMs = 30 * 24 * 60 * 60 * 1000;
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly userRepository: UserRepository,
@@ -691,7 +693,7 @@ export class AuthService {
 
     async refreshAccessToken(
         refreshToken: string
-    ): Promise<{ token: string; user: any }> {
+    ): Promise<{ token: string; refreshToken: string; user: any }> {
         // Find session by refresh token
         const session =
             await this.userSessionRepository.findByRefreshToken(refreshToken);
@@ -717,12 +719,17 @@ export class AuthService {
 
         // Generate new access token
         const token = this.jwtService.sign({ userId: user.id });
+        const nextRefreshToken = this.generateRefreshToken();
 
-        // Update last activity
-        await this.userSessionRepository.updateLastActivity(session.sessionId);
+        // Rotate refresh token and update last activity
+        await this.userSessionRepository.rotateRefreshToken(
+            session.sessionId,
+            nextRefreshToken
+        );
 
         return {
             token,
+            refreshToken: nextRefreshToken,
             user: sanitizeUser(user),
         };
     }
@@ -732,7 +739,7 @@ export class AuthService {
         deviceInfo: DeviceInfo
     ): Promise<{ sessionId: string; refreshToken: string }> {
         const sessionId = this.generateIdService.generateId();
-        const refreshToken = this.generateIdService.generateId(); // Generate unique refresh token
+        const refreshToken = this.generateRefreshToken();
         const { browser, os, deviceName } = this.parseUserAgent(
             deviceInfo.userAgent || ''
         );
@@ -749,10 +756,14 @@ export class AuthService {
             ipAddress: deviceInfo.ipAddress || null,
             country: null,
             city: null,
-            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+            expiresAt: new Date(Date.now() + this.sessionTtlMs),
         });
 
         return { sessionId, refreshToken };
+    }
+
+    private generateRefreshToken(): string {
+        return `${this.generateIdService.generateId()}_${this.generateIdService.generateId()}`;
     }
 
     private parseUserAgent(userAgent: string): {

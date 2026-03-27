@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import asyncpg
@@ -13,10 +13,15 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_timestamp(value: Any) -> Any:
-    if value is None or isinstance(value, datetime):
+    if value is None:
         return value
+
     if isinstance(value, str):
-        return datetime.fromisoformat(value)
+        value = datetime.fromisoformat(value)
+
+    if isinstance(value, datetime) and value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+
     return value
 
 
