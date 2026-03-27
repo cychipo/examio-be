@@ -34,7 +34,8 @@ import { ProfileModule } from './profile/profile.module';
         JwtModule.register({
             secret: process.env.JWT_SECRET,
             signOptions: {
-                expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m',
+                expiresIn: (process.env.ACCESS_TOKEN_EXPIRATION ||
+                    '15m') as any,
             },
         }),
         PassportModule.register({ session: true }),

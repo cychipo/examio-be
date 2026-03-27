@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -33,6 +34,22 @@ def _normalize_timestamp(value: Any) -> Any:
     if isinstance(value, datetime) and value.tzinfo is not None:
         return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
+
+
+def _normalize_metadata(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+class DatasetImportCancelledError(Exception):
+    pass
 
 
 DATASET_CATALOG: list[dict[str, Any]] = [
@@ -184,7 +201,7 @@ class TutorDatasetImportService:
         existing = await self.get_existing_dataset_import(user_id=user_id, dataset_key=dataset_key)
         if existing:
             imported_folder_id = existing.get('importedFolderId') or existing.get('folderId')
-            if existing.get('status') in {'queued', 'downloading', 'processing', 'cancel_requested'}:
+            if existing.get('status') in {'queued', 'downloading', 'processing', 'cancelling'}:
                 raise ValueError('Dataset này đang được nạp rồi, vui lòng chờ hoàn tất hoặc hủy job hiện tại')
             if existing.get('status') == 'completed':
                 raise ValueError(
@@ -252,9 +269,9 @@ class TutorDatasetImportService:
 
         await self._update_job(
             job_id,
-            status='cancel_requested',
-            stage='cancel_requested',
-            message='Đã nhận yêu cầu hủy. Hệ thống sẽ xóa toàn bộ dữ liệu đã nạp của dataset này.',
+            status='cancelling',
+            stage='cancelling',
+            message='Đang hủy job và dọn dữ liệu đã nạp...',
         )
         return await self.get_job(job_id) or job
 
@@ -276,7 +293,8 @@ class TutorDatasetImportService:
         job = await self.get_job(job_id)
         if job is None:
             return
-        dataset = (job.get('metadata') or {}).get('dataset') or self._get_dataset(job['datasetKey'])
+        metadata = _normalize_metadata(job.get('metadata'))
+        dataset = metadata.get('dataset') or self._get_dataset(job['datasetKey'])
         try:
             await self._update_job(job_id, status='downloading', progress=5, stage='downloading', message='Đang tải dataset về máy chủ')
             source_path = await self._download_dataset(dataset, job_id)
@@ -310,7 +328,7 @@ class TutorDatasetImportService:
             await self._update_job(job_id, ingestJobId=ingest_job.job_id)
 
             while True:
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
                 if await self._is_cancel_requested(job_id):
                     await self._cleanup_job(job_id, source_path=source_path, ingest_job_id=ingest_job.job_id)
                     return
@@ -318,15 +336,13 @@ class TutorDatasetImportService:
                 if ingest_snapshot is None:
                     continue
                 summary = ingest_snapshot.get('summary') or {}
-                processed_files = summary.get('processed_files', 0) or summary.get('processedFiles', 0) or 0
-                total = summary.get('total_files', 0) or summary.get('totalFiles', 0) or total_files
                 if isinstance(summary, str):
                     try:
-                        parsed_summary = json.loads(summary)
+                        summary = json.loads(summary)
                     except json.JSONDecodeError:
-                        parsed_summary = {}
-                    processed_files = parsed_summary.get('processed_files', 0)
-                    total = parsed_summary.get('total_files', total_files)
+                        summary = {}
+                processed_files = summary.get('processed_files', 0) or summary.get('processedFiles', 0) or 0
+                total = summary.get('total_files', 0) or summary.get('totalFiles', 0) or total_files
                 progress = 35 if not total else min(99, 35 + int((processed_files / max(total, 1)) * 64))
                 await self._update_job(
                     job_id,
@@ -362,6 +378,8 @@ class TutorDatasetImportService:
             )
             if source_path.exists():
                 shutil.rmtree(source_path, ignore_errors=True)
+        except DatasetImportCancelledError:
+            await self._cleanup_job(job_id)
         except Exception as exc:
             logger.exception('Dataset import job failed: %s', job_id)
             await self._update_job(
@@ -389,6 +407,17 @@ class TutorDatasetImportService:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            while process.returncode is None:
+                if await self._is_cancel_requested(job_id):
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=3)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+                    raise DatasetImportCancelledError()
+                await asyncio.sleep(0.5)
+
             stdout, stderr = await process.communicate()
             if process.returncode != 0:
                 raise RuntimeError(stderr.decode() or stdout.decode() or 'Git clone failed')
@@ -402,8 +431,12 @@ class TutorDatasetImportService:
     async def _materialize_huggingface_dataset(self, dataset: dict[str, Any], target_root: Path, job_id: str) -> Path:
         try:
             from datasets import load_dataset
-        except Exception as exc:  # pragma: no cover - environment dependent
-            raise RuntimeError('Missing datasets package for Hugging Face imports') from exc
+        except Exception:
+            return await self._materialize_huggingface_dataset_via_subprocess(
+                dataset,
+                target_root,
+                job_id,
+            )
 
         target_root.mkdir(parents=True, exist_ok=True)
         repository = dataset['repository']
@@ -412,10 +445,14 @@ class TutorDatasetImportService:
 
         file_count = 0
         for split_name, split in builder.items():
+            if await self._is_cancel_requested(job_id):
+                raise DatasetImportCancelledError()
             split_token = str(split_name)
             split_dir = target_root / split_token
             split_dir.mkdir(parents=True, exist_ok=True)
             for index, row in enumerate(split):
+                if await self._is_cancel_requested(job_id):
+                    raise DatasetImportCancelledError()
                 row_payload = dict(row)
                 path = split_dir / self._build_hf_file_name(dataset['datasetKey'], split_token, index)
                 path.write_text(self._format_hf_row(dataset['datasetKey'], row_payload, index), encoding='utf-8')
@@ -431,6 +468,135 @@ class TutorDatasetImportService:
                     )
 
         return target_root
+
+    async def _materialize_huggingface_dataset_via_subprocess(
+        self,
+        dataset: dict[str, Any],
+        target_root: Path,
+        job_id: str,
+    ) -> Path:
+        target_root.mkdir(parents=True, exist_ok=True)
+
+        helper_code = r'''
+import json
+import sys
+from pathlib import Path
+
+from datasets import load_dataset
+
+dataset = json.loads(sys.argv[1])
+target_root = Path(sys.argv[2])
+
+def format_row(dataset_key, row, index):
+    if dataset_key == 'humaneval-python':
+        return '\n\n'.join(
+            part for part in [
+                f"Task: {row.get('task_id', f'humaneval_{index}')}",
+                row.get('prompt', ''),
+                '# Canonical solution',
+                row.get('canonical_solution', ''),
+                '# Test',
+                row.get('test', ''),
+            ] if part
+        )
+    if dataset_key == 'mbpp-python':
+        return '\n\n'.join(
+            part for part in [
+                f"Task ID: {row.get('task_id', index)}",
+                row.get('text', ''),
+                '# Code',
+                row.get('code', ''),
+                '# Tests',
+                '\n'.join(row.get('test_list', []) or []),
+                '# Challenge tests',
+                '\n'.join(row.get('challenge_test_list', []) or []),
+            ] if part
+        )
+    if dataset_key == 'codesearchnet-python':
+        return '\n\n'.join(
+            part for part in [
+                row.get('docstring') or row.get('func_documentation_string') or '',
+                row.get('whole_func_string') or row.get('func_code_string') or '',
+            ] if part
+        )
+    return json.dumps(row, ensure_ascii=False, indent=2)
+
+def build_file_name(dataset_key, split_name, index):
+    extension = 'json'
+    if dataset_key in {'humaneval-python', 'mbpp-python', 'codesearchnet-python'}:
+        extension = 'py'
+    return f'{dataset_key}_{split_name}_{index:06d}.{extension}'
+
+repository = dataset['repository']
+config = dataset.get('config')
+builder = load_dataset(repository, config) if config else load_dataset(repository)
+file_count = 0
+
+for split_name, split in builder.items():
+    split_token = str(split_name)
+    split_dir = target_root / split_token
+    split_dir.mkdir(parents=True, exist_ok=True)
+    for index, row in enumerate(split):
+        payload = dict(row)
+        path = split_dir / build_file_name(dataset['datasetKey'], split_token, index)
+        path.write_text(format_row(dataset['datasetKey'], payload, index), encoding='utf-8')
+        file_count += 1
+        if file_count % 50 == 0:
+            print(json.dumps({'type': 'progress', 'count': file_count}), flush=True)
+
+print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
+'''
+
+        candidates = [os.getenv('DATASET_IMPORT_PYTHON'), 'python3', sys.executable]
+        last_error = 'No available Python interpreter for dataset import'
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            process = await asyncio.create_subprocess_exec(
+                candidate,
+                '-c',
+                helper_code,
+                json.dumps(dataset),
+                str(target_root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            while True:
+                if await self._is_cancel_requested(job_id):
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=3)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+                    raise DatasetImportCancelledError()
+
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                try:
+                    payload = json.loads(line.decode().strip())
+                except json.JSONDecodeError:
+                    continue
+                if payload.get('type') == 'progress':
+                    count = int(payload.get('count', 0))
+                    await self._update_job(
+                        job_id,
+                        status='downloading',
+                        progress=min(30, 5 + count // 50),
+                        stage='downloading',
+                        downloadedFiles=count,
+                        message=f'Đã tải và materialize {count} mẫu dataset',
+                    )
+
+            stdout, stderr = await process.communicate()
+            if process.returncode == 0:
+                return target_root
+            last_error = stderr.decode() or stdout.decode() or f'Failed with interpreter {candidate}'
+
+        raise RuntimeError(f'Hugging Face dataset import failed: {last_error}')
 
     def _format_hf_row(self, dataset_key: str, row: dict[str, Any], index: int) -> str:
         if dataset_key == 'humaneval-python':
@@ -473,7 +639,7 @@ class TutorDatasetImportService:
         return f'{dataset_key}_{split_name}_{index:06d}.{extension}'
 
     def _dataset_root(self) -> Path:
-        return Path(__file__).resolve().parents[5] / 'data-source' / 'dataset-imports'
+        return Path(__file__).resolve().parents[6] / 'data-source' / 'dataset-imports'
 
     def _count_supported_files(self, source_path: Path) -> int:
         return len([path for path in source_path.rglob('*') if path.is_file() and path.suffix.lower() in {'.py', '.c', '.h', '.txt', '.md', '.markdown', '.pdf', '.docx'}])
@@ -493,7 +659,7 @@ class TutorDatasetImportService:
 
     async def _is_cancel_requested(self, job_id: str) -> bool:
         job = await self.get_job(job_id)
-        return bool(job and job.get('status') == 'cancel_requested')
+        return bool(job and job.get('status') == 'cancelling')
 
     async def _cleanup_job(
         self,
@@ -599,7 +765,7 @@ class TutorDatasetImportService:
             )
 
     def _map_row(self, row: asyncpg.Record) -> dict[str, Any]:
-        metadata = row['metadata'] or {}
+        metadata = _normalize_metadata(row['metadata'])
         return {
             'jobId': row['id'],
             'userId': row['userId'],

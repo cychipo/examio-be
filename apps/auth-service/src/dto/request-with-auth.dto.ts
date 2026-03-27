@@ -9,5 +9,6 @@ export interface AuthenticatedOauthRequest extends Request {
         user: User;
         token?: string;
         sessionId?: string;
+        refreshToken?: string;
     };
 }

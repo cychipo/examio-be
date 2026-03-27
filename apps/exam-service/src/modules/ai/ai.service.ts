@@ -7,6 +7,7 @@ import {
     ServiceUnavailableException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { AxiosError } from 'axios';
 import { User } from '@prisma/client';
 import {
     GenerateIdService,
@@ -64,6 +65,30 @@ export class AIService {
         }
 
         return null;
+    }
+
+    private rethrowAiHttpError(error: unknown): never {
+        const axiosError = error as AxiosError<{
+            detail?: string;
+            error?: string;
+            message?: string;
+            status_code?: number;
+        }>;
+
+        const status = axiosError.response?.status;
+        const data = axiosError.response?.data;
+        const message =
+            data?.detail || data?.error || data?.message || axiosError.message;
+
+        if (status === 400) {
+            throw new BadRequestException(message);
+        }
+
+        if (status === 404) {
+            throw new NotFoundException(message);
+        }
+
+        throw new InternalServerErrorException(message);
     }
 
     private async clearAiServiceCache(userStorageId: string) {
@@ -823,14 +848,18 @@ export class AIService {
     }
 
     async createTutorDatasetImport(user: User, payload: { folderId?: string; datasetKey: string }) {
-        const response = await firstValueFrom(
-            this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports`, {
-                userId: user.id,
-                folderId: payload.folderId,
-                datasetKey: payload.datasetKey,
-            })
-        );
-        return response.data;
+        try {
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports`, {
+                    userId: user.id,
+                    folderId: payload.folderId,
+                    datasetKey: payload.datasetKey,
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
     }
 
     async listTutorDatasetImports(user: User) {
@@ -843,17 +872,25 @@ export class AIService {
     }
 
     async getTutorDatasetImportJob(jobId: string) {
-        const response = await firstValueFrom(
-            this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}`)
-        );
-        return response.data;
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}`)
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
     }
 
     async cancelTutorDatasetImportJob(jobId: string) {
-        const response = await firstValueFrom(
-            this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}/cancel`, {})
-        );
-        return response.data;
+        try {
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}/cancel`, {})
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
     }
 
     async searchTutorKnowledgeFiles(
