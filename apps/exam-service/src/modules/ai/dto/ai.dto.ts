@@ -127,3 +127,149 @@ export class GenerateFromFileDto extends createZodDto(GenerateFromFileSchema) {
     })
     modelType?: string;
 }
+
+export const TutorMessageSchema = z.object({
+    role: z.string(),
+    content: z.string(),
+});
+
+export const TutorIngestSchema = z.object({
+    sourcePath: z.string(),
+    courseCode: z.string(),
+    language: z.string().optional(),
+    topic: z.string().optional(),
+    difficulty: z.enum(['basic', 'intermediate', 'advanced']).optional(),
+    reindexMode: z
+        .enum(['incremental', 'full', 'graph-only', 'embedding-only'])
+        .optional(),
+    licenseTag: z.string().optional(),
+    dryRun: z.boolean().optional(),
+    triggeredBy: z.string().optional(),
+});
+
+export class TutorIngestDto extends createZodDto(TutorIngestSchema) {
+    @ApiProperty({ description: 'Đường dẫn nguồn dữ liệu' })
+    sourcePath: string;
+
+    @ApiProperty({ description: 'Mã học phần' })
+    courseCode: string;
+
+    @ApiProperty({ description: 'Ngôn ngữ', required: false })
+    language?: string;
+
+    @ApiProperty({ description: 'Chủ đề', required: false })
+    topic?: string;
+
+    @ApiProperty({ required: false, enum: ['basic', 'intermediate', 'advanced'] })
+    difficulty?: 'basic' | 'intermediate' | 'advanced';
+
+    @ApiProperty({
+        required: false,
+        enum: ['incremental', 'full', 'graph-only', 'embedding-only'],
+    })
+    reindexMode?: 'incremental' | 'full' | 'graph-only' | 'embedding-only';
+
+    @ApiProperty({ required: false })
+    licenseTag?: string;
+
+    @ApiProperty({ required: false })
+    dryRun?: boolean;
+
+    @ApiProperty({ required: false })
+    triggeredBy?: string;
+}
+
+export const TutorQuerySchema = z.object({
+    query: z.string(),
+    history: z.array(TutorMessageSchema).optional(),
+    courseCode: z.string(),
+    language: z.string().optional(),
+    topic: z.string().optional(),
+    difficulty: z.enum(['basic', 'intermediate', 'advanced']).optional(),
+    topK: z.number().int().min(1).max(10).optional(),
+    modelType: z.string().optional(),
+});
+
+export class TutorQueryDto extends createZodDto(TutorQuerySchema) {
+    @ApiProperty({ description: 'Câu hỏi của người dùng' })
+    query: string;
+
+    @ApiProperty({ required: false, type: [Object] })
+    history?: Array<{ role: string; content: string }>;
+
+    @ApiProperty({ description: 'Mã học phần' })
+    courseCode: string;
+
+    @ApiProperty({ required: false })
+    language?: string;
+
+    @ApiProperty({ required: false })
+    topic?: string;
+
+    @ApiProperty({ required: false, enum: ['basic', 'intermediate', 'advanced'] })
+    difficulty?: 'basic' | 'intermediate' | 'advanced';
+
+    @ApiProperty({ required: false, minimum: 1, maximum: 10 })
+    topK?: number;
+
+    @ApiProperty({ required: false })
+    modelType?: string;
+}
+
+export const TutorKnowledgeUploadSchema = z.object({
+    folderId: z.string().optional(),
+    folderName: z.string().optional(),
+    folderDescription: z.string().optional(),
+    description: z.string().optional(),
+    courseCode: z.string().optional(),
+    language: z.string().optional(),
+    topic: z.string().optional(),
+    difficulty: z.enum(['basic', 'intermediate', 'advanced']).optional(),
+});
+
+export class TutorKnowledgeUploadDto extends createZodDto(TutorKnowledgeUploadSchema) {
+    @ApiProperty({ required: false })
+    folderId?: string;
+
+    @ApiProperty({ required: false })
+    folderName?: string;
+
+    @ApiProperty({ required: false })
+    folderDescription?: string;
+
+    @ApiProperty({ required: false })
+    description?: string;
+
+    @ApiProperty({ required: false })
+    courseCode?: string;
+
+    @ApiProperty({ required: false })
+    language?: string;
+
+    @ApiProperty({ required: false })
+    topic?: string;
+
+    @ApiProperty({ required: false, enum: ['basic', 'intermediate', 'advanced'] })
+    difficulty?: 'basic' | 'intermediate' | 'advanced';
+}
+
+export const TutorKnowledgeFolderSchema = z.object({
+    folderId: z.string().optional(),
+    name: z.string(),
+    description: z.string().optional(),
+    icon: z.string(),
+});
+
+export class TutorKnowledgeFolderDto extends createZodDto(TutorKnowledgeFolderSchema) {
+    @ApiProperty({ required: false })
+    folderId?: string;
+
+    @ApiProperty()
+    name: string;
+
+    @ApiProperty({ required: false })
+    description?: string;
+
+    @ApiProperty()
+    icon: string;
+}

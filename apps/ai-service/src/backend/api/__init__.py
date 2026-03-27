@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from .chat import router as chat_router
 from .file import router as file_router
 from .generation import router as generation_router
+from .tutor import router as tutor_router
 
 # Create main router
 router = APIRouter()
@@ -10,5 +11,6 @@ router = APIRouter()
 router.include_router(chat_router, prefix="/chat", tags=["chat"])
 router.include_router(file_router, prefix="/ai", tags=["ai"])
 router.include_router(generation_router, prefix="/generate", tags=["generation"])
+router.include_router(tutor_router, prefix="/tutor", tags=["tutor"])
 
 __all__ = ["router"]

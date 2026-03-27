@@ -30,6 +30,10 @@ import {
     RegenerateDto,
     UploadImageDto,
     GenerateFromFileDto,
+    TutorIngestDto,
+    TutorKnowledgeFolderDto,
+    TutorKnowledgeUploadDto,
+    TutorQueryDto,
 } from './dto/ai.dto';
 
 @ApiTags('AI')
@@ -136,6 +140,241 @@ export class AIController {
     @ApiResponse({ status: 200, description: 'Danh sach model AI' })
     async getModels() {
         return this.aiService.getModelCatalog();
+    }
+
+    @Post('tutor/ingest')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Tạo tutor ingest job (Teacher only)' })
+    async tutorIngest(
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: TutorIngestDto
+    ) {
+        return this.aiService.tutorIngest(req.user, dto);
+    }
+
+    @Post('tutor/knowledge-files')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Upload file tri thức cho GenAI Tutor (Teacher only)' })
+    @ApiConsumes('multipart/form-data')
+    async uploadTutorKnowledgeFile(
+        @Req() req: AuthenticatedRequest,
+        @UploadedFile() file: Express.Multer.File,
+        @Body() dto: TutorKnowledgeUploadDto
+    ) {
+        return this.aiService.uploadTutorKnowledgeFile(req.user, file, dto);
+    }
+
+    @Get('tutor/knowledge-files/:fileId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy trạng thái xử lý file tri thức tutor' })
+    async getTutorKnowledgeFileStatus(@Param('fileId') fileId: string) {
+        return this.aiService.getTutorKnowledgeFileStatus(fileId);
+    }
+
+    @Delete('tutor/knowledge-files/:fileId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Xóa file tri thức tutor và object trên R2' })
+    async deleteTutorKnowledgeFile(@Param('fileId') fileId: string) {
+        return this.aiService.deleteTutorKnowledgeFile(fileId);
+    }
+
+    @Post('tutor/knowledge-folders')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Tạo folder tri thức tutor' })
+    async createTutorKnowledgeFolder(
+        @Req() req: AuthenticatedRequest,
+        @Body() dto: TutorKnowledgeFolderDto
+    ) {
+        return this.aiService.createTutorKnowledgeFolder(req.user, dto);
+    }
+
+    @Put('tutor/knowledge-folders/:folderId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Cập nhật folder tri thức tutor' })
+    async updateTutorKnowledgeFolder(
+        @Req() req: AuthenticatedRequest,
+        @Param('folderId') folderId: string,
+        @Body() dto: TutorKnowledgeFolderDto
+    ) {
+        return this.aiService.updateTutorKnowledgeFolder(req.user, folderId, dto);
+    }
+
+    @Delete('tutor/knowledge-folders/:folderId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Xóa folder tri thức tutor' })
+    async deleteTutorKnowledgeFolder(@Param('folderId') folderId: string) {
+        return this.aiService.deleteTutorKnowledgeFolder(folderId);
+    }
+
+    @Get('tutor/knowledge-folders/:folderId/contents')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy nội dung folder tri thức tutor' })
+    async getTutorKnowledgeFolderContents(
+        @Req() req: AuthenticatedRequest,
+        @Param('folderId') folderId: string,
+        @Query('page') page?: string,
+        @Query('pageSize') pageSize?: string
+    ) {
+        return this.aiService.getTutorKnowledgeFolderContents(
+            req.user,
+            folderId,
+            page ? Number(page) : 1,
+            pageSize ? Number(pageSize) : 12
+        );
+    }
+
+    @Get('tutor/knowledge-folders')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy danh sách folder tri thức tutor' })
+    async listTutorKnowledgeFolders(@Req() req: AuthenticatedRequest) {
+        return this.aiService.listTutorKnowledgeFolders(req.user);
+    }
+
+    @Get('tutor/knowledge-stats')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy thống kê kho tri thức tutor' })
+    async getTutorKnowledgeStats(
+        @Req() req: AuthenticatedRequest,
+        @Query('folderId') folderId?: string,
+    ) {
+        return this.aiService.getTutorKnowledgeStats(req.user, folderId);
+    }
+
+    @Get('tutor/knowledge-files')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy danh sách file tri thức tutor' })
+    async listTutorKnowledgeFiles(@Req() req: AuthenticatedRequest) {
+        return this.aiService.listTutorKnowledgeFiles(req.user);
+    }
+
+    @Get('tutor/knowledge-files/search')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Filter/search/sort danh sách file tri thức tutor' })
+    async searchTutorKnowledgeFiles(
+        @Req() req: AuthenticatedRequest,
+        @Query('folderId') folderId?: string,
+        @Query('status') status?: string,
+        @Query('search') search?: string,
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: string,
+        @Query('page') page?: string,
+        @Query('pageSize') pageSize?: string
+    ) {
+        return this.aiService.searchTutorKnowledgeFiles(req.user, {
+            folderId,
+            status,
+            search,
+            sortBy,
+            sortOrder,
+            page: page ? Number(page) : 1,
+            pageSize: pageSize ? Number(pageSize) : 12,
+        });
+    }
+
+    @Post('tutor/knowledge-files/:fileId/reprocess')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Retry/reprocess file tri thức tutor' })
+    async reprocessTutorKnowledgeFile(@Param('fileId') fileId: string) {
+        return this.aiService.reprocessTutorKnowledgeFile(fileId);
+    }
+
+    @Post('tutor/knowledge-files/bulk-delete')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Bulk delete file tri thức tutor' })
+    async bulkDeleteTutorKnowledgeFiles(@Body('fileIds') fileIds: string[]) {
+        return this.aiService.bulkDeleteTutorKnowledgeFiles(fileIds);
+    }
+
+    @Post('tutor/knowledge-files/bulk-reprocess')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Bulk reprocess file tri thức tutor' })
+    async bulkReprocessTutorKnowledgeFiles(@Body('fileIds') fileIds: string[]) {
+        return this.aiService.bulkReprocessTutorKnowledgeFiles(fileIds);
+    }
+
+    @Get('tutor/ingest')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher', 'student')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy danh sách tutor ingest jobs' })
+    async listTutorIngestJobs() {
+        return this.aiService.listTutorIngestJobs();
+    }
+
+    @Get('tutor/ingest/:jobId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher', 'student')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy chi tiết tutor ingest job' })
+    async getTutorIngestJob(@Param('jobId') jobId: string) {
+        return this.aiService.getTutorIngestJob(jobId);
+    }
+
+    @Post('tutor/query')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher', 'student')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Hỏi tutor' })
+    async tutorQuery(@Body() dto: TutorQueryDto) {
+        return this.aiService.tutorQuery(dto);
+    }
+
+    @Post('tutor/stream')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher', 'student')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Hỏi tutor với streaming' })
+    async tutorStream(@Body() dto: TutorQueryDto) {
+        return this.aiService.tutorStream(dto);
+    }
+
+    @Get('tutor/graph/job/:jobId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Xem graph tutor theo job' })
+    async getTutorGraphByJob(@Param('jobId') jobId: string) {
+        return this.aiService.getTutorGraphByJob(jobId);
+    }
+
+    @Get('tutor/graph/document/:documentId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Xem graph tutor theo document' })
+    async getTutorGraphByDocument(@Param('documentId') documentId: string) {
+        return this.aiService.getTutorGraphByDocument(documentId);
     }
 
     @Get('upload/:uploadId')

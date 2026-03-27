@@ -54,6 +54,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f'Failed to ensure graph storage schema: {e}')
 
+    try:
+        from .services.tutor_storage_service import tutor_storage_service
+
+        await tutor_storage_service.ensure_schema()
+        logger.info('Tutor storage schema ensured')
+    except Exception as e:
+        logger.error(f'Failed to ensure tutor storage schema: {e}')
+
+    try:
+        from .services.tutor_knowledge_storage_service import (
+            tutor_knowledge_storage_service,
+        )
+
+        await tutor_knowledge_storage_service.ensure_schema()
+        logger.info('Tutor knowledge storage schema ensured')
+    except Exception as e:
+        logger.error(f'Failed to ensure tutor knowledge storage schema: {e}')
+
     yield
 
     # Shutdown: Close RabbitMQ consumer
