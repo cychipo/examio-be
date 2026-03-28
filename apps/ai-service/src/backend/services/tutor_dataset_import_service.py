@@ -7,13 +7,20 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any, Optional
 from uuid import uuid4
 
 import asyncpg
 import aio_pika
+import httpx
+import grpc
+
+from src.backend.grpc_generated import r2_pb2, r2_pb2_grpc
 
 from src.backend.services.tutor_storage_service import tutor_storage_service
 from src.genai_tutor.knowledge_base.ingestion_pipeline import tutor_ingestion_pipeline
@@ -87,29 +94,6 @@ DATASET_CATALOG: list[dict[str, Any]] = [
         'topic': 'competitive-programming',
         'difficulty': 'intermediate',
     },
-    {
-        'datasetKey': 'codexglue',
-        'title': 'CodeXGLUE (C + Python)',
-        'description': 'Clone đầy đủ benchmark CodeXGLUE và ingest file C/Python hỗ trợ được.',
-        'source': 'git',
-        'repository': 'https://github.com/microsoft/CodeXGLUE.git',
-        'courseCode': 'MULTI_LANG_DATASETS',
-        'language': 'mixed',
-        'topic': 'code-benchmark',
-        'difficulty': 'intermediate',
-    },
-    {
-        'datasetKey': 'codesearchnet-python',
-        'title': 'CodeSearchNet Python',
-        'description': 'CodeSearchNet Python cho semantic code search và hiểu ngữ nghĩa code.',
-        'source': 'huggingface',
-        'repository': 'code_search_net',
-        'config': 'python',
-        'courseCode': 'PYTHON_DATASETS',
-        'language': 'python',
-        'topic': 'semantic-code-search',
-        'difficulty': 'intermediate',
-    },
 ]
 
 
@@ -163,12 +147,16 @@ class TutorDatasetImportService:
                 metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                 "errorMessage" TEXT,
                 "importedFolderId" TEXT,
+                "artifactUrl" TEXT,
+                "artifactKeyR2" TEXT,
                 "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
                 "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW(),
                 "completedAt" TIMESTAMP
             )
             """,
             'ALTER TABLE "TutorDatasetImportJob" ADD COLUMN IF NOT EXISTS "importedFolderId" TEXT',
+            'ALTER TABLE "TutorDatasetImportJob" ADD COLUMN IF NOT EXISTS "artifactUrl" TEXT',
+            'ALTER TABLE "TutorDatasetImportJob" ADD COLUMN IF NOT EXISTS "artifactKeyR2" TEXT',
             'CREATE INDEX IF NOT EXISTS "TutorDatasetImportJob_userId_idx" ON "TutorDatasetImportJob"("userId")',
         ]
         async with pool.acquire() as conn:
@@ -186,6 +174,28 @@ class TutorDatasetImportService:
                 user_id,
             )
         return [self._map_row(row) for row in rows]
+
+    async def list_dataset_states(self, user_id: str) -> list[dict[str, Any]]:
+        jobs = await self.list_jobs(user_id)
+        states: list[dict[str, Any]] = []
+
+        for dataset in DATASET_CATALOG:
+            dataset_jobs = [job for job in jobs if job['datasetKey'] == dataset['datasetKey']]
+            latest_job = dataset_jobs[0] if dataset_jobs else None
+            completed_job = next((job for job in dataset_jobs if job['status'] == 'completed'), None)
+
+            states.append(
+                {
+                    'datasetKey': dataset['datasetKey'],
+                    'imported': completed_job is not None,
+                    'importedFolderId': completed_job.get('importedFolderId') if completed_job else None,
+                    'importedAt': completed_job.get('completedAt') if completed_job else None,
+                    'latestJob': latest_job,
+                    'lastSuccessfulJob': completed_job,
+                }
+            )
+
+        return states
 
     async def get_job(self, job_id: str) -> Optional[dict[str, Any]]:
         pool = await self._get_pool()
@@ -224,6 +234,8 @@ class TutorDatasetImportService:
             'downloadedFiles': 0,
             'processedFiles': 0,
             'totalFiles': 0,
+            'artifactUrl': None,
+            'artifactKeyR2': None,
             'metadata': {'dataset': dataset},
             'errorMessage': None,
             'importedFolderId': folder_id,
@@ -275,6 +287,33 @@ class TutorDatasetImportService:
         )
         return await self.get_job(job_id) or job
 
+    async def clear_dataset(self, *, user_id: str, dataset_key: str) -> dict[str, Any]:
+        existing = await self.get_existing_dataset_import(
+            user_id=user_id,
+            dataset_key=dataset_key,
+        )
+        if existing is None:
+            raise ValueError('Dataset này chưa có dữ liệu để xóa')
+        if existing.get('status') in {'queued', 'downloading', 'processing', 'cancelling'}:
+            raise ValueError('Dataset đang được xử lý. Hãy hủy job hiện tại trước khi clear')
+
+        trigger = f'dataset-import:{dataset_key}:%'
+        await tutor_storage_service.delete_jobs_by_trigger(trigger)
+
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                'DELETE FROM "TutorDatasetImportJob" WHERE "userId" = $1 AND "datasetKey" = $2',
+                user_id,
+                dataset_key,
+            )
+
+        return {
+            'success': True,
+            'datasetKey': dataset_key,
+            'message': 'Đã xóa toàn bộ dữ liệu dataset và lịch sử import trong DB. Artifact trên R2 được giữ lại để tái sử dụng.',
+        }
+
     async def run_job(self, job_id: str) -> None:
         await self._run_job(job_id)
 
@@ -289,6 +328,23 @@ class TutorDatasetImportService:
             )
         return self._map_row(row) if row else None
 
+    async def _find_reusable_artifact_job(
+        self,
+        user_id: str,
+        dataset_key: str,
+        *,
+        exclude_job_id: str,
+    ) -> Optional[dict[str, Any]]:
+        jobs = await self.list_jobs(user_id)
+        for job in jobs:
+            if job['jobId'] == exclude_job_id:
+                continue
+            if job['datasetKey'] != dataset_key:
+                continue
+            if job.get('artifactUrl') and job.get('artifactKeyR2'):
+                return job
+        return None
+
     async def _run_job(self, job_id: str) -> None:
         job = await self.get_job(job_id)
         if job is None:
@@ -297,7 +353,36 @@ class TutorDatasetImportService:
         dataset = metadata.get('dataset') or self._get_dataset(job['datasetKey'])
         try:
             await self._update_job(job_id, status='downloading', progress=5, stage='downloading', message='Đang tải dataset về máy chủ')
-            source_path = await self._download_dataset(dataset, job_id)
+            reuse_job = await self._find_reusable_artifact_job(
+                job['userId'],
+                job['datasetKey'],
+                exclude_job_id=job_id,
+            )
+            if (
+                reuse_job and
+                reuse_job.get('artifactUrl') and
+                reuse_job.get('artifactKeyR2') and
+                await self._artifact_exists_on_r2(reuse_job['artifactKeyR2'])
+            ):
+                await self._update_job(
+                    job_id,
+                    message='Tái sử dụng artifact dataset có sẵn trên R2',
+                    artifactUrl=reuse_job['artifactUrl'],
+                    artifactKeyR2=reuse_job['artifactKeyR2'],
+                )
+                source_path = await self._download_artifact_from_r2(
+                    dataset_key=job['datasetKey'],
+                    artifact_url=reuse_job['artifactUrl'],
+                )
+                artifact_url = reuse_job['artifactUrl']
+                artifact_key = reuse_job['artifactKeyR2']
+            else:
+                if reuse_job and reuse_job.get('artifactKeyR2'):
+                    await self._update_job(
+                        job_id,
+                        message='Artifact R2 cũ không còn tồn tại, hệ thống sẽ tải lại từ nguồn gốc',
+                    )
+                source_path, artifact_url, artifact_key = await self._download_dataset(dataset, job_id)
             if await self._is_cancel_requested(job_id):
                 await self._cleanup_job(job_id, source_path=source_path)
                 return
@@ -312,11 +397,13 @@ class TutorDatasetImportService:
                 downloadedFiles=total_files,
                 totalFiles=total_files,
                 message='Đang đưa dataset vào pipeline GraphRAG',
+                artifactUrl=artifact_url,
+                artifactKeyR2=artifact_key,
             )
 
             ingest_job = await tutor_ingestion_pipeline.create_job(
                 source_path=str(source_path),
-                triggered_by=f'dataset-import:{dataset["datasetKey"]}',
+                triggered_by=f'dataset-import:{dataset["datasetKey"]}:{job_id}',
                 course_code=dataset['courseCode'],
                 language=dataset.get('language'),
                 topic=dataset.get('topic'),
@@ -392,10 +479,10 @@ class TutorDatasetImportService:
                 completedAt=_utc_now().isoformat(),
             )
 
-    async def _download_dataset(self, dataset: dict[str, Any], job_id: str) -> Path:
-        target_root = self._dataset_root() / dataset['datasetKey']
-        if target_root.exists():
-            shutil.rmtree(target_root)
+    async def _download_dataset(self, dataset: dict[str, Any], job_id: str) -> tuple[Path, str, str]:
+        target_root = self._job_work_root(dataset['datasetKey'], job_id) / 'source'
+        if target_root.parent.exists():
+            shutil.rmtree(target_root.parent)
         target_root.parent.mkdir(parents=True, exist_ok=True)
 
         if dataset['source'] == 'git':
@@ -421,12 +508,16 @@ class TutorDatasetImportService:
             stdout, stderr = await process.communicate()
             if process.returncode != 0:
                 raise RuntimeError(stderr.decode() or stdout.decode() or 'Git clone failed')
-            return target_root
+            return await self._archive_and_upload_dataset(dataset, target_root, job_id)
 
         if dataset['source'] == 'huggingface':
-            return await self._materialize_huggingface_dataset(dataset, target_root, job_id)
+            materialized_root = await self._materialize_huggingface_dataset(dataset, target_root, job_id)
+            return await self._archive_and_upload_dataset(dataset, materialized_root, job_id)
 
         raise ValueError(f'Unsupported dataset source: {dataset["source"]}')
+
+    def _job_work_root(self, dataset_key: str, job_id: str) -> Path:
+        return self._dataset_root() / dataset_key / job_id
 
     async def _materialize_huggingface_dataset(self, dataset: dict[str, Any], target_root: Path, job_id: str) -> Path:
         try:
@@ -573,6 +664,8 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
                         await process.wait()
                     raise DatasetImportCancelledError()
 
+                if process.stdout is None:
+                    break
                 line = await process.stdout.readline()
                 if not line:
                     break
@@ -637,6 +730,127 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
         if dataset_key in {'humaneval-python', 'mbpp-python', 'codesearchnet-python'}:
             extension = 'py'
         return f'{dataset_key}_{split_name}_{index:06d}.{extension}'
+
+    def _r2_grpc_target(self) -> str:
+        return os.getenv('R2_SERVICE_GRPC_TARGET', '127.0.0.1:50054')
+
+    async def _upload_artifact_to_r2(
+        self,
+        *,
+        dataset_key: str,
+        archive_path: Path,
+    ) -> tuple[str, str]:
+        async with grpc.aio.insecure_channel(self._r2_grpc_target()) as channel:
+            stub = r2_pb2_grpc.R2ServiceStub(channel)
+            response = await stub.UploadFile(
+                r2_pb2.UploadFileRequest(
+                    user_id='dataset-import-service',
+                    filename=archive_path.name,
+                    mimetype='application/zip',
+                    content=archive_path.read_bytes(),
+                    folder=f'dataset-imports/{dataset_key}',
+                )
+            )
+
+        if not response.success:
+            raise RuntimeError(response.message or 'Upload dataset artifact to R2 failed')
+
+        artifact_key = response.key_r2 or response.file_id
+        artifact_url = response.url
+
+        if not artifact_key and artifact_url:
+            parsed = urlparse(artifact_url)
+            artifact_key = parsed.path.lstrip('/')
+
+        if artifact_key and not artifact_url:
+            public_base_url = os.getenv('R2_PUBLIC_URL', '').rstrip('/')
+            if public_base_url:
+                artifact_url = f'{public_base_url}/{artifact_key}'
+
+        return artifact_url, artifact_key
+
+    async def _artifact_exists_on_r2(self, artifact_key: str) -> bool:
+        async with grpc.aio.insecure_channel(self._r2_grpc_target()) as channel:
+            stub = r2_pb2_grpc.R2ServiceStub(channel)
+            response = await stub.GetFileUrl(
+                r2_pb2.GetFileUrlRequest(
+                    key_r2=artifact_key,
+                    expires_in_seconds=60,
+                )
+            )
+        return bool(response.url)
+
+    async def _archive_and_upload_dataset(
+        self,
+        dataset: dict[str, Any],
+        source_root: Path,
+        job_id: str,
+    ) -> tuple[Path, str, str]:
+        archive_dir = Path(tempfile.mkdtemp(prefix=f"dataset_archive_{dataset['datasetKey']}_"))
+        archive_path = archive_dir / f"{dataset['datasetKey']}.zip"
+
+        with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for path in source_root.rglob('*'):
+                if path.is_file():
+                    zip_file.write(path, path.relative_to(source_root))
+
+        artifact_url, artifact_key = await self._upload_artifact_to_r2(
+            dataset_key=dataset['datasetKey'],
+            archive_path=archive_path,
+        )
+        if not artifact_url or not artifact_key:
+            raise RuntimeError('R2 upload did not return artifact url/key')
+
+        extract_root = self._job_work_root(dataset['datasetKey'], job_id) / 'content'
+        if extract_root.exists():
+            shutil.rmtree(extract_root, ignore_errors=True)
+        extract_root.mkdir(parents=True, exist_ok=True)
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.get(artifact_url)
+            response.raise_for_status()
+            downloaded_archive = archive_dir / f"downloaded_{archive_path.name}"
+            downloaded_archive.write_bytes(response.content)
+
+        with zipfile.ZipFile(downloaded_archive, 'r') as zip_file:
+            zip_file.extractall(extract_root)
+
+        shutil.rmtree(source_root, ignore_errors=True)
+        shutil.rmtree(archive_dir, ignore_errors=True)
+
+        await self._update_job(
+            job_id,
+            artifactUrl=artifact_url,
+            artifactKeyR2=artifact_key,
+            message='Đã tải dataset lên R2 và chuẩn bị dữ liệu để ingest',
+        )
+
+        return extract_root, artifact_url, artifact_key
+
+    async def _download_artifact_from_r2(
+        self,
+        *,
+        dataset_key: str,
+        artifact_url: str,
+    ) -> Path:
+        archive_dir = Path(tempfile.mkdtemp(prefix=f"dataset_reuse_{dataset_key}_"))
+        archive_path = archive_dir / f"{dataset_key}.zip"
+        job_id = f'reuse_{uuid4().hex[:12]}'
+        extract_root = self._job_work_root(dataset_key, job_id) / 'content'
+        if extract_root.exists():
+            shutil.rmtree(extract_root, ignore_errors=True)
+        extract_root.mkdir(parents=True, exist_ok=True)
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.get(artifact_url)
+            response.raise_for_status()
+            archive_path.write_bytes(response.content)
+
+        with zipfile.ZipFile(archive_path, 'r') as zip_file:
+            zip_file.extractall(extract_root)
+
+        archive_path.unlink(missing_ok=True)
+        return extract_root
 
     def _dataset_root(self) -> Path:
         return Path(__file__).resolve().parents[6] / 'data-source' / 'dataset-imports'
@@ -717,11 +931,11 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
             INSERT INTO "TutorDatasetImportJob" (
                 id, "userId", "folderId", "datasetKey", title, status, progress, stage,
                 message, "sourcePath", "ingestJobId", "downloadedFiles", "processedFiles", "totalFiles",
-                metadata, "errorMessage", "importedFolderId", "createdAt", "updatedAt", "completedAt"
+                metadata, "errorMessage", "importedFolderId", "artifactUrl", "artifactKeyR2", "createdAt", "updatedAt", "completedAt"
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
                 $9, $10, $11, $12, $13, $14,
-                $15::jsonb, $16, $17, $18, $19, $20
+                $15::jsonb, $16, $17, $18, $19, $20, $21, $22
             )
             ON CONFLICT (id) DO UPDATE SET
                 status = EXCLUDED.status,
@@ -736,6 +950,8 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
                 metadata = EXCLUDED.metadata,
                 "errorMessage" = EXCLUDED."errorMessage",
                 "importedFolderId" = EXCLUDED."importedFolderId",
+                "artifactUrl" = EXCLUDED."artifactUrl",
+                "artifactKeyR2" = EXCLUDED."artifactKeyR2",
                 "updatedAt" = EXCLUDED."updatedAt",
                 "completedAt" = EXCLUDED."completedAt"
         """
@@ -759,6 +975,8 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
                 json.dumps(payload.get('metadata', {})),
                 payload.get('errorMessage'),
                 payload.get('importedFolderId'),
+                payload.get('artifactUrl'),
+                payload.get('artifactKeyR2'),
                 _normalize_timestamp(payload.get('createdAt') or _utc_now().isoformat()),
                 _normalize_timestamp(payload.get('updatedAt') or _utc_now().isoformat()),
                 _normalize_timestamp(payload.get('completedAt')),
@@ -784,6 +1002,8 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
             'metadata': metadata,
             'errorMessage': row['errorMessage'],
             'importedFolderId': row['importedFolderId'],
+            'artifactUrl': row['artifactUrl'],
+            'artifactKeyR2': row['artifactKeyR2'],
             'createdAt': row['createdAt'].isoformat() if row['createdAt'] else None,
             'updatedAt': row['updatedAt'].isoformat() if row['updatedAt'] else None,
             'completedAt': row['completedAt'].isoformat() if row['completedAt'] else None,

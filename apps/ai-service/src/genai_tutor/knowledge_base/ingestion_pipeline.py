@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
+from pytesseract import TesseractNotFoundError
+
 from src.backend.services.pdf_ocr_service import pdf_ocr_service
 from src.backend.services.tutor_storage_service import tutor_storage_service
 from src.genai_tutor.code_analyzer.common_analyzer import extract_code_graph
@@ -33,6 +35,7 @@ JOB_TERMINAL_STATUSES = {'partial_success', 'success', 'failed'}
 MAX_PREVIEW_CHUNKS = 10
 DEFAULT_TEXT_CHUNK_SIZE = 1200
 DEFAULT_CODE_CHUNK_SIZE = 1800
+DEFAULT_FILE_CONCURRENCY = 4
 
 
 def _utc_now() -> datetime:
@@ -261,6 +264,15 @@ class TutorIngestionPipeline:
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._lock = asyncio.Lock()
 
+    def get_file_concurrency(self) -> int:
+        raw = os.getenv('TUTOR_INGEST_FILE_CONCURRENCY')
+        if not raw:
+            return DEFAULT_FILE_CONCURRENCY
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return DEFAULT_FILE_CONCURRENCY
+
     def get_allowed_roots(self) -> list[Path]:
         configured_roots = os.getenv('TUTOR_INGEST_ALLOWED_ROOTS')
         if configured_roots:
@@ -390,8 +402,14 @@ class TutorIngestionPipeline:
                 job.status = 'success'
                 return
 
-            for file_path in files:
-                await self._process_file(job, file_path)
+            file_semaphore = asyncio.Semaphore(self.get_file_concurrency())
+            job_state_lock = asyncio.Lock()
+
+            async def process_with_limit(file_path: Path) -> None:
+                async with file_semaphore:
+                    await self._process_file(job, file_path, job_state_lock)
+
+            await asyncio.gather(*(process_with_limit(file_path) for file_path in files))
 
             if job.summary.failed_files and job.summary.processed_files:
                 job.status = 'partial_success'
@@ -417,7 +435,12 @@ class TutorIngestionPipeline:
         ]
         return files
 
-    async def _process_file(self, job: IngestJobState, file_path: Path) -> None:
+    async def _process_file(
+        self,
+        job: IngestJobState,
+        file_path: Path,
+        job_state_lock: asyncio.Lock,
+    ) -> None:
         source_type = file_path.suffix.lower().lstrip('.')
         document = TutorDocument(
             document_id=f'doc_{uuid4().hex[:12]}',
@@ -432,16 +455,19 @@ class TutorIngestionPipeline:
             license_tag=job.license_tag,
             status='processing',
         )
-        job.documents.append(document)
+        async with job_state_lock:
+            job.documents.append(document)
 
         try:
             content_bytes, extracted_text, content_type = await self._extract_content(file_path)
             document.checksum = _sha256_bytes(content_bytes)
 
             if not extracted_text.strip():
-                job.summary.skipped_files += 1
                 document.status = 'skipped'
                 document.error = 'No text extracted'
+                async with job_state_lock:
+                    job.summary.skipped_files += 1
+                    await tutor_storage_service.update_job(job.to_dict())
                 return
 
             chunks = self._chunk_document(
@@ -460,10 +486,6 @@ class TutorIngestionPipeline:
                 )
             document.chunk_count = len(chunks)
             document.status = 'completed'
-            job.summary.processed_files += 1
-            job.summary.total_chunks += len(chunks)
-            job.summary.total_entities += self._estimate_entities(chunks, document.language)
-            job.summary.total_relations += self._estimate_relations(chunks, document.language)
             await tutor_storage_service.upsert_document(
                 document.to_dict(),
                 job_id=job.job_id,
@@ -508,23 +530,28 @@ class TutorIngestionPipeline:
                             for relation in relations
                         ],
                     )
-            await tutor_storage_service.update_job(job.to_dict())
-
-            if len(job.preview_chunks) < MAX_PREVIEW_CHUNKS:
-                available_slots = MAX_PREVIEW_CHUNKS - len(job.preview_chunks)
-                job.preview_chunks.extend(chunks[:available_slots])
+            async with job_state_lock:
+                job.summary.processed_files += 1
+                job.summary.total_chunks += len(chunks)
+                job.summary.total_entities += self._estimate_entities(chunks, document.language)
+                job.summary.total_relations += self._estimate_relations(chunks, document.language)
+                if len(job.preview_chunks) < MAX_PREVIEW_CHUNKS:
+                    available_slots = MAX_PREVIEW_CHUNKS - len(job.preview_chunks)
+                    job.preview_chunks.extend(chunks[:available_slots])
+                await tutor_storage_service.update_job(job.to_dict())
         except Exception as exc:
             logger.exception('Failed to ingest file %s', file_path)
-            job.summary.failed_files += 1
             document.status = 'failed'
             document.error = str(exc)
-            job.errors.append(f'{file_path}: {exc}')
             await tutor_storage_service.upsert_document(
                 document.to_dict(),
                 job_id=job.job_id,
                 dataset_version=job.dataset_version,
             )
-            await tutor_storage_service.update_job(job.to_dict())
+            async with job_state_lock:
+                job.summary.failed_files += 1
+                job.errors.append(f'{file_path}: {exc}')
+                await tutor_storage_service.update_job(job.to_dict())
 
     async def _extract_content(self, file_path: Path) -> tuple[bytes, str, str]:
         file_bytes = file_path.read_bytes()
@@ -558,7 +585,14 @@ class TutorIngestionPipeline:
                 image = Image.open(file_path)
                 return pytesseract.image_to_string(image, lang='eng+vie')
 
-            extracted = await asyncio.to_thread(run_ocr)
+            try:
+                extracted = await asyncio.to_thread(run_ocr)
+            except TesseractNotFoundError:
+                logger.warning(
+                    'Skipping image OCR for %s because tesseract is not installed',
+                    file_path,
+                )
+                return file_bytes, '', 'text'
             return file_bytes, extracted, 'text'
 
         raise ValueError(f'Unsupported file extension: {suffix}')

@@ -25,11 +25,12 @@ def test_tutor_ingest_job_processes_supported_files() -> None:
 
         pipeline = TutorIngestionPipeline()
         original_get_allowed_roots = pipeline.get_allowed_roots
-        pipeline.get_allowed_roots = lambda: [data_root]  # type: ignore[method-assign]
+        pipeline.get_allowed_roots = lambda: [data_root.resolve()]  # type: ignore[method-assign]
         original_create_job = ingestion_module.tutor_storage_service.create_job
         original_update_job = ingestion_module.tutor_storage_service.update_job
         original_upsert_document = ingestion_module.tutor_storage_service.upsert_document
         original_replace_document_chunks = ingestion_module.tutor_storage_service.replace_document_chunks
+        original_replace_chunk_graph = ingestion_module.tutor_storage_service.replace_chunk_graph
         original_get_embedding_info = ingestion_module.model_manager.get_embedding_info
         original_create_embeddings_batch = ingestion_module.get_pg_vector_store().create_embeddings_batch
 
@@ -45,6 +46,9 @@ def test_tutor_ingest_job_processes_supported_files() -> None:
         async def fake_replace_document_chunks(**kwargs):
             return None
 
+        async def fake_replace_chunk_graph(**kwargs):
+            return None
+
         async def fake_create_embeddings_batch(texts, task_type='retrieval_document'):
             return [[0.01, 0.02, 0.03] for _ in texts]
 
@@ -52,6 +56,7 @@ def test_tutor_ingest_job_processes_supported_files() -> None:
         ingestion_module.tutor_storage_service.update_job = fake_update_job
         ingestion_module.tutor_storage_service.upsert_document = fake_upsert_document
         ingestion_module.tutor_storage_service.replace_document_chunks = fake_replace_document_chunks
+        ingestion_module.tutor_storage_service.replace_chunk_graph = fake_replace_chunk_graph
         ingestion_module.model_manager.get_embedding_info = lambda: {'id': 'test-embedding'}
         ingestion_module.get_pg_vector_store().create_embeddings_batch = fake_create_embeddings_batch
 
@@ -87,6 +92,7 @@ def test_tutor_ingest_job_processes_supported_files() -> None:
             ingestion_module.tutor_storage_service.update_job = original_update_job
             ingestion_module.tutor_storage_service.upsert_document = original_upsert_document
             ingestion_module.tutor_storage_service.replace_document_chunks = original_replace_document_chunks
+            ingestion_module.tutor_storage_service.replace_chunk_graph = original_replace_chunk_graph
             ingestion_module.model_manager.get_embedding_info = original_get_embedding_info
             ingestion_module.get_pg_vector_store().create_embeddings_batch = original_create_embeddings_batch
 

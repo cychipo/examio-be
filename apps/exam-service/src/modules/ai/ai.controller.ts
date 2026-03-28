@@ -283,6 +283,15 @@ export class AIController {
         return this.aiService.listTutorDatasetImports(req.user);
     }
 
+    @Get('tutor/dataset-imports/states')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Lấy trạng thái dataset tutor theo folder/job' })
+    async listTutorDatasetImportStates(@Req() req: AuthenticatedRequest) {
+        return this.aiService.listTutorDatasetImportStates(req.user);
+    }
+
     @Get('tutor/dataset-imports/:jobId')
     @UseGuards(AuthGuard, RolesGuard)
     @Roles('teacher')
@@ -299,6 +308,18 @@ export class AIController {
     @ApiOperation({ summary: 'Hủy job nạp dataset tutor' })
     async cancelTutorDatasetImportJob(@Param('jobId') jobId: string) {
         return this.aiService.cancelTutorDatasetImportJob(jobId);
+    }
+
+    @Post('tutor/dataset-imports/:datasetKey/clear')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('teacher')
+    @ApiCookieAuth('cookie-auth')
+    @ApiOperation({ summary: 'Xóa toàn bộ dữ liệu dataset tutor đã nạp' })
+    async clearTutorDatasetImport(
+        @Req() req: AuthenticatedRequest,
+        @Param('datasetKey') datasetKey: string
+    ) {
+        return this.aiService.clearTutorDatasetImport(req.user, datasetKey);
     }
 
     @Get('tutor/knowledge-files/search')

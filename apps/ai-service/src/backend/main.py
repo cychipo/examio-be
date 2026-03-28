@@ -80,16 +80,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f'Failed to ensure tutor dataset import schema: {e}')
 
-    yield
+    try:
+        yield
+    except asyncio.CancelledError:
+        logger.info("AI service lifespan cancelled during shutdown")
 
     # Shutdown: Close RabbitMQ consumer
-    if _consumer_task:
-        _consumer_task.cancel()
-        try:
-            await _consumer_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("RabbitMQ consumer stopped")
+    finally:
+        if _consumer_task:
+            _consumer_task.cancel()
+            try:
+                await _consumer_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.debug(f"RabbitMQ consumer shutdown warning: {e}")
+            logger.info("RabbitMQ consumer stopped")
 
 
 # Create FastAPI app with lifespan

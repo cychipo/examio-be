@@ -26,6 +26,8 @@ DEFAULT_OLLAMA_EMBED_MAX_LENGTH = 2000
 DEFAULT_OLLAMA_EMBED_BATCH_SIZE = 5
 DEFAULT_OLLAMA_EMBED_MAX_CONCURRENCY = 5
 DEFAULT_OLLAMA_EMBED_DELAY_BETWEEN_BATCHES = 0.02
+DEFAULT_OLLAMA_EMBED_RETRY_COUNT = 3
+DEFAULT_OLLAMA_EMBED_RETRY_BASE_DELAY = 0.75
 
 
 def _get_int_env(name: str, default: int, min_value: int = 1) -> int:
@@ -86,6 +88,14 @@ class OllamaEmbeddings:
             "OLLAMA_EMBED_DELAY_BETWEEN_BATCHES",
             DEFAULT_OLLAMA_EMBED_DELAY_BETWEEN_BATCHES,
         )
+        self.retry_count = _get_int_env(
+            "OLLAMA_EMBED_RETRY_COUNT",
+            DEFAULT_OLLAMA_EMBED_RETRY_COUNT,
+        )
+        self.retry_base_delay = _get_float_env(
+            "OLLAMA_EMBED_RETRY_BASE_DELAY",
+            DEFAULT_OLLAMA_EMBED_RETRY_BASE_DELAY,
+        )
         self._client: Optional[httpx.AsyncClient] = None
         self._initialized = True
         logger.info(
@@ -95,7 +105,9 @@ class OllamaEmbeddings:
             f"max_length={self.embed_max_length}, "
             f"batch_size={self.default_batch_size}, "
             f"max_concurrency={self.max_concurrency}, "
-            f"delay_between_batches={self.default_delay_between_batches}"
+            f"delay_between_batches={self.default_delay_between_batches}, "
+            f"retry_count={self.retry_count}, "
+            f"retry_base_delay={self.retry_base_delay}"
         )
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -111,6 +123,15 @@ class OllamaEmbeddings:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
+    def _is_retryable_error(self, error: Exception) -> bool:
+        if isinstance(error, httpx.HTTPStatusError):
+            return error.response.status_code in {429, 500, 502, 503, 504}
+        return isinstance(error, (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError))
+
+    async def _sleep_before_retry(self, attempt: int) -> None:
+        delay = self.retry_base_delay * (2 ** max(0, attempt - 1))
+        await asyncio.sleep(delay)
+
     async def create_embedding(self, text: str, task_type: str = "retrieval_document") -> List[float]:
         """
         Create embedding vector using Ollama.
@@ -122,39 +143,47 @@ class OllamaEmbeddings:
         Returns:
             List[float] embedding vector
         """
-        try:
-            max_length = self.embed_max_length
-            if len(text) > max_length:
-                logger.warning(f"Truncating text from {len(text)} to {max_length} chars for embedding")
-                text = text[:max_length]
+        max_length = self.embed_max_length
+        if len(text) > max_length:
+            logger.warning(f"Truncating text from {len(text)} to {max_length} chars for embedding")
+            text = text[:max_length]
 
-            logger.debug(f"Embedding text ({len(text)} chars) to {self.base_url}/api/embeddings with model {self.model}")
+        last_error: Exception | None = None
+        for attempt in range(1, self.retry_count + 1):
+            try:
+                logger.debug(f"Embedding text ({len(text)} chars) to {self.base_url}/api/embeddings with model {self.model}")
 
-            client = await self._get_client()
-            response = await client.post(
-                f"{self.base_url}/api/embeddings",
-                json={
-                    "model": self.model,
-                    "prompt": text
-                }
-            )
+                client = await self._get_client()
+                response = await client.post(
+                    f"{self.base_url}/api/embeddings",
+                    json={
+                        "model": self.model,
+                        "prompt": text
+                    }
+                )
 
-            if response.status_code != 200:
-                # Log response body for debugging
-                try:
-                    error_body = response.text
-                    logger.error(f"Ollama error response: {error_body[:500]}")
-                except Exception:
-                    pass
+                if response.status_code != 200:
+                    try:
+                        error_body = response.text
+                        logger.error(f"Ollama error response: {error_body[:500]}")
+                    except Exception:
+                        pass
 
-            response.raise_for_status()
-            data = response.json()
-            embedding = data.get("embedding", [])
-            logger.debug(f"Got embedding with {len(embedding)} dimensions")
-            return embedding
-        except Exception as e:
-            logger.error(f"Ollama embedding error: {e}")
-            raise Exception(f"Ollama embedding failed: {e}")
+                response.raise_for_status()
+                data = response.json()
+                embedding = data.get("embedding", [])
+                logger.debug(f"Got embedding with {len(embedding)} dimensions")
+                return embedding
+            except Exception as e:
+                last_error = e
+                retryable = self._is_retryable_error(e) if isinstance(e, Exception) else False
+                logger.error(f"Ollama embedding error (attempt {attempt}/{self.retry_count}): {e}")
+                if attempt < self.retry_count and retryable:
+                    await self._sleep_before_retry(attempt)
+                    continue
+                break
+
+        raise Exception(f"Ollama embedding failed: {last_error}")
     
     async def create_embeddings_batch(
         self,
@@ -178,9 +207,9 @@ class OllamaEmbeddings:
         if not texts:
             return []
 
-        resolved_batch_size = max(1, batch_size or self.default_batch_size)
+        resolved_batch_size = max(1, min(batch_size or self.default_batch_size, 3))
         resolved_delay_between_batches = max(0.0, delay_between_batches if delay_between_batches is not None else self.default_delay_between_batches)
-        resolved_max_concurrency = max(1, self.max_concurrency)
+        resolved_max_concurrency = max(1, min(self.max_concurrency, 2))
         semaphore = asyncio.Semaphore(resolved_max_concurrency)
 
         async def _embed_with_limit(input_text: str) -> List[float]:
@@ -208,6 +237,8 @@ class OllamaEmbeddings:
                         emb = await _embed_with_limit(batch[j])
                     except Exception as e:
                         raise Exception(f"Failed to embed text {i + j}: {e}")
+                if isinstance(emb, Exception):
+                    raise emb
                 embeddings.append(emb)
 
             # Delay between batches (if configured)

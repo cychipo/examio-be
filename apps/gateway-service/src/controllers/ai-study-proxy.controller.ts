@@ -389,6 +389,20 @@ export class AIProxyController {
         );
     }
 
+    @Get('tutor/dataset-imports/states')
+    @ApiOperation({ summary: 'Lấy trạng thái dataset tutor theo folder/job' })
+    async listTutorDatasetImportStates(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/dataset-imports/states',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
     @Get('tutor/dataset-imports/:jobId')
     @ApiOperation({ summary: 'Lấy trạng thái job nạp dataset tutor' })
     async getTutorDatasetImportJob(@Param('jobId') jobId: string, @Req() req: Request) {
@@ -412,6 +426,26 @@ export class AIProxyController {
                 method: 'POST',
                 path: `/api/v1/ai/tutor/dataset-imports/${jobId}/cancel`,
                 headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/dataset-imports/:datasetKey/clear')
+    @ApiOperation({ summary: 'Xóa toàn bộ dữ liệu dataset tutor đã nạp' })
+    async clearTutorDatasetImport(
+        @Param('datasetKey') datasetKey: string,
+        @Req() req: Request
+    ) {
+        const userId = typeof req.query.user_id === 'string' ? req.query.user_id : undefined;
+
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai/tutor/dataset-imports/${datasetKey}/clear`,
+                headers: this.h(req),
+                query: userId ? { user_id: userId } : undefined,
             },
             this.t(req)
         );

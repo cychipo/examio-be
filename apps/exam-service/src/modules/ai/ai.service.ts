@@ -871,6 +871,15 @@ export class AIService {
         return response.data;
     }
 
+    async listTutorDatasetImportStates(user: User) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports/states`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
     async getTutorDatasetImportJob(jobId: string) {
         try {
             const response = await firstValueFrom(
@@ -886,6 +895,19 @@ export class AIService {
         try {
             const response = await firstValueFrom(
                 this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}/cancel`, {})
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
+    }
+
+    async clearTutorDatasetImport(user: User, datasetKey: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports/${datasetKey}/clear`, null, {
+                    params: { user_id: user.id },
+                })
             );
             return response.data;
         } catch (error) {

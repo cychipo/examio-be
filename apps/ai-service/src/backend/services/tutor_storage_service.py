@@ -660,6 +660,14 @@ class TutorStorageService:
         async with pool.acquire() as conn:
             await conn.execute('DELETE FROM "TutorIngestJob" WHERE id = $1', job_id)
 
+    async def delete_jobs_by_trigger(self, trigger: str) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                'DELETE FROM "TutorIngestJob" WHERE "triggeredBy" LIKE $1',
+                trigger,
+            )
+
     async def search_chunks(
         self,
         *,

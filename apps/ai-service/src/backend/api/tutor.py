@@ -12,7 +12,7 @@ from typing import Any, Literal, Optional
 import aio_pika
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.llm.model_manager import ModelUnavailableError, model_manager
 from src.backend.services.tutor_knowledge_storage_service import (
@@ -100,14 +100,18 @@ class TutorKnowledgeFileResponse(BaseModel):
 
 
 class TutorDatasetImportRequest(BaseModel):
-    user_id: str = Field(..., alias='userId')
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: str = Field(alias='userId')
     folder_id: Optional[str] = Field(default=None, alias='folderId')
-    dataset_key: str = Field(..., alias='datasetKey')
+    dataset_key: str = Field(alias='datasetKey')
 
 
 class TutorDatasetImportResponse(BaseModel):
-    job_id: str = Field(..., alias='jobId')
-    dataset_key: str = Field(..., alias='datasetKey')
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str = Field(alias='jobId')
+    dataset_key: str = Field(alias='datasetKey')
     status: str
     progress: int
     stage: str
@@ -352,6 +356,11 @@ async def list_tutor_dataset_import_jobs(user_id: str) -> list[dict[str, Any]]:
     return await tutor_dataset_import_service.list_jobs(user_id)
 
 
+@router.get('/dataset-imports/states', response_model=list[dict[str, Any]])
+async def list_tutor_dataset_import_states(user_id: str) -> list[dict[str, Any]]:
+    return await tutor_dataset_import_service.list_dataset_states(user_id)
+
+
 @router.get('/dataset-imports/{job_id}', response_model=dict[str, Any])
 async def get_tutor_dataset_import_job(job_id: str) -> dict[str, Any]:
     job = await tutor_dataset_import_service.get_job(job_id)
@@ -364,6 +373,20 @@ async def get_tutor_dataset_import_job(job_id: str) -> dict[str, Any]:
 async def cancel_tutor_dataset_import_job(job_id: str) -> dict[str, Any]:
     try:
         return await tutor_dataset_import_service.cancel_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/dataset-imports/{dataset_key}/clear', response_model=dict[str, Any])
+async def clear_tutor_dataset_import(
+    dataset_key: str,
+    user_id: str,
+) -> dict[str, Any]:
+    try:
+        return await tutor_dataset_import_service.clear_dataset(
+            user_id=user_id,
+            dataset_key=dataset_key,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
