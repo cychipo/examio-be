@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
+from uuid import uuid4
 
 import aio_pika
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from src.llm.model_manager import ModelUnavailableError, model_manager
 from src.backend.services.tutor_knowledge_storage_service import (
@@ -20,6 +24,9 @@ from src.backend.services.tutor_knowledge_storage_service import (
 )
 from src.backend.services.tutor_dataset_import_service import (
     tutor_dataset_import_service,
+)
+from src.backend.services.student_programming_chat_service import (
+    student_programming_chat_service,
 )
 from src.rag.simple_chat_agent import SimpleChatAgent
 from src.backend.services.tutor_storage_service import tutor_storage_service
@@ -36,86 +43,122 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+camel_model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+_TUTOR_CONTEXT_CACHE_TTL_SECONDS = 45.0
+_TUTOR_CONTEXT_CACHE_MAX_SIZE = 64
+_tutor_context_cache: dict[str, tuple[float, tuple[str, list[dict[str, Any]], float]]] = {}
+
+
 class TutorIngestRequest(BaseModel):
-    source_path: str = Field(..., alias='sourcePath', description='Folder or file path under allowed data-source root')
-    course_code: str = Field(..., alias='courseCode', min_length=2, max_length=50)
-    language: Optional[str] = Field(default=None, description='Target language such as c or python')
-    topic: Optional[str] = Field(default=None, max_length=100)
-    difficulty: Optional[Literal['basic', 'intermediate', 'advanced']] = None
+    model_config = camel_model_config
+
+    source_path: str = Field(..., description='Folder or file path under allowed data-source root')
+    course_code: str = Field(..., min_length=2, max_length=50)
+    language: str | None = Field(default=None, description='Target language such as c or python')
+    topic: str | None = Field(default=None, max_length=100)
+    difficulty: Literal['basic', 'intermediate', 'advanced'] | None = None
     reindex_mode: Literal['incremental', 'full', 'graph-only', 'embedding-only'] = Field(
         default='incremental',
         alias='reindexMode',
     )
-    license_tag: Optional[str] = Field(default=None, alias='licenseTag', max_length=100)
-    dry_run: bool = Field(default=False, alias='dryRun')
-    triggered_by: str = Field(default='api', alias='triggeredBy', max_length=100)
+    license_tag: str | None = Field(default=None, max_length=100)
+    dry_run: bool = False
+    triggered_by: str = Field(default='api', max_length=100)
 
 
 class TutorIngestAcceptedResponse(BaseModel):
-    job_id: str = Field(..., alias='jobId')
+    model_config = camel_model_config
+
+    job_id: str
     status: str
-    dataset_version: str = Field(..., alias='datasetVersion')
+    dataset_version: str
     message: str
 
 
 class TutorKnowledgeFileCreateRequest(BaseModel):
-    file_id: str = Field(..., alias='fileId')
-    user_id: str = Field(..., alias='userId')
+    model_config = camel_model_config
+
+    file_id: str
+    user_id: str
     filename: str
-    description: Optional[str] = None
+    description: str | None = None
     url: str
-    key_r2: str = Field(..., alias='keyR2')
-    mime_type: str = Field(..., alias='mimeType')
+    key_r2: str
+    mime_type: str
     size: int
-    folder_id: Optional[str] = Field(default=None, alias='folderId')
-    folder_name: Optional[str] = Field(default=None, alias='folderName')
-    folder_description: Optional[str] = Field(default=None, alias='folderDescription')
-    course_code: Optional[str] = Field(default=None, alias='courseCode')
-    language: Optional[str] = None
-    topic: Optional[str] = None
-    difficulty: Optional[Literal['basic', 'intermediate', 'advanced']] = None
+    folder_id: str | None = None
+    folder_name: str | None = None
+    folder_description: str | None = None
+    course_code: str | None = None
+    language: str | None = None
+    topic: str | None = None
+    difficulty: Literal['basic', 'intermediate', 'advanced'] | None = None
 
 
 class TutorKnowledgeFolderRequest(BaseModel):
-    folder_id: str = Field(..., alias='folderId')
-    user_id: str = Field(..., alias='userId')
+    model_config = camel_model_config
+
+    folder_id: str
+    user_id: str
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     icon: str
 
 
 class TutorKnowledgeBulkRequest(BaseModel):
-    file_ids: list[str] = Field(..., alias='fileIds')
+    model_config = camel_model_config
+
+    file_ids: list[str]
 
 
 class TutorKnowledgeFileResponse(BaseModel):
-    file_id: str = Field(..., alias='fileId')
+    model_config = camel_model_config
+
+    file_id: str
     status: str
     progress: int
-    chunk_count: int = Field(..., alias='chunkCount')
-    vector_count: int = Field(..., alias='vectorCount')
-    error_message: Optional[str] = Field(default=None, alias='errorMessage')
+    chunk_count: int
+    vector_count: int
+    error_message: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     url: str
 
 
 class TutorDatasetImportRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = camel_model_config
 
-    user_id: str = Field(alias='userId')
-    folder_id: Optional[str] = Field(default=None, alias='folderId')
-    dataset_key: str = Field(alias='datasetKey')
+    user_id: str
+    folder_id: str | None = None
+    dataset_key: str
 
 
 class TutorDatasetImportResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = camel_model_config
 
-    job_id: str = Field(alias='jobId')
-    dataset_key: str = Field(alias='datasetKey')
+    job_id: str
+    dataset_key: str
     status: str
     progress: int
     stage: str
-    message: Optional[str] = None
+    message: str | None = None
+
+
+class StudentProgrammingSessionRequest(BaseModel):
+    model_config = camel_model_config
+
+    user_id: str
+    title: str | None = None
+
+
+class StudentProgrammingMessageRequest(BaseModel):
+    model_config = camel_model_config
+
+    user_id: str
+    content: str
+    role: str
+    sources: list[dict[str, Any]] | None = None
+    confidence: float | None = None
+    model_used: str | None = None
 
 
 class TutorMessage(BaseModel):
@@ -124,22 +167,27 @@ class TutorMessage(BaseModel):
 
 
 class TutorQueryRequest(BaseModel):
+    model_config = camel_model_config
+
     query: str
     history: list[TutorMessage] = Field(default_factory=list)
-    course_code: str = Field(..., alias='courseCode')
-    language: Optional[str] = None
-    topic: Optional[str] = None
-    difficulty: Optional[Literal['basic', 'intermediate', 'advanced']] = None
-    top_k: int = Field(default=5, alias='topK', ge=1, le=10)
-    model_type: Optional[str] = Field(default='qwen3_8b', alias='modelType')
+    course_code: str | None = None
+    language: str | None = None
+    topic: str | None = None
+    difficulty: Literal['basic', 'intermediate', 'advanced'] | None = None
+    top_k: int = Field(default=5, ge=1, le=10)
+    model_type: str | None = 'qwen3_8b'
+    fast_mode: bool = False
 
 
 class TutorQueryResponse(BaseModel):
+    model_config = camel_model_config
+
     answer: str
     sources: list[dict[str, Any]]
-    model_used: str = Field(..., alias='modelUsed')
+    model_used: str
     confidence: float
-    retrieval_count: int = Field(..., alias='retrievalCount')
+    retrieval_count: int
 
 
 def _build_tutor_system_prompt() -> str:
@@ -150,9 +198,71 @@ def _build_tutor_system_prompt() -> str:
     )
 
 
+def _is_fast_mode_candidate(query: str) -> bool:
+    normalized = query.strip().lower()
+    if len(normalized) <= 180:
+        return True
+
+    fast_keywords = (
+        'loi',
+        'error',
+        'bug',
+        'fix',
+        'debug',
+        'segmentation fault',
+        'indexerror',
+        'syntaxerror',
+        'typeerror',
+        'vi sao',
+        'tai sao',
+    )
+    return any(keyword in normalized for keyword in fast_keywords)
+
+
+def _build_tutor_cache_key(request: TutorQueryRequest) -> str:
+    history = '|'.join(
+        f'{message.role}:{message.content.strip()[:120]}'
+        for message in request.history[-3:]
+    )
+    return '::'.join(
+        [
+            request.query.strip().lower(),
+            request.course_code or '',
+            request.language or '',
+            request.topic or '',
+            request.difficulty or '',
+            str(request.top_k),
+            '1' if request.fast_mode else '0',
+            history,
+        ]
+    )
+
+
+def _prune_tutor_context_cache() -> None:
+    now = time.monotonic()
+    expired_keys = [
+        key for key, (expires_at, _) in _tutor_context_cache.items() if expires_at <= now
+    ]
+    for key in expired_keys:
+        _tutor_context_cache.pop(key, None)
+
+    overflow = len(_tutor_context_cache) - _TUTOR_CONTEXT_CACHE_MAX_SIZE
+    if overflow > 0:
+        oldest_keys = list(_tutor_context_cache.keys())[:overflow]
+        for key in oldest_keys:
+            _tutor_context_cache.pop(key, None)
+
+
 async def _retrieve_tutor_context(
     request: TutorQueryRequest,
 ) -> tuple[str, list[dict[str, Any]], float]:
+    cache_key = _build_tutor_cache_key(request)
+    _prune_tutor_context_cache()
+    cached = _tutor_context_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and cached[0] > now:
+        return cached[1]
+
     query_embedding = await get_pg_vector_store().create_embedding(
         request.query,
         task_type='retrieval_query',
@@ -170,14 +280,20 @@ async def _retrieve_tutor_context(
     if not retrieved:
         raise HTTPException(status_code=404, detail='No tutor knowledge found for the given filters')
 
-    graph_facts = await tutor_storage_service.get_graph_facts(
-        chunk_ids=[item.chunk_id for item in retrieved],
-        limit=10,
-    )
-    neighbor_facts = await tutor_storage_service.get_graph_neighbors(
-        chunk_ids=[item.chunk_id for item in retrieved],
-        limit=10,
-    )
+    chunk_ids = [item.chunk_id for item in retrieved]
+    graph_facts: list[Any] = []
+    neighbor_facts: list[Any] = []
+    if not request.fast_mode:
+        graph_facts, neighbor_facts = await asyncio.gather(
+            tutor_storage_service.get_graph_facts(
+                chunk_ids=chunk_ids,
+                limit=6,
+            ),
+            tutor_storage_service.get_graph_neighbors(
+                chunk_ids=chunk_ids,
+                limit=6,
+            ),
+        )
     sources = [
         {
             'chunkId': item.chunk_id,
@@ -213,7 +329,9 @@ async def _retrieve_tutor_context(
     )
     pre_context = text_context if not graph_context else f'{text_context}\n\n{graph_context}'
     confidence = max(0.0, min(1.0, max(item.similarity_score for item in retrieved)))
-    return pre_context, sources, confidence
+    result = (pre_context, sources, confidence)
+    _tutor_context_cache[cache_key] = (now + _TUTOR_CONTEXT_CACHE_TTL_SECONDS, result)
+    return result
 
 
 @router.post('/ingest', response_model=TutorIngestAcceptedResponse)
@@ -234,9 +352,9 @@ async def create_tutor_ingest_job(request: TutorIngestRequest) -> TutorIngestAcc
             dry_run=request.dry_run,
         )
         return TutorIngestAcceptedResponse(
-            jobId=job.job_id,
+            job_id=job.job_id,
             status=job.status,
-            datasetVersion=job.dataset_version,
+            dataset_version=job.dataset_version,
             message='Tutor ingestion job created successfully',
         )
     except ValueError as exc:
@@ -303,12 +421,12 @@ async def create_tutor_knowledge_file(
         else:
             tutor_knowledge_file_worker.enqueue(payload)
         return TutorKnowledgeFileResponse(
-            fileId=request.file_id,
+            file_id=request.file_id,
             status='PENDING',
             progress=0,
-            chunkCount=0,
-            vectorCount=0,
-            errorMessage=None,
+            chunk_count=0,
+            vector_count=0,
+            error_message=None,
             metadata={
                 'stage': 'queued',
                 'graphStage': 'queued',
@@ -337,8 +455,8 @@ async def create_tutor_dataset_import(
             dataset_key=request.dataset_key,
         )
         return TutorDatasetImportResponse(
-            jobId=job['jobId'],
-            datasetKey=job['datasetKey'],
+            job_id=job['jobId'],
+            dataset_key=job['datasetKey'],
             status=job['status'],
             progress=job['progress'],
             stage=job['stage'],
@@ -359,6 +477,61 @@ async def list_tutor_dataset_import_jobs(user_id: str) -> list[dict[str, Any]]:
 @router.get('/dataset-imports/states', response_model=list[dict[str, Any]])
 async def list_tutor_dataset_import_states(user_id: str) -> list[dict[str, Any]]:
     return await tutor_dataset_import_service.list_dataset_states(user_id)
+
+
+@router.get('/student-programming/sessions', response_model=list[dict[str, Any]])
+async def list_student_programming_sessions(user_id: str) -> list[dict[str, Any]]:
+    return await student_programming_chat_service.list_sessions(user_id)
+
+
+@router.post('/student-programming/sessions', response_model=dict[str, Any])
+async def create_student_programming_session(request: StudentProgrammingSessionRequest) -> dict[str, Any]:
+    return await student_programming_chat_service.create_session(
+        {
+            'id': f'student_chat_{uuid4().hex[:12]}',
+            'userId': request.user_id,
+            'title': request.title,
+        }
+    )
+
+
+@router.patch('/student-programming/sessions/{session_id}', response_model=dict[str, Any])
+async def update_student_programming_session(
+    session_id: str,
+    request: StudentProgrammingSessionRequest,
+) -> dict[str, Any]:
+    return await student_programming_chat_service.update_session(session_id, request.user_id, request.title or '')
+
+
+@router.delete('/student-programming/sessions/{session_id}', response_model=dict[str, Any])
+async def delete_student_programming_session(session_id: str, user_id: str) -> dict[str, Any]:
+    return await student_programming_chat_service.delete_session(session_id, user_id)
+
+
+@router.get('/student-programming/sessions/{session_id}/messages', response_model=list[dict[str, Any]])
+async def list_student_programming_messages(session_id: str, user_id: str) -> list[dict[str, Any]]:
+    return await student_programming_chat_service.list_messages(session_id, user_id)
+
+
+@router.post('/student-programming/sessions/{session_id}/messages', response_model=dict[str, Any])
+async def create_student_programming_message(
+    session_id: str,
+    request: StudentProgrammingMessageRequest,
+) -> dict[str, Any]:
+    return await student_programming_chat_service.create_message(
+        {
+            'id': f'student_msg_{uuid4().hex[:12]}',
+            'sessionId': session_id,
+            'userId': request.user_id,
+            'role': request.role,
+            'content': request.content,
+            'metadata': {
+                'sources': request.sources,
+                'confidence': request.confidence,
+                'modelUsed': request.model_used,
+            },
+        }
+    )
 
 
 @router.get('/dataset-imports/{job_id}', response_model=dict[str, Any])
@@ -443,7 +616,7 @@ async def list_tutor_knowledge_folders(user_id: str) -> list[dict[str, Any]]:
 @router.get('/knowledge-stats', response_model=dict[str, Any])
 async def get_tutor_knowledge_stats(
     user_id: str,
-    folder_id: Optional[str] = None,
+    folder_id: str | None = None,
 ) -> dict[str, Any]:
     return await tutor_knowledge_storage_service.get_stats(
         user_id,
@@ -494,9 +667,9 @@ async def get_tutor_knowledge_file_graph(file_id: str) -> dict[str, Any]:
 @router.get('/knowledge-files', response_model=dict[str, Any])
 async def list_tutor_knowledge_files(
     user_id: str,
-    folder_id: Optional[str] = None,
-    status: Optional[str] = None,
-    search: Optional[str] = None,
+    folder_id: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
     sort_by: str = 'createdAt',
     sort_order: str = 'desc',
     page: int = 1,
@@ -641,6 +814,8 @@ async def query_tutor(request: TutorQueryRequest) -> TutorQueryResponse:
         if len(request.query.strip()) < 3:
             raise HTTPException(status_code=400, detail='Query quá ngắn')
 
+        request.fast_mode = request.fast_mode or _is_fast_mode_candidate(request.query)
+
         model_type = model_manager.resolve_model(request.model_type).id
         pre_context, sources, confidence = await _retrieve_tutor_context(request)
         agent = SimpleChatAgent(
@@ -653,7 +828,7 @@ async def query_tutor(request: TutorQueryRequest) -> TutorQueryResponse:
         if request.history:
             history_text = '\n'.join(
                 f'{message.role}: {message.content}'
-                for message in request.history[-5:]
+                for message in request.history[-3:]
             )
             full_query = f'Conversation history:\n{history_text}\n\nUser: {request.query}'
 
@@ -662,9 +837,9 @@ async def query_tutor(request: TutorQueryRequest) -> TutorQueryResponse:
         return TutorQueryResponse(
             answer=answer,
             sources=sources,
-            modelUsed=model_type,
+            model_used=model_type,
             confidence=confidence,
-            retrievalCount=len(sources),
+            retrieval_count=len(sources),
         )
     except ModelUnavailableError as exc:
         raise HTTPException(status_code=503, detail={'code': exc.code, 'message': str(exc)}) from exc
@@ -682,6 +857,8 @@ async def stream_tutor(request: TutorQueryRequest):
     try:
         if len(request.query.strip()) < 3:
             raise HTTPException(status_code=400, detail='Query quá ngắn')
+
+        request.fast_mode = request.fast_mode or _is_fast_mode_candidate(request.query)
 
         model_type = model_manager.resolve_model(request.model_type).id
         pre_context, sources, confidence = await _retrieve_tutor_context(request)

@@ -55,6 +55,27 @@ import * as crypto from 'crypto';
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
 
+    private async ensureOauthSession(
+        request: Request,
+        oauthUser: AuthenticatedOauthRequest['user']
+    ): Promise<{ token: string; sessionId?: string; refreshToken?: string; user?: any }> {
+        if (oauthUser.sessionId && oauthUser.refreshToken) {
+            return oauthUser;
+        }
+
+        const deviceInfo = this.extractDeviceInfo(request);
+        const session = await this.authService.createSession(
+            oauthUser.user.id,
+            deviceInfo
+        );
+
+        return {
+            ...oauthUser,
+            sessionId: session.sessionId,
+            refreshToken: session.refreshToken,
+        };
+    }
+
     private parseOAuthState(state?: string): {
         redirect?: string;
     } {
@@ -229,10 +250,14 @@ export class AuthController {
     })
     async refreshToken(
         @Req() request: Request,
+        @Body('refreshToken') refreshTokenFromBody: string | undefined,
         @Res({ passthrough: true }) response: ExpressResponse
     ) {
         // Extract refresh token from cookie
-        const refreshToken = request.cookies?.refreshToken;
+        const refreshToken =
+            request.cookies?.refreshToken ||
+            refreshTokenFromBody ||
+            request.body?.refreshToken;
 
         if (!refreshToken) {
             throw new UnauthorizedException('Refresh token not found');
@@ -368,7 +393,8 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId, refreshToken } = req.user;
+        const oauthPayload = await this.ensureOauthSession(request, req.user);
+        const { token, sessionId, refreshToken } = oauthPayload;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -396,7 +422,7 @@ export class AuthController {
         res.redirect(
             this.resolveFrontendTarget(
                 frontendUrl,
-                req.user.user?.role as 'teacher' | 'student' | undefined,
+                oauthPayload.user?.role as 'teacher' | 'student' | undefined,
                 redirectFromCookie || oauthState.redirect
             )
         );
@@ -417,7 +443,8 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId, refreshToken } = req.user;
+        const oauthPayload = await this.ensureOauthSession(request, req.user);
+        const { token, sessionId, refreshToken } = oauthPayload;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -445,7 +472,7 @@ export class AuthController {
         res.redirect(
             this.resolveFrontendTarget(
                 frontendUrl,
-                req.user.user?.role as 'teacher' | 'student' | undefined,
+                oauthPayload.user?.role as 'teacher' | 'student' | undefined,
                 redirectFromCookie || oauthState.redirect
             )
         );
@@ -466,7 +493,8 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId, refreshToken } = req.user;
+        const oauthPayload = await this.ensureOauthSession(request, req.user);
+        const { token, sessionId, refreshToken } = oauthPayload;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -494,7 +522,7 @@ export class AuthController {
         res.redirect(
             this.resolveFrontendTarget(
                 frontendUrl,
-                req.user.user?.role as 'teacher' | 'student' | undefined,
+                oauthPayload.user?.role as 'teacher' | 'student' | undefined,
                 redirectFromCookie || oauthState.redirect
             )
         );
@@ -511,6 +539,53 @@ export class AuthController {
     })
     async getUser(@Req() req: AuthenticatedRequest) {
         return this.authService.getUser(req.user);
+    }
+
+    @Post('sync-refresh-token')
+    @UseGuards(AuthGuard)
+    @ApiOperation({ summary: 'Đồng bộ lại refresh token từ session hiện tại' })
+    @ApiCookieAuth('cookie-auth')
+    async syncRefreshToken(
+        @Req() req: AuthenticatedRequest,
+        @Req() request: Request,
+        @Res({ passthrough: true }) response: ExpressResponse
+    ) {
+        const sessionId = request.cookies?.session_id || request.body?.sessionId;
+
+        console.log('[AuthController] sync-refresh-token request', {
+            userId: req.user.id,
+            sessionId,
+            cookieSessionId: request.cookies?.session_id,
+            bodySessionId: request.body?.sessionId,
+            hasRefreshCookie: Boolean(request.cookies?.refreshToken),
+        });
+
+        if (!sessionId) {
+            throw new UnauthorizedException('Session ID not found');
+        }
+
+        const result = await this.authService.syncRefreshTokenBySession(
+            req.user.id,
+            sessionId
+        );
+
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
+
+        response.cookie('refreshToken', result.refreshToken, cookieConfig);
+
+        console.log('[AuthController] sync-refresh-token success', {
+            userId: req.user.id,
+            sessionId,
+            refreshTokenPreview: result.refreshToken?.slice(0, 12),
+        });
+
+        return {
+            success: true,
+            refreshToken: result.refreshToken,
+        };
     }
 
     private extractDeviceInfo(request: Request): DeviceInfo {

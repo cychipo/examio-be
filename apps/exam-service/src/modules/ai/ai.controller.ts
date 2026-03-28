@@ -3,6 +3,7 @@ import {
     Get,
     Post,
     Put,
+    Patch,
     Delete,
     Body,
     Param,
@@ -409,6 +410,78 @@ export class AIController {
     @ApiOperation({ summary: 'Hỏi tutor với streaming' })
     async tutorStream(@Body() dto: TutorQueryDto) {
         return this.aiService.tutorStream(dto);
+    }
+
+    @Get('tutor/student-programming/sessions')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('student')
+    @ApiCookieAuth('cookie-auth')
+    async listStudentProgrammingSessions(@Req() req: AuthenticatedRequest) {
+        return this.aiService.listStudentProgrammingSessions(req.user);
+    }
+
+    @Post('tutor/student-programming/sessions')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('student')
+    @ApiCookieAuth('cookie-auth')
+    async createStudentProgrammingSession(
+        @Req() req: AuthenticatedRequest,
+        @Body() body: { title?: string }
+    ) {
+        return this.aiService.createStudentProgrammingSession(req.user, body?.title);
+    }
+
+    @Patch('tutor/student-programming/sessions/:sessionId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('student')
+    @ApiCookieAuth('cookie-auth')
+    async updateStudentProgrammingSession(
+        @Req() req: AuthenticatedRequest,
+        @Param('sessionId') sessionId: string,
+        @Body() body: { title: string }
+    ) {
+        return this.aiService.updateStudentProgrammingSession(req.user, sessionId, body.title);
+    }
+
+    @Delete('tutor/student-programming/sessions/:sessionId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('student')
+    @ApiCookieAuth('cookie-auth')
+    async deleteStudentProgrammingSession(
+        @Req() req: AuthenticatedRequest,
+        @Param('sessionId') sessionId: string
+    ) {
+        return this.aiService.deleteStudentProgrammingSession(req.user, sessionId);
+    }
+
+    @Get('tutor/student-programming/sessions/:sessionId/messages')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('student')
+    @ApiCookieAuth('cookie-auth')
+    async listStudentProgrammingMessages(
+        @Req() req: AuthenticatedRequest,
+        @Param('sessionId') sessionId: string
+    ) {
+        return this.aiService.listStudentProgrammingMessages(req.user, sessionId);
+    }
+
+    @Post('tutor/student-programming/sessions/:sessionId/messages')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('student')
+    @ApiCookieAuth('cookie-auth')
+    async createStudentProgrammingMessage(
+        @Req() req: AuthenticatedRequest,
+        @Param('sessionId') sessionId: string,
+        @Body()
+        body: {
+            content: string;
+            role: 'assistant' | 'user';
+            sources?: any[];
+            confidence?: number;
+            modelUsed?: string;
+        }
+    ) {
+        return this.aiService.createStudentProgrammingMessage(req.user, sessionId, body);
     }
 
     @Get('tutor/graph/job/:jobId')

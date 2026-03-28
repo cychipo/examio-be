@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -672,16 +673,21 @@ class TutorStorageService:
         self,
         *,
         query_embedding: list[float],
-        course_code: str,
+        course_code: Optional[str],
         language: Optional[str],
         topic: Optional[str],
         difficulty: Optional[str],
         top_k: int,
     ) -> list[TutorRetrievedChunk]:
         pool = await self._get_pool()
-        filters = ['doc."courseCode" = $2']
-        params: list[Any] = [f"[{','.join(str(v) for v in query_embedding)}]", course_code]
-        next_index = 3
+        filters: list[str] = []
+        params: list[Any] = [f"[{','.join(str(v) for v in query_embedding)}]"]
+        next_index = 2
+
+        if course_code:
+            filters.append(f'doc."courseCode" = ${next_index}')
+            params.append(course_code)
+            next_index += 1
 
         if language:
             filters.append(f'chunk.language = ${next_index}')
@@ -697,7 +703,7 @@ class TutorStorageService:
             next_index += 1
 
         params.append(top_k)
-        where_clause = ' AND '.join(filters)
+        where_clause = ' AND '.join(filters) if filters else 'TRUE'
         query = f"""
             SELECT
                 chunk.id,
@@ -744,29 +750,30 @@ class TutorStorageService:
         self,
         *,
         query_embedding: list[float],
-        course_code: str,
+        course_code: Optional[str],
         language: Optional[str],
         topic: Optional[str],
         difficulty: Optional[str],
         top_k: int,
         query_text: str,
     ) -> list[TutorRetrievedChunk]:
-        vector_hits = await self.search_chunks(
-            query_embedding=query_embedding,
-            course_code=course_code,
-            language=language,
-            topic=topic,
-            difficulty=difficulty,
-            top_k=max(top_k, 6),
-        )
-
-        graph_hits = await self.search_chunks_by_entities(
-            query_text=query_text,
-            course_code=course_code,
-            language=language,
-            topic=topic,
-            difficulty=difficulty,
-            limit=max(top_k, 6),
+        vector_hits, graph_hits = await asyncio.gather(
+            self.search_chunks(
+                query_embedding=query_embedding,
+                course_code=course_code,
+                language=language,
+                topic=topic,
+                difficulty=difficulty,
+                top_k=max(top_k, 6),
+            ),
+            self.search_chunks_by_entities(
+                query_text=query_text,
+                course_code=course_code,
+                language=language,
+                topic=topic,
+                difficulty=difficulty,
+                limit=max(top_k, 6),
+            ),
         )
 
         ranked: dict[str, TutorRetrievedChunk] = {}
@@ -785,7 +792,7 @@ class TutorStorageService:
         self,
         *,
         query_text: str,
-        course_code: str,
+        course_code: Optional[str],
         language: Optional[str],
         topic: Optional[str],
         difficulty: Optional[str],
@@ -796,9 +803,14 @@ class TutorStorageService:
             return []
 
         pool = await self._get_pool()
-        filters = ['doc."courseCode" = $1']
-        params: list[Any] = [course_code]
-        next_index = 2
+        filters: list[str] = []
+        params: list[Any] = []
+        next_index = 1
+
+        if course_code:
+            filters.append(f'doc."courseCode" = ${next_index}')
+            params.append(course_code)
+            next_index += 1
 
         if language:
             filters.append(f'chunk.language = ${next_index}')

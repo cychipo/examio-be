@@ -1035,6 +1035,77 @@ export class AIService {
         }
     }
 
+    async listStudentProgrammingSessions(user: User) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/student-programming/sessions`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async createStudentProgrammingSession(user: User, title?: string) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/student-programming/sessions`, {
+                userId: user.id,
+                title,
+            })
+        );
+        return response.data;
+    }
+
+    async updateStudentProgrammingSession(user: User, sessionId: string, title: string) {
+        const response = await firstValueFrom(
+            this.httpService.patch(`${this.aiServiceUrl}/tutor/student-programming/sessions/${sessionId}`, {
+                userId: user.id,
+                title,
+            })
+        );
+        return response.data;
+    }
+
+    async deleteStudentProgrammingSession(user: User, sessionId: string) {
+        const response = await firstValueFrom(
+            this.httpService.delete(`${this.aiServiceUrl}/tutor/student-programming/sessions/${sessionId}`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async listStudentProgrammingMessages(user: User, sessionId: string) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/student-programming/sessions/${sessionId}/messages`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async createStudentProgrammingMessage(
+        user: User,
+        sessionId: string,
+        payload: {
+            content: string;
+            role: 'assistant' | 'user';
+            sources?: any[];
+            confidence?: number;
+            modelUsed?: string;
+        }
+    ) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/student-programming/sessions/${sessionId}/messages`, {
+                userId: user.id,
+                content: payload.content,
+                role: payload.role,
+                sources: payload.sources,
+                confidence: payload.confidence,
+                modelUsed: payload.modelUsed,
+            })
+        );
+        return response.data;
+    }
+
     async getTutorGraphByJob(jobId: string) {
         try {
             const response = await firstValueFrom(

@@ -734,6 +734,30 @@ export class AuthService {
         };
     }
 
+    async syncRefreshTokenBySession(
+        userId: string,
+        sessionId: string
+    ): Promise<{ refreshToken: string }> {
+        const session = await this.userSessionRepository.findBySessionId(
+            sessionId
+        );
+
+        if (!session || !session.isActive || session.userId !== userId) {
+            throw new UnauthorizedException('Session không hợp lệ');
+        }
+
+        if (new Date() > session.expiresAt) {
+            await this.userSessionRepository.deactivateSession(session.id);
+            throw new UnauthorizedException('Session expired');
+        }
+
+        await this.userSessionRepository.updateLastActivity(session.sessionId);
+
+        return {
+            refreshToken: session.refreshToken,
+        };
+    }
+
     async createSession(
         userId: string,
         deviceInfo: DeviceInfo

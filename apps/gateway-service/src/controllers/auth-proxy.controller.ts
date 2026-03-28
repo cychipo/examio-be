@@ -31,6 +31,33 @@ import { ProxyService } from '../services/proxy.service';
 export class AuthProxyController {
     constructor(private readonly proxyService: ProxyService) {}
 
+    private extractCookieValue(
+        cookies: string[] | string | undefined,
+        cookieName: string
+    ): string | undefined {
+        const cookieList = Array.isArray(cookies)
+            ? cookies
+            : typeof cookies === 'string'
+              ? [cookies]
+              : [];
+
+        for (const cookie of cookieList) {
+            const [nameValue] = cookie.split(';');
+            const separatorIndex = nameValue.indexOf('=');
+            if (separatorIndex === -1) {
+                continue;
+            }
+
+            const name = nameValue.slice(0, separatorIndex).trim();
+            const value = nameValue.slice(separatorIndex + 1).trim();
+            if (name === cookieName && value) {
+                return value;
+            }
+        }
+
+        return undefined;
+    }
+
     // ==================== PUBLIC ENDPOINTS ====================
 
     @Post('login')
@@ -92,10 +119,11 @@ export class AuthProxyController {
     @Post('refresh')
     @ApiOperation({ summary: 'Làm mới access token' })
     @ApiResponse({ status: 200, description: 'Làm mới token thành công' })
-    async refresh(@Req() req: Request, @Res() res: Response) {
+    async refresh(@Body() body: any, @Req() req: Request, @Res() res: Response) {
         const result = await this.proxyService.forward('auth', {
             method: 'POST',
             path: '/api/v1/auth/refresh',
+            body,
             headers: this.extractHeaders(req),
             cookies: req.cookies,
         });
@@ -224,6 +252,26 @@ export class AuthProxyController {
             },
             this.extractToken(req)
         );
+    }
+
+    @Post('sync-refresh-token')
+    @ApiBearerAuth('access-token')
+    @ApiOperation({ summary: 'Đồng bộ refresh token từ session hiện tại' })
+    async syncRefreshToken(@Body() body: any, @Req() req: Request, @Res() res: Response) {
+        const result = await this.proxyService.forwardWithAuth(
+            'auth',
+            {
+                method: 'POST',
+                path: '/api/v1/auth/sync-refresh-token',
+                body,
+                headers: this.extractHeaders(req),
+                cookies: req.cookies,
+            },
+            this.extractToken(req)
+        );
+
+        this.setAuthCookies(res, result, req);
+        return res.json(result);
     }
 
     @Post('logout')
@@ -386,12 +434,40 @@ export class AuthProxyController {
         }
 
         // Relay cookies from auth service response
-        if (result.headers && result.headers['set-cookie']) {
-            res.setHeader('Set-Cookie', result.headers['set-cookie']);
+        const setCookieHeaders = result.headers?.['set-cookie'];
+        if (setCookieHeaders) {
+            res.setHeader('Set-Cookie', setCookieHeaders);
         }
 
         // Redirect to frontend - auth service may provide a redirectUrl
-        const redirectUrl = result.redirectUrl || frontendUrl;
-        res.redirect(redirectUrl);
+        const rawRedirectUrl = result.redirectUrl || frontendUrl;
+
+        try {
+            const redirectUrl = new URL(rawRedirectUrl);
+            const token =
+                result.data?.token ||
+                this.extractCookieValue(setCookieHeaders, 'token') ||
+                this.extractCookieValue(setCookieHeaders, 'accessToken');
+            const refreshToken =
+                result.data?.refreshToken ||
+                this.extractCookieValue(setCookieHeaders, 'refreshToken');
+            const sessionId =
+                result.data?.sessionId ||
+                this.extractCookieValue(setCookieHeaders, 'session_id');
+
+            if (token) {
+                redirectUrl.searchParams.set('token', token);
+            }
+            if (refreshToken) {
+                redirectUrl.searchParams.set('refreshToken', refreshToken);
+            }
+            if (sessionId) {
+                redirectUrl.searchParams.set('sessionId', sessionId);
+            }
+            res.redirect(redirectUrl.toString());
+            return;
+        } catch {
+            res.redirect(rawRedirectUrl);
+        }
     }
 }

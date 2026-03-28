@@ -182,7 +182,7 @@ export class TutorIngestDto extends createZodDto(TutorIngestSchema) {
 export const TutorQuerySchema = z.object({
     query: z.string(),
     history: z.array(TutorMessageSchema).optional(),
-    courseCode: z.string(),
+    courseCode: z.string().optional(),
     language: z.string().optional(),
     topic: z.string().optional(),
     difficulty: z.enum(['basic', 'intermediate', 'advanced']).optional(),
@@ -197,8 +197,8 @@ export class TutorQueryDto extends createZodDto(TutorQuerySchema) {
     @ApiProperty({ required: false, type: [Object] })
     history?: Array<{ role: string; content: string }>;
 
-    @ApiProperty({ description: 'Mã học phần' })
-    courseCode: string;
+    @ApiProperty({ description: 'Mã học phần', required: false })
+    courseCode?: string;
 
     @ApiProperty({ required: false })
     language?: string;

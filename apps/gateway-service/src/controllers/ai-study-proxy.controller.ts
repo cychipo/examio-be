@@ -417,6 +417,68 @@ export class AIProxyController {
         );
     }
 
+    @Get('tutor/student-programming/sessions')
+    async listStudentProgrammingSessions(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'GET', path: '/api/v1/ai/tutor/student-programming/sessions', headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/student-programming/sessions')
+    async createStudentProgrammingSession(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'POST', path: '/api/v1/ai/tutor/student-programming/sessions', body, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Patch('tutor/student-programming/sessions/:sessionId')
+    async updateStudentProgrammingSession(
+        @Param('sessionId') sessionId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'PATCH', path: `/api/v1/ai/tutor/student-programming/sessions/${sessionId}`, body, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Delete('tutor/student-programming/sessions/:sessionId')
+    async deleteStudentProgrammingSession(@Param('sessionId') sessionId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'DELETE', path: `/api/v1/ai/tutor/student-programming/sessions/${sessionId}`, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/student-programming/sessions/:sessionId/messages')
+    async listStudentProgrammingMessages(@Param('sessionId') sessionId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'GET', path: `/api/v1/ai/tutor/student-programming/sessions/${sessionId}/messages`, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/student-programming/sessions/:sessionId/messages')
+    async createStudentProgrammingMessage(
+        @Param('sessionId') sessionId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'POST', path: `/api/v1/ai/tutor/student-programming/sessions/${sessionId}/messages`, body, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
     @Post('tutor/dataset-imports/:jobId/cancel')
     @ApiOperation({ summary: 'Hủy job nạp dataset tutor' })
     async cancelTutorDatasetImportJob(@Param('jobId') jobId: string, @Req() req: Request) {
