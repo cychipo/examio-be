@@ -1,0 +1,2 @@
+{"task_id": "HumanEval/0", "prompt": "Write a function add(a, b) that returns the sum of two integers.", "canonical_solution": "def add(a, b):\n    return a + b\n", "test": "assert add(1, 2) == 3\nassert add(-1, 1) == 0", "entry_point": "add"}
+{"task_id": "HumanEval/1", "prompt": "Write a function is_even(n) that returns True if n is even, otherwise False.", "canonical_solution": "def is_even(n):\n    return n % 2 == 0\n", "test": "assert is_even(2) is True\nassert is_even(3) is False", "entry_point": "is_even"}

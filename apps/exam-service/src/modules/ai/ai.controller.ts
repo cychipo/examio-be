@@ -30,6 +30,7 @@ import { AIService } from './ai.service';
 import {
     UploadFileDto,
     RegenerateDto,
+    StudentProgrammingEvaluateDto,
     UploadImageDto,
     GenerateFromFileDto,
     TutorIngestDto,
@@ -482,6 +483,28 @@ export class AIController {
         }
     ) {
         return this.aiService.createStudentProgrammingMessage(req.user, sessionId, body);
+    }
+
+    @Post('tutor/student-programming/evaluate')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('student')
+    @ApiCookieAuth('cookie-auth')
+    async evaluateStudentProgrammingAnswer(
+        @Req() req: AuthenticatedRequest,
+        @Body() body: StudentProgrammingEvaluateDto
+    ) {
+        return this.aiService.evaluateStudentProgrammingAnswer(req.user, body);
+    }
+
+    @Get('tutor/student-programming/evaluate/:jobId')
+    @UseGuards(AuthGuard, RolesGuard)
+    @Roles('student')
+    @ApiCookieAuth('cookie-auth')
+    async getStudentProgrammingEvaluationJob(
+        @Req() req: AuthenticatedRequest,
+        @Param('jobId') jobId: string
+    ) {
+        return this.aiService.getStudentProgrammingEvaluationJob(req.user, jobId);
     }
 
     @Get('tutor/graph/job/:jobId')

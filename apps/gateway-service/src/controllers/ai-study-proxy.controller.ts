@@ -479,6 +479,24 @@ export class AIProxyController {
         );
     }
 
+    @Post('tutor/student-programming/evaluate')
+    async evaluateStudentProgrammingAnswer(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'POST', path: '/api/v1/ai/tutor/student-programming/evaluate', body, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/student-programming/evaluate/:jobId')
+    async getStudentProgrammingEvaluationJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'GET', path: `/api/v1/ai/tutor/student-programming/evaluate/${jobId}`, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
     @Post('tutor/dataset-imports/:jobId/cancel')
     @ApiOperation({ summary: 'Hủy job nạp dataset tutor' })
     async cancelTutorDatasetImportJob(@Param('jobId') jobId: string, @Req() req: Request) {

@@ -1106,6 +1106,40 @@ export class AIService {
         return response.data;
     }
 
+    async evaluateStudentProgrammingAnswer(
+        user: User,
+        payload: {
+            sessionId: string;
+            messageId: string;
+            question: string;
+            answer: string;
+            modelType?: string;
+            language?: string;
+        }
+    ) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/student-programming/evaluate`, {
+                userId: user.id,
+                sessionId: payload.sessionId,
+                messageId: payload.messageId,
+                question: payload.question,
+                answer: payload.answer,
+                modelType: payload.modelType,
+                language: payload.language,
+            })
+        );
+        return response.data;
+    }
+
+    async getStudentProgrammingEvaluationJob(user: User, jobId: string) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/student-programming/evaluate/${jobId}`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
     async getTutorGraphByJob(jobId: string) {
         try {
             const response = await firstValueFrom(

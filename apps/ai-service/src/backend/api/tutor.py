@@ -28,6 +28,9 @@ from src.backend.services.tutor_dataset_import_service import (
 from src.backend.services.student_programming_chat_service import (
     student_programming_chat_service,
 )
+from src.backend.services.student_programming_evaluation_service import (
+    student_programming_evaluation_service,
+)
 from src.rag.simple_chat_agent import SimpleChatAgent
 from src.backend.services.tutor_storage_service import tutor_storage_service
 from src.genai_tutor.knowledge_base.knowledge_file_worker import (
@@ -161,6 +164,18 @@ class StudentProgrammingMessageRequest(BaseModel):
     model_used: str | None = None
 
 
+class StudentProgrammingEvaluateRequest(BaseModel):
+    model_config = camel_model_config
+
+    user_id: str | None = None
+    session_id: str | None = None
+    message_id: str | None = None
+    question: str
+    answer: str
+    model_type: str | None = None
+    language: str | None = None
+
+
 class TutorMessage(BaseModel):
     role: str
     content: str
@@ -196,6 +211,13 @@ def _build_tutor_system_prompt() -> str:
         'Hãy ưu tiên giải thích theo hướng sư phạm, nêu từng bước, và bám sát ngữ cảnh đã truy xuất. '
         'Nếu thông tin trong ngữ cảnh chưa đủ chắc chắn, hãy nói rõ giới hạn đó.'
     )
+
+
+def _truncate_context_content(content: str, limit: int) -> str:
+    normalized = content.strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit].rsplit(' ', 1)[0] + ' ...'
 
 
 def _is_fast_mode_candidate(query: str) -> bool:
@@ -267,13 +289,14 @@ async def _retrieve_tutor_context(
         request.query,
         task_type='retrieval_query',
     )
+    effective_top_k = 2 if request.fast_mode else request.top_k
     retrieved = await tutor_storage_service.search_chunks_hybrid(
         query_embedding=query_embedding,
         course_code=request.course_code,
         language=request.language,
         topic=request.topic,
         difficulty=request.difficulty,
-        top_k=request.top_k,
+        top_k=effective_top_k,
         query_text=request.query,
     )
 
@@ -323,8 +346,9 @@ async def _retrieve_tutor_context(
                 graph_lines.append(f'- {fact.entity_name} ({fact.entity_type})')
         graph_context = 'Graph facts and neighbors:\n' + '\n'.join(graph_lines)
 
+    snippet_limit = 500 if request.fast_mode else 900
     text_context = '\n\n'.join(
-        f"[Source: {item.title} | {item.source_path} | score={item.similarity_score:.3f}]\n{item.content}"
+        f"[Source: {item.title} | {item.source_path} | score={item.similarity_score:.3f}]\n{_truncate_context_content(item.content, snippet_limit)}"
         for item in retrieved
     )
     pre_context = text_context if not graph_context else f'{text_context}\n\n{graph_context}'
@@ -532,6 +556,41 @@ async def create_student_programming_message(
             },
         }
     )
+
+
+@router.post('/student-programming/evaluate', response_model=dict[str, Any])
+async def evaluate_student_programming_answer(
+    request: StudentProgrammingEvaluateRequest,
+) -> dict[str, Any]:
+    try:
+        if not request.user_id or not request.session_id or not request.message_id:
+            raise HTTPException(status_code=400, detail='userId, sessionId và messageId là bắt buộc')
+
+        return await student_programming_evaluation_service.create_job(
+            user_id=request.user_id,
+            session_id=request.session_id,
+            message_id=request.message_id,
+            question=request.question,
+            answer=request.answer,
+            model_type=request.model_type,
+            language=request.language,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error('Student programming evaluation failed: %s', exc)
+        raise HTTPException(status_code=500, detail='Student programming evaluation failed') from exc
+
+
+@router.get('/student-programming/evaluate/{job_id}', response_model=dict[str, Any])
+async def get_student_programming_evaluation_job(
+    job_id: str,
+    user_id: str,
+) -> dict[str, Any]:
+    job = await student_programming_evaluation_service.get_job(job_id, user_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail='Student programming evaluation job not found')
+    return job
 
 
 @router.get('/dataset-imports/{job_id}', response_model=dict[str, Any])

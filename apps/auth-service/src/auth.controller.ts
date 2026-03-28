@@ -59,8 +59,17 @@ export class AuthController {
         request: Request,
         oauthUser: AuthenticatedOauthRequest['user']
     ): Promise<{ token: string; sessionId?: string; refreshToken?: string; user?: any }> {
+        if (!oauthUser.token) {
+            throw new UnauthorizedException('OAuth token not found');
+        }
+
         if (oauthUser.sessionId && oauthUser.refreshToken) {
-            return oauthUser;
+            return {
+                token: oauthUser.token,
+                sessionId: oauthUser.sessionId,
+                refreshToken: oauthUser.refreshToken,
+                user: oauthUser.user,
+            };
         }
 
         const deviceInfo = this.extractDeviceInfo(request);
@@ -70,7 +79,8 @@ export class AuthController {
         );
 
         return {
-            ...oauthUser,
+            token: oauthUser.token,
+            user: oauthUser.user,
             sessionId: session.sessionId,
             refreshToken: session.refreshToken,
         };

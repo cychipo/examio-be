@@ -190,6 +190,34 @@ uvicorn src.backend.main:app --reload --port 8000
 # Swagger documentation at http://localhost:8000/docs
 ```
 
+## Evaluation Module
+
+Evaluation module nam trong `src/evaluation` de benchmark AI Tutor cho bai toan lap trinh Python/C.
+
+### Deploy requirements
+
+- Docker runtime cua `ai-service` can co ca:
+  - `python3`
+  - `gcc`, `g++`, `build-essential`, `libc6-dev`
+- Cac Python package benchmark da duoc dua vao `requirements.txt` cua service.
+- Neu muon chay benchmark trong production/staging, container `ai-service` can truy cap duoc endpoint tutor local.
+
+### Smoke check sau deploy
+
+```bash
+python -m src.evaluation.scripts.run_benchmark \
+  --dataset humaneval \
+  --dataset-path src/evaluation/datasets/samples/humaneval_smoke.jsonl \
+  --model-type qwen3_8b \
+  --limit 2 \
+  --fast-mode true \
+  --report-name deploy_smoke_report.json
+```
+
+Neu command tren chay thanh cong va sinh file report thi module evaluation da san sang o moi truong deploy.
+
+Luu y: evaluation runtime tmp/report mac dinh duoc ghi vao `data-source/evaluation/` thay vi `src/` de tranh trigger auto-reload khi chay dev mode.
+
 ## Streamlit App
 
 ### Architecture

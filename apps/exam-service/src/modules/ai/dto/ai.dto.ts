@@ -216,6 +216,37 @@ export class TutorQueryDto extends createZodDto(TutorQuerySchema) {
     modelType?: string;
 }
 
+export const StudentProgrammingEvaluateSchema = z.object({
+    sessionId: z.string().min(1),
+    messageId: z.string().min(1),
+    question: z.string().min(3),
+    answer: z.string().min(1),
+    modelType: z.string().optional(),
+    language: z.string().optional(),
+});
+
+export class StudentProgrammingEvaluateDto extends createZodDto(
+    StudentProgrammingEvaluateSchema
+) {
+    @ApiProperty({ description: 'Session chat cần chấm điểm' })
+    sessionId: string;
+
+    @ApiProperty({ description: 'Assistant message cần chấm điểm' })
+    messageId: string;
+
+    @ApiProperty({ description: 'Câu hỏi gốc của học sinh' })
+    question: string;
+
+    @ApiProperty({ description: 'Câu trả lời AI cần đánh giá' })
+    answer: string;
+
+    @ApiProperty({ required: false, description: 'Model AI id' })
+    modelType?: string;
+
+    @ApiProperty({ required: false, description: 'Ngôn ngữ code mục tiêu' })
+    language?: string;
+}
+
 export const TutorKnowledgeUploadSchema = z.object({
     folderId: z.string().optional(),
     folderName: z.string().optional(),

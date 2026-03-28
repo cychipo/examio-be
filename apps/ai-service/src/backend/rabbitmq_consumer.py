@@ -20,6 +20,10 @@ from src.genai_tutor.knowledge_base.knowledge_file_worker import (
 from src.backend.services.tutor_dataset_import_service import (
     tutor_dataset_import_service,
 )
+from src.backend.services.student_programming_evaluation_service import (
+    EVALUATION_ROUTING_KEY,
+    student_programming_evaluation_service,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -82,6 +86,13 @@ class RabbitMQConsumer:
         logger.info(
             f"Bound queue {QUEUE_NAME} to exchange {EXCHANGE_NAME} with key {TUTOR_DATASET_IMPORT_ROUTING_KEY}"
         )
+        await self.queue.bind(
+            self.exchange,
+            routing_key=EVALUATION_ROUTING_KEY,
+        )
+        logger.info(
+            f"Bound queue {QUEUE_NAME} to exchange {EXCHANGE_NAME} with key {EVALUATION_ROUTING_KEY}"
+        )
 
     async def process_message(self, message: IncomingMessage):
         """Process incoming OCR request message"""
@@ -106,6 +117,18 @@ class RabbitMQConsumer:
                     await tutor_dataset_import_service.run_job(payload.get("jobId"))
                     logger.info(
                         f"Queued tutor dataset import processing for {payload.get('jobId')}"
+                    )
+                    return
+
+                if body.get("type") == "tutor.student-evaluation.requested":
+                    payload = body.get("payload", {})
+                    asyncio.create_task(
+                        student_programming_evaluation_service.run_job(
+                            payload.get("jobId")
+                        )
+                    )
+                    logger.info(
+                        f"Queued student programming evaluation processing for {payload.get('jobId')}"
                     )
                     return
 
