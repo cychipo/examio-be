@@ -20,6 +20,11 @@ C_FUNCTION_PATTERN = re.compile(
     re.DOTALL,
 )
 
+CPP_FUNCTION_PATTERN = re.compile(
+    r'(?P<code>(?:#include\s+<[^>]+>\s*)*(?:using\s+namespace\s+\w+\s*;\s*)*(?:template\s*<[^>]+>\s*)?(?:[a-zA-Z_][\w\s\*:&<>,]+)\s+[a-zA-Z_][\w]*\s*\([^\)]*\)\s*(?:const\s*)?\{.*)',
+    re.DOTALL,
+)
+
 
 def _strip_common_leading_explanations(text: str) -> str:
     cleaned_lines: list[str] = []
@@ -46,7 +51,12 @@ def _strip_common_leading_explanations(text: str) -> str:
 
 
 def _extract_by_language_heuristic(response_text: str, language: SupportedLanguage) -> str | None:
-    pattern = PYTHON_FUNCTION_PATTERN if language == 'python' else C_FUNCTION_PATTERN
+    if language == 'python':
+        pattern = PYTHON_FUNCTION_PATTERN
+    elif language == 'cpp':
+        pattern = CPP_FUNCTION_PATTERN
+    else:
+        pattern = C_FUNCTION_PATTERN
     match = pattern.search(response_text)
     if match:
         return match.group('code').strip()
@@ -58,6 +68,7 @@ def extract_code_block(response_text: str, language: SupportedLanguage) -> str:
     language_aliases = {
         'python': {'python', 'py'},
         'c': {'c', 'h'},
+        'cpp': {'cpp', 'c++', 'cc', 'cxx', 'hpp', 'h++'},
     }
 
     matches = list(FENCED_BLOCK_PATTERN.finditer(response_text))

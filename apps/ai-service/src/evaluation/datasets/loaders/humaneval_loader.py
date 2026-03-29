@@ -25,6 +25,8 @@ def load_humaneval_samples(file_path: Path, limit: int | None = None) -> list[Ev
                     entry_point=row.get('entry_point'),
                     metadata={
                         'source': 'HumanEval',
+                        'task_id': row['task_id'],
+                        'entry_point': row.get('entry_point'),
                     },
                 )
             )

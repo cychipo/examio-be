@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,8 @@ import httpx
 import grpc
 
 from src.backend.grpc_generated import r2_pb2, r2_pb2_grpc
+from src.backend.services.benchmark_index_service import benchmark_index_service
+from src.evaluation.datasets.schemas import EvaluationSample
 
 from src.backend.services.tutor_storage_service import tutor_storage_service
 from src.genai_tutor.knowledge_base.ingestion_pipeline import tutor_ingestion_pipeline
@@ -92,6 +95,30 @@ DATASET_CATALOG: list[dict[str, Any]] = [
         'courseCode': 'MULTI_LANG_DATASETS',
         'language': 'mixed',
         'topic': 'competitive-programming',
+        'difficulty': 'intermediate',
+    },
+    {
+        'datasetKey': 'humaneval-cpp',
+        'title': 'HumanEval C++',
+        'description': '161 bài HumanEval đã được chuyển sang C++ từ MultiPL-E, có test benchmark để chấm tự động.',
+        'source': 'huggingface',
+        'repository': 'nuprl/MultiPL-E',
+        'config': 'humaneval-cpp',
+        'courseCode': 'CPP_DATASETS',
+        'language': 'cpp',
+        'topic': 'programming-problems',
+        'difficulty': 'intermediate',
+    },
+    {
+        'datasetKey': 'mbpp-cpp',
+        'title': 'MBPP C++',
+        'description': '397 bài MBPP đã được chuyển sang C++ từ MultiPL-E, có test benchmark để chấm tự động.',
+        'source': 'huggingface',
+        'repository': 'nuprl/MultiPL-E',
+        'config': 'mbpp-cpp',
+        'courseCode': 'CPP_DATASETS',
+        'language': 'cpp',
+        'topic': 'basic-cpp',
         'difficulty': 'intermediate',
     },
 ]
@@ -177,12 +204,27 @@ class TutorDatasetImportService:
 
     async def list_dataset_states(self, user_id: str) -> list[dict[str, Any]]:
         jobs = await self.list_jobs(user_id)
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            folder_rows = await conn.fetch(
+                'SELECT id FROM "TutorKnowledgeFolder" WHERE "userId" = $1',
+                user_id,
+            )
+        existing_folder_ids = {row['id'] for row in folder_rows}
         states: list[dict[str, Any]] = []
 
         for dataset in DATASET_CATALOG:
             dataset_jobs = [job for job in jobs if job['datasetKey'] == dataset['datasetKey']]
             latest_job = dataset_jobs[0] if dataset_jobs else None
-            completed_job = next((job for job in dataset_jobs if job['status'] == 'completed'), None)
+            completed_job = next(
+                (
+                    job
+                    for job in dataset_jobs
+                    if job['status'] == 'completed'
+                    and (job.get('importedFolderId') or job.get('folderId')) in existing_folder_ids
+                ),
+                None,
+            )
 
             states.append(
                 {
@@ -300,6 +342,13 @@ class TutorDatasetImportService:
         trigger = f'dataset-import:{dataset_key}:%'
         await tutor_storage_service.delete_jobs_by_trigger(trigger)
 
+        deleted_benchmark_items = 0
+        benchmark_dataset_name = self._benchmark_dataset_name_for_dataset_key(dataset_key)
+        if benchmark_dataset_name:
+            deleted_benchmark_items = await benchmark_index_service.delete_items_by_dataset_name(
+                benchmark_dataset_name
+            )
+
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
@@ -311,8 +360,18 @@ class TutorDatasetImportService:
         return {
             'success': True,
             'datasetKey': dataset_key,
-            'message': 'Đã xóa toàn bộ dữ liệu dataset và lịch sử import trong DB. Artifact trên R2 được giữ lại để tái sử dụng.',
+            'deletedBenchmarkItems': deleted_benchmark_items,
+            'message': 'Đã xóa toàn bộ dữ liệu dataset, benchmark liên quan và lịch sử import trong DB. Artifact trên R2 được giữ lại để tái sử dụng.',
         }
+
+    def _benchmark_dataset_name_for_dataset_key(self, dataset_key: str) -> str | None:
+        mapping = {
+            'humaneval-python': 'humaneval',
+            'mbpp-python': 'mbpp',
+            'humaneval-cpp': 'humaneval',
+            'mbpp-cpp': 'mbpp',
+        }
+        return mapping.get(dataset_key)
 
     async def run_job(self, job_id: str) -> None:
         await self._run_job(job_id)
@@ -388,6 +447,11 @@ class TutorDatasetImportService:
                 return
 
             total_files = self._count_supported_files(source_path)
+            await self._index_benchmark_dataset_if_supported(
+                dataset=dataset,
+                source_path=source_path,
+                job_id=job_id,
+            )
             await self._update_job(
                 job_id,
                 status='processing',
@@ -516,6 +580,196 @@ class TutorDatasetImportService:
 
         raise ValueError(f'Unsupported dataset source: {dataset["source"]}')
 
+    async def _index_benchmark_dataset_if_supported(
+        self,
+        *,
+        dataset: dict[str, Any],
+        source_path: Path,
+        job_id: str,
+    ) -> None:
+        dataset_key = dataset.get('datasetKey')
+        if dataset_key not in {'humaneval-python', 'mbpp-python', 'humaneval-cpp', 'mbpp-cpp'}:
+            return
+
+        try:
+            await benchmark_index_service.ensure_schema()
+
+            samples: list[EvaluationSample] = []
+            source_files: list[str] = []
+
+            if dataset_key == 'humaneval-python':
+                jsonl_files = sorted(source_path.glob('**/*.jsonl'))
+                if jsonl_files:
+                    from src.evaluation.datasets.loaders.humaneval_loader import load_humaneval_samples
+
+                    for file_path in jsonl_files:
+                        loaded_samples = load_humaneval_samples(file_path)
+                        if loaded_samples:
+                            samples.extend(loaded_samples)
+                            source_files.append(str(file_path))
+                else:
+                    samples = self._load_materialized_humaneval_samples(source_path)
+                    if samples:
+                        source_files.append(str(source_path))
+            elif dataset_key == 'humaneval-cpp':
+                samples = self._load_materialized_multipl_e_samples(source_path, dataset_key='humaneval-cpp')
+                if samples:
+                    source_files.append(str(source_path))
+            elif dataset_key == 'mbpp-cpp':
+                samples = self._load_materialized_multipl_e_samples(source_path, dataset_key='mbpp-cpp')
+                if samples:
+                    source_files.append(str(source_path))
+            else:
+                json_files = sorted(source_path.glob('**/*.json'))
+                if json_files:
+                    from src.evaluation.datasets.loaders.mbpp_loader import load_mbpp_samples
+
+                    for file_path in json_files:
+                        try:
+                            loaded_samples = load_mbpp_samples(file_path)
+                        except Exception as exc:
+                            logger.warning(
+                                'Skipping MBPP benchmark file %s due to parse error: %s',
+                                file_path,
+                                exc,
+                            )
+                            continue
+                        if loaded_samples:
+                            samples.extend(loaded_samples)
+                            source_files.append(str(file_path))
+                else:
+                    samples = self._load_materialized_mbpp_samples(source_path)
+                    if samples:
+                        source_files.append(str(source_path))
+
+            deduplicated_samples: dict[str, EvaluationSample] = {}
+            for sample in samples:
+                deduplicated_samples[sample.sample_id] = sample
+
+            unique_samples = list(deduplicated_samples.values())
+
+            if not unique_samples:
+                logger.warning(
+                    'No benchmark samples found to seed for dataset %s at %s',
+                    dataset_key,
+                    source_path,
+                )
+                return
+
+            source_path_for_upsert = source_files[0] if source_files else str(source_path)
+            for sample in unique_samples:
+                await benchmark_index_service.upsert_item(sample, source_path=source_path_for_upsert)
+
+            await self._update_job(
+                job_id,
+                metadata={
+                    'benchmarkIndexing': {
+                        'seeded': len(unique_samples),
+                        'parsed': len(samples),
+                        'datasetKey': dataset_key,
+                        'sourcePath': source_path_for_upsert,
+                        'sourcePaths': source_files,
+                    },
+                },
+            )
+            logger.info(
+                'Seeded %s benchmark items (parsed=%s) for dataset %s from %s source file(s)',
+                len(unique_samples),
+                len(samples),
+                dataset_key,
+                len(source_files),
+            )
+        except Exception as exc:
+            logger.warning('Failed to seed benchmark index for %s: %s', dataset_key, exc)
+
+    def _split_materialized_sections(self, content: str) -> tuple[str, dict[str, str]]:
+        lines = content.splitlines()
+        prompt_lines: list[str] = []
+        sections: dict[str, list[str]] = {}
+        current_section: str | None = None
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('# '):
+                current_section = stripped[2:].strip().lower()
+                sections.setdefault(current_section, [])
+                continue
+
+            if current_section is None:
+                prompt_lines.append(line)
+            else:
+                sections[current_section].append(line)
+
+        return '\n'.join(prompt_lines).strip(), {
+            key: '\n'.join(value).strip() for key, value in sections.items()
+        }
+
+    def _load_materialized_humaneval_samples(self, source_path: Path) -> list[EvaluationSample]:
+        samples: list[EvaluationSample] = []
+        for path in sorted(source_path.glob('**/humaneval-python_*.py')):
+            content = path.read_text(encoding='utf-8')
+            prompt, sections = self._split_materialized_sections(content)
+            first_line = prompt.splitlines()[0].strip() if prompt else path.stem
+            sample_id = first_line.replace('Task: ', '').strip() if first_line.startswith('Task: ') else path.stem
+            remaining_prompt = '\n'.join(prompt.splitlines()[1:]).strip() if first_line.startswith('Task: ') else prompt
+            samples.append(
+                EvaluationSample(
+                    sample_id=sample_id,
+                    dataset_name='humaneval',
+                    language='python',
+                    prompt=remaining_prompt,
+                    reference_solution=sections.get('canonical solution'),
+                    test_code=sections.get('test', ''),
+                    entry_point=None,
+                    metadata={
+                        'source': 'HumanEval',
+                        'task_id': sample_id,
+                    },
+                )
+            )
+        return samples
+
+    def _load_materialized_mbpp_samples(self, source_path: Path) -> list[EvaluationSample]:
+        samples: list[EvaluationSample] = []
+        for path in sorted(source_path.glob('**/mbpp-python_*.py')):
+            content = path.read_text(encoding='utf-8')
+            prompt, sections = self._split_materialized_sections(content)
+            first_line = prompt.splitlines()[0].strip() if prompt else path.stem
+            sample_id = first_line.replace('Task ID: ', '').strip() if first_line.startswith('Task ID: ') else path.stem
+            remaining_prompt = '\n'.join(prompt.splitlines()[1:]).strip() if first_line.startswith('Task ID: ') else prompt
+            tests = sections.get('tests', '')
+            challenge_tests = sections.get('challenge tests', '')
+            test_code = '\n'.join(part for part in [tests, challenge_tests] if part).strip()
+            entry_point = self._extract_python_entry_point(sections.get('code'))
+            samples.append(
+                EvaluationSample(
+                    sample_id=f'mbpp_{sample_id}',
+                    dataset_name='mbpp',
+                    language='python',
+                    prompt=remaining_prompt,
+                    reference_solution=sections.get('code'),
+                    test_code=test_code,
+                    entry_point=entry_point,
+                    metadata={
+                        'source': 'MBPP',
+                        'task_id': sample_id,
+                        'entry_point': entry_point,
+                    },
+                )
+            )
+        return samples
+
+    def _extract_python_entry_point(self, code: str | None) -> str | None:
+        if not code:
+            return None
+
+        for line in code.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('def '):
+                return stripped[4:].split('(', 1)[0].strip() or None
+
+        return None
+
     def _job_work_root(self, dataset_key: str, job_id: str) -> Path:
         return self._dataset_root() / dataset_key / job_id
 
@@ -603,6 +857,27 @@ def format_row(dataset_key, row, index):
                 '\n'.join(row.get('challenge_test_list', []) or []),
             ] if part
         )
+    if dataset_key in {'humaneval-cpp', 'mbpp-cpp'}:
+        return '\n\n'.join(
+            part for part in [
+                f"Task: {row.get('name', f'{dataset_key}_{index}')}",
+                f"Language: {row.get('language', 'cpp')}",
+                row.get('prompt', ''),
+                '# Canonical solution',
+                row.get('prompt', ''),
+                '# Test',
+                row.get('tests', ''),
+                '# Metadata',
+                json.dumps(
+                    {
+                        'original': row.get('original'),
+                        'prompt_terminology': row.get('prompt_terminology'),
+                        'stop_tokens': row.get('stop_tokens'),
+                    },
+                    ensure_ascii=False,
+                ),
+            ] if part
+        )
     if dataset_key == 'codesearchnet-python':
         return '\n\n'.join(
             part for part in [
@@ -616,6 +891,8 @@ def build_file_name(dataset_key, split_name, index):
     extension = 'json'
     if dataset_key in {'humaneval-python', 'mbpp-python', 'codesearchnet-python'}:
         extension = 'py'
+    if dataset_key in {'humaneval-cpp', 'mbpp-cpp'}:
+        extension = 'cpp'
     return f'{dataset_key}_{split_name}_{index:06d}.{extension}'
 
 repository = dataset['repository']
@@ -716,6 +993,27 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
                     '\n'.join(row.get('challenge_test_list', []) or []),
                 ] if part
             )
+        if dataset_key in {'humaneval-cpp', 'mbpp-cpp'}:
+            return '\n\n'.join(
+                part for part in [
+                    f"Task: {row.get('name', f'{dataset_key}_{index}')}",
+                    f"Language: {row.get('language', 'cpp')}",
+                    row.get('prompt', ''),
+                    '# Canonical solution',
+                    row.get('prompt', ''),
+                    '# Test',
+                    row.get('tests', ''),
+                    '# Metadata',
+                    json.dumps(
+                        {
+                            'original': row.get('original'),
+                            'prompt_terminology': row.get('prompt_terminology'),
+                            'stop_tokens': row.get('stop_tokens'),
+                        },
+                        ensure_ascii=False,
+                    ),
+                ] if part
+            )
         if dataset_key == 'codesearchnet-python':
             return '\n\n'.join(
                 part for part in [
@@ -729,7 +1027,62 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
         extension = 'json'
         if dataset_key in {'humaneval-python', 'mbpp-python', 'codesearchnet-python'}:
             extension = 'py'
+        if dataset_key in {'humaneval-cpp', 'mbpp-cpp'}:
+            extension = 'cpp'
         return f'{dataset_key}_{split_name}_{index:06d}.{extension}'
+
+    def _load_materialized_multipl_e_samples(self, source_path: Path, *, dataset_key: str) -> list[EvaluationSample]:
+        samples: list[EvaluationSample] = []
+        dataset_name = 'humaneval' if dataset_key == 'humaneval-cpp' else 'mbpp'
+        for path in sorted(source_path.glob(f'**/{dataset_key}_*.cpp')):
+            content = path.read_text(encoding='utf-8')
+            prompt, sections = self._split_materialized_sections(content)
+            prompt_lines = prompt.splitlines()
+            first_line = prompt_lines[0].strip() if prompt_lines else path.stem
+            second_line = prompt_lines[1].strip() if len(prompt_lines) > 1 else ''
+            sample_id = first_line.replace('Task: ', '').strip() if first_line.startswith('Task: ') else path.stem
+            remaining_prompt = '\n'.join(prompt_lines[2:]).strip() if second_line.startswith('Language: ') else '\n'.join(prompt_lines[1:]).strip()
+            metadata: dict[str, Any] = {
+                'source': 'MultiPL-E',
+                'task_id': sample_id,
+                'language': 'cpp',
+            }
+            metadata_blob = sections.get('metadata', '')
+            if metadata_blob:
+                try:
+                    parsed = json.loads(metadata_blob)
+                    if isinstance(parsed, dict):
+                        metadata.update({key: value for key, value in parsed.items() if value is not None})
+                except json.JSONDecodeError:
+                    logger.warning('Skipping malformed MultiPL-E metadata in %s', path)
+            entry_point = self._extract_cpp_entry_point(sections.get('canonical solution') or remaining_prompt)
+            if entry_point:
+                metadata['entry_point'] = entry_point
+            samples.append(
+                EvaluationSample(
+                    sample_id=sample_id,
+                    dataset_name=dataset_name,
+                    language='cpp',
+                    prompt=remaining_prompt,
+                    reference_solution=sections.get('canonical solution'),
+                    test_code=sections.get('test', ''),
+                    entry_point=entry_point,
+                    metadata=metadata,
+                )
+            )
+        return samples
+
+    def _extract_cpp_entry_point(self, code: str | None) -> str | None:
+        if not code:
+            return None
+
+        match = re.search(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^\)]*\)\s*\{', code)
+        if not match:
+            return None
+        candidate = match.group(1)
+        if candidate == 'main':
+            return None
+        return candidate
 
     def _r2_grpc_target(self) -> str:
         return os.getenv('R2_SERVICE_GRPC_TARGET', '127.0.0.1:50054')
@@ -868,6 +1221,11 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
         job = await self.get_job(job_id)
         if job is None:
             return
+        if 'metadata' in changes:
+            changes['metadata'] = {
+                **_normalize_metadata(job.get('metadata')),
+                **_normalize_metadata(changes.get('metadata')),
+            }
         merged = {**job, **changes, 'jobId': job_id, 'updatedAt': _utc_now().isoformat()}
         await self._upsert_job(merged)
 

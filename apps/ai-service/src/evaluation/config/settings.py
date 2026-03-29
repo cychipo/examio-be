@@ -30,6 +30,7 @@ class EvaluationSettings(BaseSettings):
         default=Path('src/evaluation/datasets/samples/mbpp.jsonl')
     )
     gcc_bin: str = Field(default='gcc')
+    gpp_bin: str = Field(default='g++')
     python_bin: str = Field(default='python3')
     compile_timeout_seconds: int = Field(default=15)
     run_timeout_seconds: int = Field(default=15)

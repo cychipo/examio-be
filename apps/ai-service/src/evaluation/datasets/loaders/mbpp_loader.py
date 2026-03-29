@@ -26,12 +26,25 @@ def load_mbpp_samples(file_path: Path, limit: int | None = None) -> list[Evaluat
                 prompt='\n'.join(prompt_parts),
                 reference_solution=row.get('code'),
                 test_code='\n'.join(test_list),
-                entry_point=None,
+                entry_point=_extract_entry_point(row.get('code')),
                 metadata={
                     'source': 'MBPP',
                     'task_id': row['task_id'],
+                    'entry_point': _extract_entry_point(row.get('code')),
                 },
             )
         )
 
     return samples
+
+
+def _extract_entry_point(code: str | None) -> str | None:
+    if not code:
+        return None
+
+    for line in code.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('def '):
+            return stripped[4:].split('(', 1)[0].strip() or None
+
+    return None

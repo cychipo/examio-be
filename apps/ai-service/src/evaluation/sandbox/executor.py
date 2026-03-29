@@ -22,6 +22,8 @@ class ExecutionSandbox:
             return self._execute_python(request)
         if request.language == 'c':
             return self._execute_c(request)
+        if request.language == 'cpp':
+            return self._execute_cpp(request)
         raise ValueError(f'Unsupported language: {request.language}')
 
     def _execute_python(self, request: SandboxExecutionRequest) -> SandboxExecutionResult:
@@ -46,6 +48,31 @@ class ExecutionSandbox:
 
         compile_result = self._run_process(
             [settings.gcc_bin, str(source_path), '-O2', '-std=c11', '-o', str(binary_path)],
+            workdir=workdir,
+            timeout_seconds=settings.compile_timeout_seconds,
+        )
+        if compile_result.status != 'passed':
+            compile_result.status = 'compile_error'
+            return compile_result
+
+        runtime_result = self._run_process(
+            [str(binary_path)],
+            workdir=workdir,
+            timeout_seconds=settings.run_timeout_seconds,
+        )
+        runtime_result.binary_path = binary_path
+        return runtime_result
+
+    def _execute_cpp(self, request: SandboxExecutionRequest) -> SandboxExecutionResult:
+        workdir = create_workdir(self.temp_root, request.sample_id)
+        source_path = write_text(
+            workdir / 'solution.cpp',
+            f"{request.source_code}\n\n{request.test_code}\n",
+        )
+        binary_path = workdir / 'solution.out'
+
+        compile_result = self._run_process(
+            [settings.gpp_bin, str(source_path), '-O2', '-std=c++17', '-o', str(binary_path)],
             workdir=workdir,
             timeout_seconds=settings.compile_timeout_seconds,
         )

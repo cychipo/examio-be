@@ -41,3 +41,36 @@ int main(void) {
 
     assert result.status == 'passed'
     sandbox.cleanup(result)
+
+
+def test_cpp_executor_passes(tmp_path: Path):
+    sandbox = ExecutionSandbox(temp_root=tmp_path)
+    result = sandbox.execute(
+        SandboxExecutionRequest(
+            language='cpp',
+            source_code='''
+#include <vector>
+using namespace std;
+
+vector<int> running_sum(const vector<int>& nums) {
+    vector<int> result;
+    int current = 0;
+    for (int value : nums) {
+        current += value;
+        result.push_back(current);
+    }
+    return result;
+}
+
+int main() {
+    vector<int> result = running_sum({1, 2, 3});
+    return result.size() == 3 && result[2] == 6 ? 0 : 1;
+}
+''',
+            test_code='',
+            sample_id='cpp_running_sum',
+        )
+    )
+
+    assert result.status == 'passed'
+    sandbox.cleanup(result)

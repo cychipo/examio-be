@@ -14,6 +14,7 @@ from uuid import uuid4
 import aio_pika
 import asyncpg
 
+from src.backend.services.benchmark_index_service import benchmark_index_service
 from src.backend.services.student_programming_chat_service import (
     student_programming_chat_service,
 )
@@ -41,20 +42,23 @@ class StudentProgrammingEvaluationService:
     def __init__(self) -> None:
         self.sandbox = ExecutionSandbox()
         self._sample_cache: list[EvaluationSample] | None = None
-        self._pool: asyncpg.Pool | None = None
 
     def infer_language(
         self,
         question: str,
         answer: str,
         explicit_language: str | None = None,
-    ) -> Literal['python', 'c']:
+    ) -> Literal['python', 'c', 'cpp']:
         if explicit_language == 'python':
             return 'python'
         if explicit_language == 'c':
             return 'c'
+        if explicit_language == 'cpp':
+            return 'cpp'
 
         combined = f'{question}\n{answer}'.lower()
+        if '```cpp' in combined or '```c++' in combined or 'std::' in combined or '#include <vector>' in combined:
+            return 'cpp'
         if '```c' in combined or '#include' in combined or re.search(r'\bprintf\s*\(', combined):
             return 'c'
         return 'python'
@@ -73,82 +77,55 @@ class StudentProgrammingEvaluationService:
         self._sample_cache = samples
         return samples
 
-    async def _get_pool(self) -> asyncpg.Pool:
-        if self._pool is None or self._pool._closed:
-            postgres_uri = os.environ.get('DATABASE_URL')
-            if not postgres_uri:
-                raise ValueError('DATABASE_URL environment variable not set')
-            self._pool = await asyncpg.create_pool(
-                postgres_uri,
-                min_size=1,
-                max_size=4,
-                command_timeout=30,
-            )
-        return self._pool
-
-    def _build_imported_sample(self, row: asyncpg.Record, language: Literal['python', 'c']) -> EvaluationSample | None:
-        metadata = row['metadata'] or {}
-        source_path = row['sourcePath']
-        content = row['content'] or ''
-        title = row['title'] or Path(source_path).name
-
-        if not any(keyword in source_path.lower() for keyword in ('humaneval', 'mbpp')):
-            return None
-
-        if not any(token in source_path.lower() for token in ('test', 'prompt', 'solution')):
-            return None
-
-        prompt = metadata.get('prompt') or title
-        test_code = metadata.get('test_code') or metadata.get('test') or content
-        if not test_code or len(test_code.strip()) < 8:
-            return None
-
-        dataset_name = 'humaneval' if 'humaneval' in source_path.lower() else 'mbpp'
-        return EvaluationSample(
-            sample_id=row['id'],
-            dataset_name=dataset_name,
-            language=language,
-            prompt=prompt,
-            reference_solution=metadata.get('canonical_solution') or metadata.get('reference_solution'),
-            test_code=test_code,
-            entry_point=metadata.get('entry_point'),
-            metadata={
-                'source': 'imported-benchmark',
-                'sourcePath': source_path,
-            },
-        )
-
-    async def _load_imported_samples(self, language: Literal['python', 'c']) -> list[EvaluationSample]:
-        pool = await self._get_pool()
-        query = '''
-            SELECT chunk.id, chunk.content, chunk.metadata, doc.title, doc."sourcePath"
-            FROM "TutorKnowledgeChunk" chunk
-            INNER JOIN "TutorKnowledgeDocument" doc ON doc.id = chunk."documentId"
-            WHERE chunk.language = $1
-              AND (
-                doc."sourcePath" ILIKE '%humaneval%'
-                OR doc."sourcePath" ILIKE '%mbpp%'
-              )
-            ORDER BY doc."updatedAt" DESC, chunk."chunkIndex" ASC
-            LIMIT 200
-        '''
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(query, language)
-
-        samples: list[EvaluationSample] = []
-        for row in rows:
-            sample = self._build_imported_sample(row, language)
-            if sample is not None:
-                samples.append(sample)
-        logger.info('[student-eval] loaded %s imported benchmark candidates for %s', len(samples), language)
-        return samples
-
     def _normalize_text(self, value: str) -> set[str]:
         tokens = re.findall(r'[a-zA-Z_]{3,}', value.lower())
         return set(tokens)
 
     def _normalize_string(self, value: str) -> str:
         return ' '.join(re.findall(r'[a-zA-Z_0-9]+', value.lower()))
+
+    def _extract_identifiers(self, value: str) -> set[str]:
+        return set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', value))
+
+    def _extract_question_function_name(self, question: str) -> str | None:
+        patterns = [
+            r'function\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+            r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+            r'write\s+(?:a\s+)?function\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+            r'implement\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+            r'create\s+(?:a\s+)?function\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+        ]
+        lowered = question.lower()
+        for pattern in patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                return match.group(1)
+        return None
+
+    def _build_candidate_signals(self, question: str) -> dict[str, str | None]:
+        function_name = self._extract_question_function_name(question)
+        task_id_match = re.search(r'\b(?:task|problem)\s*(?:id)?\s*[:#]?\s*([a-zA-Z0-9_\-/]+)', question, re.IGNORECASE)
+        return {
+            'function_name': function_name,
+            'task_id': task_id_match.group(1) if task_id_match else None,
+        }
+
+    def _sample_matches_signals(self, sample: EvaluationSample, signals: dict[str, str | None]) -> bool:
+        function_name = signals.get('function_name')
+        task_id = signals.get('task_id')
+
+        if function_name:
+            sample_entry = (sample.entry_point or str(sample.metadata.get('entry_point') or '')).lower()
+            if sample_entry == function_name.lower():
+                return True
+
+        if task_id:
+            normalized_task_id = task_id.lower()
+            sample_task_id = str(sample.metadata.get('task_id') or sample.sample_id).lower()
+            if normalized_task_id == sample_task_id or normalized_task_id in sample_task_id:
+                return True
+
+        return False
 
     def _score_sample_match(
         self,
@@ -164,23 +141,55 @@ class StudentProgrammingEvaluationService:
         normalized_prompt = self._normalize_string(sample.prompt)
         ratio = difflib.SequenceMatcher(None, normalized_question, normalized_prompt).ratio()
 
+        question_identifiers = {identifier.lower() for identifier in self._extract_identifiers(question)}
+        prompt_identifiers = {identifier.lower() for identifier in self._extract_identifiers(sample.prompt)}
+        identifier_overlap = len(question_identifiers & prompt_identifiers)
+
         entry_bonus = 0.0
         if sample.entry_point and sample.entry_point.lower() in normalized_question:
             entry_bonus = 0.25
 
+        task_bonus = 0.0
+        task_id = str(sample.metadata.get('task_id') or sample.sample_id).lower()
+        if task_id and task_id in normalized_question:
+            task_bonus = 0.3
+
         dataset_bonus = 0.1 if sample.dataset_name in {'humaneval', 'mbpp'} else 0.0
-        return overlap + coverage + ratio + entry_bonus + dataset_bonus
+        return overlap + coverage + ratio + (identifier_overlap * 0.2) + entry_bonus + task_bonus + dataset_bonus
 
     async def _find_matching_sample(
         self,
         question: str,
-        language: Literal['python', 'c'],
+        language: Literal['python', 'c', 'cpp'],
     ) -> EvaluationSample | None:
         best_sample: EvaluationSample | None = None
         best_score = 0.0
 
-        imported_samples = await self._load_imported_samples(language)
-        candidate_samples = imported_samples or self._load_samples()
+        imported_rows = await benchmark_index_service.list_items(language)
+        candidate_samples = [
+            EvaluationSample(
+                sample_id=item['id'],
+                dataset_name=item['datasetName'],
+                language=item['language'],
+                prompt=item['prompt'],
+                reference_solution=item.get('referenceSolution'),
+                test_code=item['testCode'],
+                entry_point=item.get('entryPoint'),
+                metadata=item.get('metadata') or {},
+            )
+            for item in imported_rows
+        ] or self._load_samples()
+
+        signals = self._build_candidate_signals(question)
+        filtered_candidates = [sample for sample in candidate_samples if self._sample_matches_signals(sample, signals)]
+        if filtered_candidates:
+            logger.info(
+                '[student-eval] narrowed benchmark candidates from %s to %s using signals=%s',
+                len(candidate_samples),
+                len(filtered_candidates),
+                signals,
+            )
+            candidate_samples = filtered_candidates
 
         for sample in candidate_samples:
             if sample.language != language:
@@ -195,6 +204,21 @@ class StudentProgrammingEvaluationService:
             return None
         return best_sample
 
+    async def _get_benchmark_match_context(
+        self,
+        question: str,
+        language: Literal['python', 'c', 'cpp'],
+    ) -> dict[str, Any]:
+        imported_rows = await benchmark_index_service.list_items(language)
+        candidate_count = len(imported_rows)
+        signals = self._build_candidate_signals(question)
+        return {
+            'language': language,
+            'candidateCount': candidate_count,
+            'signals': signals,
+            'hasImportedBenchmarks': candidate_count > 0,
+        }
+
     def _is_testable_python_code(self, code: str) -> bool:
         stripped = code.strip()
         if not stripped or 'input(' in stripped:
@@ -206,6 +230,14 @@ class StudentProgrammingEvaluationService:
         if not stripped or 'scanf(' in stripped or 'gets(' in stripped:
             return False
         return bool(re.search(r'\b[a-zA-Z_][\w\s\*]+\s+[a-zA-Z_][\w]*\s*\([^\)]*\)\s*\{', stripped))
+
+    def _is_testable_cpp_code(self, code: str) -> bool:
+        stripped = code.strip()
+        if not stripped or 'cin >>' in stripped:
+            return False
+        if 'std::' in stripped:
+            return True
+        return bool(re.search(r'\b[a-zA-Z_][\w\s\*:<>,]+\s+[a-zA-Z_][\w]*\s*\([^\)]*\)\s*\{', stripped))
 
     async def create_job(
         self,
@@ -331,7 +363,7 @@ class StudentProgrammingEvaluationService:
         self,
         question: str,
         answer: str,
-        language: Literal['python', 'c'],
+        language: Literal['python', 'c', 'cpp'],
     ) -> dict[str, Any]:
         extracted_code = extract_code_block(answer, language)
         logger.info('[student-eval] deterministic extracted code preview=%s', extracted_code[:200].replace('\n', '\\n'))
@@ -349,6 +381,7 @@ class StudentProgrammingEvaluationService:
                 'stdout': '',
                 'testCode': '',
                 'modelUsed': None,
+                'benchmark': None,
             }
 
         if language == 'c' and not self._is_testable_c_code(extracted_code):
@@ -364,21 +397,55 @@ class StudentProgrammingEvaluationService:
                 'stdout': '',
                 'testCode': '',
                 'modelUsed': None,
+                'benchmark': None,
             }
 
-        sample = asyncio.run(self._find_matching_sample(question, language))
-        if sample is None:
+        if language == 'cpp' and not self._is_testable_cpp_code(extracted_code):
             return {
                 'score': 0,
                 'status': 'unavailable',
                 'language': language,
-                'rationale': 'Chưa có dữ liệu benchmark phù hợp để đánh giá tự động cho câu hỏi này.',
+                'rationale': 'Chưa có dữ liệu để đánh giá tự động cho câu trả lời C++ này.',
                 'passed': 0,
                 'total': 0,
                 'executionTimeMs': 0,
                 'stderr': '',
                 'stdout': '',
                 'testCode': '',
+                'modelUsed': None,
+                'benchmark': None,
+            }
+
+        benchmark_context = asyncio.run(self._get_benchmark_match_context(question, language))
+        sample = asyncio.run(self._find_matching_sample(question, language))
+        if sample is None:
+            signals = benchmark_context.get('signals') or {}
+            if not benchmark_context.get('hasImportedBenchmarks'):
+                rationale = f'Chưa có benchmark ngôn ngữ {language} được nạp trong hệ thống để đánh giá tự động.'
+            elif signals.get('function_name'):
+                rationale = (
+                    f"Đã tìm benchmark {language} nhưng chưa match được bài có hàm `{signals['function_name']}`. "
+                    'Hãy hỏi sát tên hàm hoặc nạp thêm dataset benchmark phù hợp.'
+                )
+            else:
+                rationale = (
+                    f"Đã dò {benchmark_context.get('candidateCount', 0)} benchmark {language} nhưng chưa tìm được đề tương đồng đủ gần để chấm tự động."
+                )
+            return {
+                'score': 0,
+                'status': 'unavailable',
+                'language': language,
+                'rationale': rationale,
+                'passed': 0,
+                'total': 0,
+                'executionTimeMs': 0,
+                'stderr': '',
+                'stdout': '',
+                'testCode': '',
+                'benchmark': {
+                    'candidateCount': benchmark_context.get('candidateCount', 0),
+                    'signals': benchmark_context.get('signals'),
+                },
                 'modelUsed': None,
             }
 
@@ -407,6 +474,12 @@ class StudentProgrammingEvaluationService:
             'stderr': result.stderr,
             'stdout': result.stdout,
             'testCode': sample.test_code,
+            'benchmark': {
+                'datasetName': sample.dataset_name,
+                'sampleId': sample.sample_id,
+                'entryPoint': sample.entry_point,
+                'source': sample.metadata.get('source'),
+            },
             'modelUsed': None,
         }
         self.sandbox.cleanup(result)

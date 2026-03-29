@@ -51,3 +51,19 @@ def test_python_executor_timeout(tmp_path: Path):
 
     assert result.status == 'timeout'
     sandbox.cleanup(result)
+
+
+def test_cpp_executor_compile_error(tmp_path: Path):
+    sandbox = ExecutionSandbox(temp_root=tmp_path)
+    result = sandbox.execute(
+        SandboxExecutionRequest(
+            language='cpp',
+            source_code='int main() { std::vector<int> values = {1, 2}; return 0; }',
+            test_code='',
+            sample_id='cpp_compile_error',
+        )
+    )
+
+    assert result.status in {'compile_error', 'runtime_error'}
+    assert result.stderr
+    sandbox.cleanup(result)

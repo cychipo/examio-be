@@ -118,6 +118,22 @@ cd examio-be/apps/ai-service
 PYTHONPATH=. ./venv/bin/pytest src/evaluation/tests
 ```
 
+## Seed benchmark index cho deterministic evaluation
+
+```bash
+cd examio-be/apps/ai-service
+PYTHONPATH=. ./venv/bin/python -m src.evaluation.scripts.seed_benchmark_index \
+  --dataset humaneval \
+  --dataset-path src/evaluation/datasets/samples/humaneval_smoke.jsonl
+```
+
+```bash
+cd examio-be/apps/ai-service
+PYTHONPATH=. ./venv/bin/python -m src.evaluation.scripts.seed_benchmark_index \
+  --dataset mbpp \
+  --dataset-path src/evaluation/datasets/samples/mbpp_smoke.json
+```
+
 ## Vi du benchmark nho voi dataset fixture tuy chinh
 
 Ban co the dat file HumanEval/MBPP vao `src/evaluation/datasets/samples/` roi chay:

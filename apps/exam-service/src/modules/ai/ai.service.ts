@@ -3,6 +3,7 @@ import {
     Logger,
     NotFoundException,
     BadRequestException,
+    HttpException,
     InternalServerErrorException,
     ServiceUnavailableException,
 } from '@nestjs/common';
@@ -74,6 +75,26 @@ export class AIService {
             message?: string;
             status_code?: number;
         }>;
+
+        if (axiosError.code === 'ERR_CANCELED' && axiosError.response) {
+            const canceledStatus = axiosError.response.status;
+            const canceledData = axiosError.response.data;
+            const canceledMessage =
+                canceledData?.detail ||
+                canceledData?.error ||
+                canceledData?.message ||
+                'Request was canceled';
+
+            if (canceledStatus === 400) {
+                throw new BadRequestException(canceledMessage);
+            }
+
+            if (canceledStatus === 404) {
+                throw new NotFoundException(canceledMessage);
+            }
+
+            throw new HttpException(canceledMessage, canceledStatus);
+        }
 
         const status = axiosError.response?.status;
         const data = axiosError.response?.data;
@@ -802,12 +823,16 @@ export class AIService {
         page: number = 1,
         pageSize: number = 12
     ) {
-        const response = await firstValueFrom(
-            this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-folders/${folderId}/contents`, {
-                params: { user_id: user.id, page, page_size: pageSize },
-            })
-        );
-        return response.data;
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-folders/${folderId}/contents`, {
+                    params: { user_id: user.id, page, page_size: pageSize },
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
     }
 
     async listTutorKnowledgeFolders(user: User) {

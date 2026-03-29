@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-SupportedLanguage = Literal['python', 'c']
+SupportedLanguage = Literal['python', 'c', 'cpp']
 SupportedDataset = Literal['humaneval', 'mbpp']
 
 
