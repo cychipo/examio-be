@@ -23,7 +23,7 @@ from src.rag.vector_store_pg import get_pg_vector_store
 logger = logging.getLogger(__name__)
 
 TEXT_FILE_EXTENSIONS = {'.txt', '.md', '.markdown'}
-CODE_FILE_EXTENSIONS = {'.py', '.c', '.h'}
+CODE_FILE_EXTENSIONS = {'.py', '.c', '.h', '.cc', '.cpp', '.cxx', '.hpp'}
 IMAGE_FILE_EXTENSIONS = {'.png', '.jpg', '.jpeg'}
 SUPPORTED_FILE_EXTENSIONS = (
     TEXT_FILE_EXTENSIONS
@@ -66,6 +66,10 @@ def _detect_language(file_path: Path, requested_language: Optional[str]) -> str:
         '.py': 'python',
         '.c': 'c',
         '.h': 'c',
+        '.cc': 'cpp',
+        '.cpp': 'cpp',
+        '.cxx': 'cpp',
+        '.hpp': 'cpp',
     }
     return extension_map.get(file_path.suffix.lower(), 'mixed')
 
@@ -640,12 +644,12 @@ class TutorIngestionPipeline:
         return chunks
 
     def _estimate_entities(self, chunks: list[TutorChunk], language: str) -> int:
-        if language in {'python', 'c'}:
+        if language in {'python', 'c', 'cpp'}:
             return sum(chunk.content.count('def ') + chunk.content.count('class ') + chunk.content.count('#include') for chunk in chunks)
         return max(0, len(chunks) // 2)
 
     def _estimate_relations(self, chunks: list[TutorChunk], language: str) -> int:
-        if language in {'python', 'c'}:
+        if language in {'python', 'c', 'cpp'}:
             return max(0, self._estimate_entities(chunks, language) - 1)
         return max(0, len(chunks) - 1)
 

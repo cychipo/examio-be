@@ -98,7 +98,7 @@ class BenchmarkRunner:
             )
             self.sandbox.cleanup(execution_result)
 
-        codebleu = compute_codebleu_score(predictions, references, 'c' if dataset_name == 'humaneval-c' else 'python')
+        codebleu = compute_codebleu_score(predictions, references, 'python')
 
         report = BenchmarkReport(
             dataset=dataset_name,

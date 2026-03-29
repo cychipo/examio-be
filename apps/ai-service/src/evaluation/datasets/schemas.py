@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 SupportedLanguage = Literal['python', 'c', 'cpp']
-SupportedDataset = Literal['humaneval', 'mbpp']
+SupportedDataset = Literal['humaneval', 'mbpp', 'multipl_e_humaneval_cpp', 'multipl_e_mbpp_cpp']
 
 
 class EvaluationSample(BaseModel):

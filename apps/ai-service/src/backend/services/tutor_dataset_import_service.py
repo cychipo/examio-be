@@ -87,20 +87,9 @@ DATASET_CATALOG: list[dict[str, Any]] = [
         'difficulty': 'basic',
     },
     {
-        'datasetKey': 'project-codenet',
-        'title': 'Project CodeNet (C + Python)',
-        'description': 'Clone đầy đủ IBM Project CodeNet, ingest toàn bộ file C/Python hỗ trợ được.',
-        'source': 'git',
-        'repository': 'https://github.com/IBM/Project_CodeNet.git',
-        'courseCode': 'MULTI_LANG_DATASETS',
-        'language': 'mixed',
-        'topic': 'competitive-programming',
-        'difficulty': 'intermediate',
-    },
-    {
-        'datasetKey': 'humaneval-cpp',
-        'title': 'HumanEval C++',
-        'description': '161 bài HumanEval đã được chuyển sang C++ từ MultiPL-E, có test benchmark để chấm tự động.',
+        'datasetKey': 'multipl-e-humaneval-cpp',
+        'title': 'MultiPL-E HumanEval C++',
+        'description': '164 bài toán HumanEval bản C++ từ MultiPL-E để nạp GraphRAG và benchmark.',
         'source': 'huggingface',
         'repository': 'nuprl/MultiPL-E',
         'config': 'humaneval-cpp',
@@ -110,16 +99,16 @@ DATASET_CATALOG: list[dict[str, Any]] = [
         'difficulty': 'intermediate',
     },
     {
-        'datasetKey': 'mbpp-cpp',
-        'title': 'MBPP C++',
-        'description': '397 bài MBPP đã được chuyển sang C++ từ MultiPL-E, có test benchmark để chấm tự động.',
+        'datasetKey': 'multipl-e-mbpp-cpp',
+        'title': 'MultiPL-E MBPP C++',
+        'description': 'Các bài toán MBPP bản C++ từ MultiPL-E để nạp GraphRAG và benchmark.',
         'source': 'huggingface',
         'repository': 'nuprl/MultiPL-E',
         'config': 'mbpp-cpp',
         'courseCode': 'CPP_DATASETS',
         'language': 'cpp',
         'topic': 'basic-cpp',
-        'difficulty': 'intermediate',
+        'difficulty': 'basic',
     },
 ]
 
@@ -368,8 +357,8 @@ class TutorDatasetImportService:
         mapping = {
             'humaneval-python': 'humaneval',
             'mbpp-python': 'mbpp',
-            'humaneval-cpp': 'humaneval',
-            'mbpp-cpp': 'mbpp',
+            'multipl-e-humaneval-cpp': 'multipl_e_humaneval_cpp',
+            'multipl-e-mbpp-cpp': 'multipl_e_mbpp_cpp',
         }
         return mapping.get(dataset_key)
 
@@ -447,6 +436,10 @@ class TutorDatasetImportService:
                 return
 
             total_files = self._count_supported_files(source_path)
+            if total_files == 0:
+                raise RuntimeError(
+                    'Dataset không chứa file nguồn hỗ trợ để ingest. Hãy kiểm tra lại định dạng materialized dataset.'
+                )
             await self._index_benchmark_dataset_if_supported(
                 dataset=dataset,
                 source_path=source_path,
@@ -588,7 +581,7 @@ class TutorDatasetImportService:
         job_id: str,
     ) -> None:
         dataset_key = dataset.get('datasetKey')
-        if dataset_key not in {'humaneval-python', 'mbpp-python', 'humaneval-cpp', 'mbpp-cpp'}:
+        if dataset_key not in {'humaneval-python', 'mbpp-python', 'multipl-e-humaneval-cpp', 'multipl-e-mbpp-cpp'}:
             return
 
         try:
@@ -611,15 +604,7 @@ class TutorDatasetImportService:
                     samples = self._load_materialized_humaneval_samples(source_path)
                     if samples:
                         source_files.append(str(source_path))
-            elif dataset_key == 'humaneval-cpp':
-                samples = self._load_materialized_multipl_e_samples(source_path, dataset_key='humaneval-cpp')
-                if samples:
-                    source_files.append(str(source_path))
-            elif dataset_key == 'mbpp-cpp':
-                samples = self._load_materialized_multipl_e_samples(source_path, dataset_key='mbpp-cpp')
-                if samples:
-                    source_files.append(str(source_path))
-            else:
+            elif dataset_key == 'mbpp-python':
                 json_files = sorted(source_path.glob('**/*.json'))
                 if json_files:
                     from src.evaluation.datasets.loaders.mbpp_loader import load_mbpp_samples
@@ -641,6 +626,14 @@ class TutorDatasetImportService:
                     samples = self._load_materialized_mbpp_samples(source_path)
                     if samples:
                         source_files.append(str(source_path))
+            elif dataset_key == 'multipl-e-humaneval-cpp':
+                samples = self._load_materialized_humaneval_cpp_samples(source_path)
+                if samples:
+                    source_files.append(str(source_path))
+            else:
+                samples = self._load_materialized_mbpp_cpp_samples(source_path)
+                if samples:
+                    source_files.append(str(source_path))
 
             deduplicated_samples: dict[str, EvaluationSample] = {}
             for sample in samples:
@@ -759,6 +752,68 @@ class TutorDatasetImportService:
             )
         return samples
 
+    def _load_materialized_humaneval_cpp_samples(self, source_path: Path) -> list[EvaluationSample]:
+        samples: list[EvaluationSample] = []
+        for path in sorted(source_path.glob('**/multipl-e-humaneval-cpp_*.cpp')):
+            content = path.read_text(encoding='utf-8')
+            prompt, sections = self._split_materialized_sections(content)
+            first_line = prompt.splitlines()[0].strip() if prompt else path.stem
+            sample_id = first_line.replace('Task: ', '').strip() if first_line.startswith('Task: ') else path.stem
+            remaining_prompt = '\n'.join(prompt.splitlines()[1:]).strip() if first_line.startswith('Task: ') else prompt
+            prompt_text = sections.get('prompt', '') or remaining_prompt
+            reference_solution = sections.get('canonical solution') or sections.get('original')
+            test_code = sections.get('tests', '')
+            entry_point = sections.get('entry point') or self._extract_cpp_entry_point(prompt_text) or self._extract_cpp_entry_point(reference_solution)
+            samples.append(
+                EvaluationSample(
+                    sample_id=sample_id,
+                    dataset_name='multipl_e_humaneval_cpp',
+                    language='cpp',
+                    prompt=prompt_text,
+                    reference_solution=reference_solution,
+                    test_code=test_code,
+                    entry_point=entry_point,
+                    metadata={
+                        'source': 'MultiPL-E',
+                        'task_id': sample_id,
+                        'entry_point': entry_point,
+                    },
+                )
+            )
+        return samples
+
+    def _load_materialized_mbpp_cpp_samples(self, source_path: Path) -> list[EvaluationSample]:
+        samples: list[EvaluationSample] = []
+        for path in sorted(source_path.glob('**/multipl-e-mbpp-cpp_*.cpp')):
+            content = path.read_text(encoding='utf-8')
+            prompt, sections = self._split_materialized_sections(content)
+            first_line = prompt.splitlines()[0].strip() if prompt else path.stem
+            sample_id = first_line.replace('Task: ', '').strip() if first_line.startswith('Task: ') else path.stem
+            remaining_prompt = '\n'.join(prompt.splitlines()[1:]).strip() if first_line.startswith('Task: ') else prompt
+            prompt_text = sections.get('prompt', '') or remaining_prompt
+            reference_solution = sections.get('canonical solution') or sections.get('original')
+            tests = sections.get('tests', '')
+            doctests = sections.get('doctests', '')
+            test_code = '\n'.join(part for part in [tests, doctests] if part).strip()
+            entry_point = sections.get('entry point') or self._extract_cpp_entry_point(prompt_text) or self._extract_cpp_entry_point(reference_solution)
+            samples.append(
+                EvaluationSample(
+                    sample_id=f'mbpp_cpp_{sample_id}',
+                    dataset_name='multipl_e_mbpp_cpp',
+                    language='cpp',
+                    prompt=prompt_text,
+                    reference_solution=reference_solution,
+                    test_code=test_code,
+                    entry_point=entry_point,
+                    metadata={
+                        'source': 'MultiPL-E',
+                        'task_id': sample_id,
+                        'entry_point': entry_point,
+                    },
+                )
+            )
+        return samples
+
     def _extract_python_entry_point(self, code: str | None) -> str | None:
         if not code:
             return None
@@ -767,6 +822,24 @@ class TutorDatasetImportService:
             stripped = line.strip()
             if stripped.startswith('def '):
                 return stripped[4:].split('(', 1)[0].strip() or None
+
+        return None
+
+    def _extract_cpp_entry_point(self, code: str | None) -> str | None:
+        if not code:
+            return None
+
+        patterns = [
+            r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^()]*\)\s*(?:const\s*)?\{',
+            r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^()]*\)\s*;',
+        ]
+        excluded = {'if', 'for', 'while', 'switch', 'return', 'catch'}
+
+        for pattern in patterns:
+            for match in re.finditer(pattern, code):
+                name = match.group(1)
+                if name not in excluded:
+                    return name
 
         return None
 
@@ -857,25 +930,34 @@ def format_row(dataset_key, row, index):
                 '\n'.join(row.get('challenge_test_list', []) or []),
             ] if part
         )
-    if dataset_key in {'humaneval-cpp', 'mbpp-cpp'}:
+    if dataset_key == 'multipl-e-humaneval-cpp':
         return '\n\n'.join(
             part for part in [
-                f"Task: {row.get('name', f'{dataset_key}_{index}')}",
-                f"Language: {row.get('language', 'cpp')}",
+                f"Task: {row.get('name', row.get('task_id', f'humaneval_cpp_{index}'))}",
+                '# Prompt',
                 row.get('prompt', ''),
-                '# Canonical solution',
-                row.get('prompt', ''),
-                '# Test',
+                '# Tests',
                 row.get('tests', ''),
-                '# Metadata',
-                json.dumps(
-                    {
-                        'original': row.get('original'),
-                        'prompt_terminology': row.get('prompt_terminology'),
-                        'stop_tokens': row.get('stop_tokens'),
-                    },
-                    ensure_ascii=False,
-                ),
+                '# Original',
+                row.get('original', ''),
+                '# Entry point',
+                row.get('entry_point', ''),
+            ] if part
+        )
+    if dataset_key == 'multipl-e-mbpp-cpp':
+        return '\n\n'.join(
+            part for part in [
+                f"Task: {row.get('name', row.get('task_id', f'mbpp_cpp_{index}'))}",
+                '# Prompt',
+                row.get('prompt', ''),
+                '# Tests',
+                row.get('tests', ''),
+                '# Doctests',
+                row.get('doctests', ''),
+                '# Original',
+                row.get('original', ''),
+                '# Entry point',
+                row.get('entry_point', ''),
             ] if part
         )
     if dataset_key == 'codesearchnet-python':
@@ -891,7 +973,7 @@ def build_file_name(dataset_key, split_name, index):
     extension = 'json'
     if dataset_key in {'humaneval-python', 'mbpp-python', 'codesearchnet-python'}:
         extension = 'py'
-    if dataset_key in {'humaneval-cpp', 'mbpp-cpp'}:
+    if dataset_key in {'multipl-e-humaneval-cpp', 'multipl-e-mbpp-cpp'}:
         extension = 'cpp'
     return f'{dataset_key}_{split_name}_{index:06d}.{extension}'
 
@@ -993,25 +1075,34 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
                     '\n'.join(row.get('challenge_test_list', []) or []),
                 ] if part
             )
-        if dataset_key in {'humaneval-cpp', 'mbpp-cpp'}:
+        if dataset_key == 'multipl-e-humaneval-cpp':
             return '\n\n'.join(
                 part for part in [
-                    f"Task: {row.get('name', f'{dataset_key}_{index}')}",
-                    f"Language: {row.get('language', 'cpp')}",
+                    f"Task: {row.get('name', row.get('task_id', f'humaneval_cpp_{index}'))}",
+                    '# Prompt',
                     row.get('prompt', ''),
-                    '# Canonical solution',
-                    row.get('prompt', ''),
-                    '# Test',
+                    '# Tests',
                     row.get('tests', ''),
-                    '# Metadata',
-                    json.dumps(
-                        {
-                            'original': row.get('original'),
-                            'prompt_terminology': row.get('prompt_terminology'),
-                            'stop_tokens': row.get('stop_tokens'),
-                        },
-                        ensure_ascii=False,
-                    ),
+                    '# Original',
+                    row.get('original', ''),
+                    '# Entry point',
+                    row.get('entry_point', ''),
+                ] if part
+            )
+        if dataset_key == 'multipl-e-mbpp-cpp':
+            return '\n\n'.join(
+                part for part in [
+                    f"Task: {row.get('name', row.get('task_id', f'mbpp_cpp_{index}'))}",
+                    '# Prompt',
+                    row.get('prompt', ''),
+                    '# Tests',
+                    row.get('tests', ''),
+                    '# Doctests',
+                    row.get('doctests', ''),
+                    '# Original',
+                    row.get('original', ''),
+                    '# Entry point',
+                    row.get('entry_point', ''),
                 ] if part
             )
         if dataset_key == 'codesearchnet-python':
@@ -1027,62 +1118,9 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
         extension = 'json'
         if dataset_key in {'humaneval-python', 'mbpp-python', 'codesearchnet-python'}:
             extension = 'py'
-        if dataset_key in {'humaneval-cpp', 'mbpp-cpp'}:
+        if dataset_key in {'multipl-e-humaneval-cpp', 'multipl-e-mbpp-cpp'}:
             extension = 'cpp'
         return f'{dataset_key}_{split_name}_{index:06d}.{extension}'
-
-    def _load_materialized_multipl_e_samples(self, source_path: Path, *, dataset_key: str) -> list[EvaluationSample]:
-        samples: list[EvaluationSample] = []
-        dataset_name = 'humaneval' if dataset_key == 'humaneval-cpp' else 'mbpp'
-        for path in sorted(source_path.glob(f'**/{dataset_key}_*.cpp')):
-            content = path.read_text(encoding='utf-8')
-            prompt, sections = self._split_materialized_sections(content)
-            prompt_lines = prompt.splitlines()
-            first_line = prompt_lines[0].strip() if prompt_lines else path.stem
-            second_line = prompt_lines[1].strip() if len(prompt_lines) > 1 else ''
-            sample_id = first_line.replace('Task: ', '').strip() if first_line.startswith('Task: ') else path.stem
-            remaining_prompt = '\n'.join(prompt_lines[2:]).strip() if second_line.startswith('Language: ') else '\n'.join(prompt_lines[1:]).strip()
-            metadata: dict[str, Any] = {
-                'source': 'MultiPL-E',
-                'task_id': sample_id,
-                'language': 'cpp',
-            }
-            metadata_blob = sections.get('metadata', '')
-            if metadata_blob:
-                try:
-                    parsed = json.loads(metadata_blob)
-                    if isinstance(parsed, dict):
-                        metadata.update({key: value for key, value in parsed.items() if value is not None})
-                except json.JSONDecodeError:
-                    logger.warning('Skipping malformed MultiPL-E metadata in %s', path)
-            entry_point = self._extract_cpp_entry_point(sections.get('canonical solution') or remaining_prompt)
-            if entry_point:
-                metadata['entry_point'] = entry_point
-            samples.append(
-                EvaluationSample(
-                    sample_id=sample_id,
-                    dataset_name=dataset_name,
-                    language='cpp',
-                    prompt=remaining_prompt,
-                    reference_solution=sections.get('canonical solution'),
-                    test_code=sections.get('test', ''),
-                    entry_point=entry_point,
-                    metadata=metadata,
-                )
-            )
-        return samples
-
-    def _extract_cpp_entry_point(self, code: str | None) -> str | None:
-        if not code:
-            return None
-
-        match = re.search(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^\)]*\)\s*\{', code)
-        if not match:
-            return None
-        candidate = match.group(1)
-        if candidate == 'main':
-            return None
-        return candidate
 
     def _r2_grpc_target(self) -> str:
         return os.getenv('R2_SERVICE_GRPC_TARGET', '127.0.0.1:50054')
@@ -1209,7 +1247,7 @@ print(json.dumps({'type': 'done', 'count': file_count}), flush=True)
         return Path(__file__).resolve().parents[6] / 'data-source' / 'dataset-imports'
 
     def _count_supported_files(self, source_path: Path) -> int:
-        return len([path for path in source_path.rglob('*') if path.is_file() and path.suffix.lower() in {'.py', '.c', '.h', '.txt', '.md', '.markdown', '.pdf', '.docx'}])
+        return len([path for path in source_path.rglob('*') if path.is_file() and path.suffix.lower() in {'.py', '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.txt', '.md', '.markdown', '.pdf', '.docx'}])
 
     def _get_dataset(self, dataset_key: str) -> dict[str, Any]:
         for item in DATASET_CATALOG:

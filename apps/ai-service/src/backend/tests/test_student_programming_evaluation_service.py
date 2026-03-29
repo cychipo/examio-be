@@ -127,9 +127,22 @@ def test_run_job_attaches_completed_evaluation_to_message() -> None:
 
 
 def test_evaluate_answer_returns_benchmark_metadata() -> None:
+    original_context = student_programming_evaluation_service._get_benchmark_match_context
     original_find = student_programming_evaluation_service._find_matching_sample
     original_execute = student_programming_evaluation_service.sandbox.execute
     original_cleanup = student_programming_evaluation_service.sandbox.cleanup
+
+    async def fake_context(question: str, language: str):
+        assert language == 'python'
+        return {
+            'language': language,
+            'candidateCount': 1,
+            'signals': {
+                'function_name': 'add',
+                'task_id': None,
+            },
+            'hasImportedBenchmarks': True,
+        }
 
     async def fake_find(question: str, language: str):
         from src.evaluation.datasets.schemas import EvaluationSample
@@ -157,6 +170,7 @@ def test_evaluate_answer_returns_benchmark_metadata() -> None:
     def fake_cleanup(_result):
         return None
 
+    student_programming_evaluation_service._get_benchmark_match_context = fake_context  # type: ignore[method-assign]
     student_programming_evaluation_service._find_matching_sample = fake_find  # type: ignore[method-assign]
     student_programming_evaluation_service.sandbox.execute = fake_execute  # type: ignore[method-assign]
     student_programming_evaluation_service.sandbox.cleanup = fake_cleanup  # type: ignore[method-assign]
@@ -175,6 +189,7 @@ def test_evaluate_answer_returns_benchmark_metadata() -> None:
             'source': 'HumanEval',
         }
     finally:
+        student_programming_evaluation_service._get_benchmark_match_context = original_context  # type: ignore[method-assign]
         student_programming_evaluation_service._find_matching_sample = original_find  # type: ignore[method-assign]
         student_programming_evaluation_service.sandbox.execute = original_execute  # type: ignore[method-assign]
         student_programming_evaluation_service.sandbox.cleanup = original_cleanup  # type: ignore[method-assign]

@@ -16,6 +16,7 @@ def test_dataset_import_jobs_use_isolated_trigger_ids() -> None:
     original_download_dataset = tutor_dataset_import_service._download_dataset
     original_is_cancel_requested = tutor_dataset_import_service._is_cancel_requested
     original_find_reusable = tutor_dataset_import_service._find_reusable_artifact_job
+    original_count_supported_files = tutor_dataset_import_service._count_supported_files
     original_pipeline = service_module.tutor_ingestion_pipeline
     original_storage_fetch_job = service_module.tutor_storage_service.fetch_job
 
@@ -72,6 +73,7 @@ def test_dataset_import_jobs_use_isolated_trigger_ids() -> None:
     tutor_dataset_import_service._download_dataset = fake_download_dataset  # type: ignore[method-assign]
     tutor_dataset_import_service._is_cancel_requested = fake_is_cancel_requested  # type: ignore[method-assign]
     tutor_dataset_import_service._find_reusable_artifact_job = fake_find_reusable_artifact_job  # type: ignore[method-assign]
+    tutor_dataset_import_service._count_supported_files = lambda _source_path: 1  # type: ignore[method-assign]
     service_module.tutor_ingestion_pipeline = fake_pipeline  # type: ignore[assignment]
     service_module.tutor_storage_service.fetch_job = fake_storage_fetch_job  # type: ignore[method-assign]
 
@@ -90,6 +92,7 @@ def test_dataset_import_jobs_use_isolated_trigger_ids() -> None:
         tutor_dataset_import_service._download_dataset = original_download_dataset  # type: ignore[method-assign]
         tutor_dataset_import_service._is_cancel_requested = original_is_cancel_requested  # type: ignore[method-assign]
         tutor_dataset_import_service._find_reusable_artifact_job = original_find_reusable  # type: ignore[method-assign]
+        tutor_dataset_import_service._count_supported_files = original_count_supported_files  # type: ignore[method-assign]
         service_module.tutor_ingestion_pipeline = original_pipeline  # type: ignore[assignment]
         service_module.tutor_storage_service.fetch_job = original_storage_fetch_job  # type: ignore[method-assign]
 
@@ -281,7 +284,94 @@ def test_list_dataset_states_ignores_completed_jobs_with_deleted_folder() -> Non
         tutor_dataset_import_service._get_pool = original_get_pool  # type: ignore[method-assign]
 
 
-def test_dataset_catalog_includes_cpp_benchmarks() -> None:
+def test_dataset_catalog_includes_supported_benchmarks() -> None:
     dataset_keys = {item['datasetKey'] for item in DATASET_CATALOG}
-    assert 'humaneval-cpp' in dataset_keys
-    assert 'mbpp-cpp' in dataset_keys
+    assert dataset_keys == {
+        'humaneval-python',
+        'mbpp-python',
+        'multipl-e-humaneval-cpp',
+        'multipl-e-mbpp-cpp',
+    }
+
+
+def test_benchmark_dataset_mapping_supports_cpp_datasets() -> None:
+    assert tutor_dataset_import_service._benchmark_dataset_name_for_dataset_key('multipl-e-humaneval-cpp') == 'multipl_e_humaneval_cpp'
+    assert tutor_dataset_import_service._benchmark_dataset_name_for_dataset_key('multipl-e-mbpp-cpp') == 'multipl_e_mbpp_cpp'
+
+
+def test_load_materialized_humaneval_cpp_samples() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        sample_file = root / 'multipl-e-humaneval-cpp_test_000001.cpp'
+        sample_file.write_text(
+            '\n\n'.join([
+                'Task: HumanEvalCpp/1',
+                '# Prompt',
+                'std::vector<int> two_sum(std::vector<int> nums, int target);',
+                '# Tests',
+                'int main() { return 0; }',
+                '# Original',
+                'std::vector<int> two_sum(std::vector<int> nums, int target) { return {}; }',
+                '# Entry point',
+                'two_sum',
+            ]),
+            encoding='utf-8',
+        )
+
+        samples = tutor_dataset_import_service._load_materialized_humaneval_cpp_samples(root)
+
+        assert len(samples) == 1
+        assert samples[0].sample_id == 'HumanEvalCpp/1'
+        assert samples[0].dataset_name == 'multipl_e_humaneval_cpp'
+        assert samples[0].language == 'cpp'
+        assert samples[0].entry_point == 'two_sum'
+        assert samples[0].test_code == 'int main() { return 0; }'
+
+
+def test_load_materialized_mbpp_cpp_samples() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        sample_file = root / 'multipl-e-mbpp-cpp_test_000001.cpp'
+        sample_file.write_text(
+            '\n\n'.join([
+                'Task: 11',
+                '# Prompt',
+                'Write a C++ function sum_values that returns the total.',
+                '# Tests',
+                'int main() { return sum_values({1,2,3}) == 6 ? 0 : 1; }',
+                '# Doctests',
+                '// sample doctest',
+                '# Original',
+                'int sum_values(std::vector<int> values) { return 6; }',
+                '# Entry point',
+                'sum_values',
+            ]),
+            encoding='utf-8',
+        )
+
+        samples = tutor_dataset_import_service._load_materialized_mbpp_cpp_samples(root)
+
+        assert len(samples) == 1
+        assert samples[0].sample_id == 'mbpp_cpp_11'
+        assert samples[0].dataset_name == 'multipl_e_mbpp_cpp'
+        assert samples[0].language == 'cpp'
+        assert samples[0].entry_point == 'sum_values'
+        assert 'sample doctest' in samples[0].test_code
+
+
+def test_count_supported_files_includes_c_sources() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        (root / 'sample.c').write_text('int main(void) { return 0; }', encoding='utf-8')
+        (root / 'sample.cpp').write_text('int main() { return 0; }', encoding='utf-8')
+        (root / 'note.txt').write_text('ignored helper text', encoding='utf-8')
+
+        count = tutor_dataset_import_service._count_supported_files(root)
+
+        assert count == 3

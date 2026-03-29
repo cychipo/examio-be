@@ -28,7 +28,7 @@ from src.rag.vector_store_pg import get_pg_vector_store
 logger = logging.getLogger(__name__)
 
 TEXT_FILE_EXTENSIONS = {'.txt', '.md', '.markdown'}
-CODE_FILE_EXTENSIONS = {'.py', '.c', '.h'}
+CODE_FILE_EXTENSIONS = {'.py', '.c', '.h', '.cc', '.cpp', '.cxx', '.hpp'}
 IMAGE_FILE_EXTENSIONS = {'.png', '.jpg', '.jpeg'}
 DEFAULT_TEXT_CHUNK_SIZE = 1200
 DEFAULT_CODE_CHUNK_SIZE = 1800
