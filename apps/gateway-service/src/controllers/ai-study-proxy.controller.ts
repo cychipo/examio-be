@@ -9,6 +9,7 @@ import {
     Body,
     Query,
     Req,
+    Res,
     UseGuards,
     UseInterceptors,
     UploadedFile,
@@ -25,7 +26,7 @@ import {
     ApiCookieAuth,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { ProxyService } from '../services/proxy.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -189,6 +190,592 @@ export class AIProxyController {
                 method: 'GET',
                 path: '/api/v1/ai/recent-uploads',
                 query,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('models')
+    @ApiOperation({ summary: 'Lấy catalog model AI' })
+    async getModels(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/models',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/ingest')
+    @ApiOperation({ summary: 'Tạo tutor ingest job' })
+    async tutorIngest(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai/tutor/ingest',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/knowledge-files')
+    @UseInterceptors(FileInterceptor('file'))
+    @ApiOperation({ summary: 'Upload file tri thức cho tutor' })
+    @ApiConsumes('multipart/form-data')
+    async uploadTutorKnowledgeFile(
+        @Req() req: Request,
+        @UploadedFile() file: Express.Multer.File,
+        @Body() body: any
+    ) {
+        if (!file || !file.buffer) {
+            throw new BadRequestException('No file uploaded');
+        }
+
+        const formData = new FormData();
+        formData.append('file', file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+        });
+
+        if (body.folderId) formData.append('folderId', body.folderId);
+        if (body.folderName) formData.append('folderName', body.folderName);
+        if (body.folderDescription) formData.append('folderDescription', body.folderDescription);
+        if (body.courseCode) formData.append('courseCode', body.courseCode);
+        if (body.language) formData.append('language', body.language);
+        if (body.topic) formData.append('topic', body.topic);
+        if (body.difficulty) formData.append('difficulty', body.difficulty);
+
+        const examServiceUrl = process.env.EXAM_SERVICE_URL || 'http://localhost:3002';
+        const response = await firstValueFrom(
+            this.httpService.post(
+                `${examServiceUrl}/api/v1/ai/tutor/knowledge-files`,
+                formData,
+                {
+                    headers: {
+                        ...formData.getHeaders(),
+                        Authorization: `Bearer ${this.t(req)}`,
+                    },
+                    timeout: 120000,
+                }
+            )
+        );
+
+        return response.data;
+    }
+
+    @Post('tutor/knowledge-folders')
+    @ApiOperation({ summary: 'Tạo folder tri thức tutor' })
+    async createTutorKnowledgeFolder(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai/tutor/knowledge-folders',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Put('tutor/knowledge-folders/:folderId')
+    @ApiOperation({ summary: 'Cập nhật folder tri thức tutor' })
+    async updateTutorKnowledgeFolder(
+        @Param('folderId') folderId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'PUT',
+                path: `/api/v1/ai/tutor/knowledge-folders/${folderId}`,
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete('tutor/knowledge-folders/:folderId')
+    @ApiOperation({ summary: 'Xóa folder tri thức tutor' })
+    async deleteTutorKnowledgeFolder(@Param('folderId') folderId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/ai/tutor/knowledge-folders/${folderId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-folders/:folderId/contents')
+    @ApiOperation({ summary: 'Lấy folder contents tri thức tutor' })
+    async getTutorKnowledgeFolderContents(@Param('folderId') folderId: string, @Req() req: Request) {
+        const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/knowledge-folders/${folderId}/contents${queryString}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-folders')
+    @ApiOperation({ summary: 'Lấy danh sách folder tri thức tutor' })
+    async listTutorKnowledgeFolders(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/knowledge-folders',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/dataset-imports/catalog')
+    @ApiOperation({ summary: 'Lấy catalog dataset tutor' })
+    async listTutorDatasetCatalog(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/dataset-imports/catalog',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/dataset-imports')
+    @ApiOperation({ summary: 'Tạo job nạp dataset tutor' })
+    async createTutorDatasetImport(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai/tutor/dataset-imports',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/dataset-imports')
+    @ApiOperation({ summary: 'Lấy danh sách job nạp dataset tutor' })
+    async listTutorDatasetImports(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/dataset-imports',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/dataset-imports/states')
+    @ApiOperation({ summary: 'Lấy trạng thái dataset tutor theo folder/job' })
+    async listTutorDatasetImportStates(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/dataset-imports/states',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/dataset-imports/:jobId')
+    @ApiOperation({ summary: 'Lấy trạng thái job nạp dataset tutor' })
+    async getTutorDatasetImportJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/dataset-imports/${jobId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/student-programming/sessions')
+    async listStudentProgrammingSessions(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'GET', path: '/api/v1/ai/tutor/student-programming/sessions', headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/student-programming/sessions')
+    async createStudentProgrammingSession(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'POST', path: '/api/v1/ai/tutor/student-programming/sessions', body, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Patch('tutor/student-programming/sessions/:sessionId')
+    async updateStudentProgrammingSession(
+        @Param('sessionId') sessionId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'PATCH', path: `/api/v1/ai/tutor/student-programming/sessions/${sessionId}`, body, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Delete('tutor/student-programming/sessions/:sessionId')
+    async deleteStudentProgrammingSession(@Param('sessionId') sessionId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'DELETE', path: `/api/v1/ai/tutor/student-programming/sessions/${sessionId}`, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/student-programming/sessions/:sessionId/messages')
+    async listStudentProgrammingMessages(@Param('sessionId') sessionId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'GET', path: `/api/v1/ai/tutor/student-programming/sessions/${sessionId}/messages`, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/student-programming/sessions/:sessionId/messages')
+    async createStudentProgrammingMessage(
+        @Param('sessionId') sessionId: string,
+        @Body() body: any,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'POST', path: `/api/v1/ai/tutor/student-programming/sessions/${sessionId}/messages`, body, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/student-programming/evaluate')
+    async evaluateStudentProgrammingAnswer(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'POST', path: '/api/v1/ai/tutor/student-programming/evaluate', body, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/student-programming/evaluate/:jobId')
+    async getStudentProgrammingEvaluationJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            { method: 'GET', path: `/api/v1/ai/tutor/student-programming/evaluate/${jobId}`, headers: this.h(req) },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/dataset-imports/:jobId/cancel')
+    @ApiOperation({ summary: 'Hủy job nạp dataset tutor' })
+    async cancelTutorDatasetImportJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai/tutor/dataset-imports/${jobId}/cancel`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/dataset-imports/:datasetKey/clear')
+    @ApiOperation({ summary: 'Xóa toàn bộ dữ liệu dataset tutor đã nạp' })
+    async clearTutorDatasetImport(
+        @Param('datasetKey') datasetKey: string,
+        @Req() req: Request
+    ) {
+        const userId = typeof req.query.user_id === 'string' ? req.query.user_id : undefined;
+
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai/tutor/dataset-imports/${datasetKey}/clear`,
+                headers: this.h(req),
+                query: userId ? { user_id: userId } : undefined,
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-stats')
+    @ApiOperation({ summary: 'Lấy thống kê kho tri thức tutor' })
+    async getTutorKnowledgeStats(@Req() req: Request) {
+        const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/knowledge-stats${queryString}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-files')
+    @ApiOperation({ summary: 'Lấy danh sách file tri thức tutor' })
+    async listTutorKnowledgeFiles(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/knowledge-files',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-files/search')
+    @ApiOperation({ summary: 'Filter/search/sort file tri thức tutor' })
+    async searchTutorKnowledgeFiles(@Req() req: Request) {
+        const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/knowledge-files/search${queryString}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-files/:fileId')
+    @ApiOperation({ summary: 'Lấy trạng thái file tri thức tutor' })
+    async getTutorKnowledgeFileStatus(@Param('fileId') fileId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/knowledge-files/${fileId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Delete('tutor/knowledge-files/:fileId')
+    @ApiOperation({ summary: 'Xóa file tri thức tutor' })
+    async deleteTutorKnowledgeFile(@Param('fileId') fileId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'DELETE',
+                path: `/api/v1/ai/tutor/knowledge-files/${fileId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/knowledge-files/:fileId/reprocess')
+    @ApiOperation({ summary: 'Reprocess file tri thức tutor' })
+    async reprocessTutorKnowledgeFile(@Param('fileId') fileId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: `/api/v1/ai/tutor/knowledge-files/${fileId}/reprocess`,
+                headers: this.h(req),
+                body: {},
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/knowledge-files/bulk-delete')
+    @ApiOperation({ summary: 'Bulk delete file tri thức tutor' })
+    async bulkDeleteTutorKnowledgeFiles(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai/tutor/knowledge-files/bulk-delete',
+                headers: this.h(req),
+                body,
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/knowledge-files/bulk-reprocess')
+    @ApiOperation({ summary: 'Bulk reprocess file tri thức tutor' })
+    async bulkReprocessTutorKnowledgeFiles(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai/tutor/knowledge-files/bulk-reprocess',
+                headers: this.h(req),
+                body,
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/ingest')
+    @ApiOperation({ summary: 'Lấy danh sách tutor ingest jobs' })
+    async listTutorIngestJobs(@Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: '/api/v1/ai/tutor/ingest',
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/ingest/:jobId')
+    @ApiOperation({ summary: 'Lấy chi tiết tutor ingest job' })
+    async getTutorIngestJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/ingest/${jobId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Post('tutor/query')
+    @ApiOperation({ summary: 'Hỏi tutor' })
+    async tutorQuery(@Body() body: any, @Req() req: Request) {
+        return this.proxyService.forwardWithAuthAndTimeout(
+            'exam',
+            {
+                method: 'POST',
+                path: '/api/v1/ai/tutor/query',
+                body,
+                headers: this.h(req),
+            },
+            this.t(req),
+            300000
+        );
+    }
+
+    @Post('tutor/stream')
+    @ApiOperation({ summary: 'Hỏi tutor với streaming' })
+    async tutorStream(@Body() body: any, @Req() req: Request, @Res() res: Response) {
+        const examServiceUrl = process.env.EXAM_SERVICE_URL || 'http://localhost:3002';
+        const response = await firstValueFrom(
+            this.httpService.post(`${examServiceUrl}/api/v1/ai/tutor/stream`, body, {
+                headers: {
+                    ...this.h(req),
+                    Authorization: `Bearer ${this.t(req)}`,
+                },
+                timeout: 300000,
+                responseType: 'stream',
+            })
+        );
+
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        const stream = response.data;
+        stream.on('data', (chunk: Buffer) => {
+            res.write(chunk);
+        });
+        stream.on('end', () => {
+            res.end();
+        });
+        stream.on('error', (error: Error) => {
+            this.logger.error(`Tutor stream proxy failed: ${error.message}`);
+            if (!res.headersSent) {
+                res.status(503).json({ message: 'Service unavailable' });
+                return;
+            }
+            res.write(`data: ${JSON.stringify({ type: 'error', data: error.message })}\n\n`);
+            res.end();
+        });
+
+        req.on('close', () => {
+            stream.destroy();
+        });
+    }
+
+    @Get('tutor/graph/job/:jobId')
+    @ApiOperation({ summary: 'Xem tutor graph theo job' })
+    async getTutorGraphByJob(@Param('jobId') jobId: string, @Req() req: Request) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/graph/job/${jobId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/graph/document/:documentId')
+    @ApiOperation({ summary: 'Xem tutor graph theo document' })
+    async getTutorGraphByDocument(
+        @Param('documentId') documentId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/graph/document/${documentId}`,
+                headers: this.h(req),
+            },
+            this.t(req)
+        );
+    }
+
+    @Get('tutor/knowledge-files/:fileId/graph')
+    @ApiOperation({ summary: 'Xem graph theo file tri thức tutor' })
+    async getTutorKnowledgeFileGraph(
+        @Param('fileId') fileId: string,
+        @Req() req: Request
+    ) {
+        return this.proxyService.forwardWithAuth(
+            'exam',
+            {
+                method: 'GET',
+                path: `/api/v1/ai/tutor/knowledge-files/${fileId}/graph`,
                 headers: this.h(req),
             },
             this.t(req)

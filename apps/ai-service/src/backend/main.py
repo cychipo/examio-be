@@ -54,16 +54,66 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f'Failed to ensure graph storage schema: {e}')
 
-    yield
+    try:
+        from .services.tutor_storage_service import tutor_storage_service
+
+        await tutor_storage_service.ensure_schema()
+        logger.info('Tutor storage schema ensured')
+    except Exception as e:
+        logger.error(f'Failed to ensure tutor storage schema: {e}')
+
+    try:
+        from .services.tutor_knowledge_storage_service import (
+            tutor_knowledge_storage_service,
+        )
+
+        await tutor_knowledge_storage_service.ensure_schema()
+        logger.info('Tutor knowledge storage schema ensured')
+    except Exception as e:
+        logger.error(f'Failed to ensure tutor knowledge storage schema: {e}')
+
+    try:
+        from .services.tutor_dataset_import_service import tutor_dataset_import_service
+
+        await tutor_dataset_import_service.ensure_schema()
+        logger.info('Tutor dataset import schema ensured')
+    except Exception as e:
+        logger.error(f'Failed to ensure tutor dataset import schema: {e}')
+
+    try:
+        from .services.student_programming_chat_service import (
+            student_programming_chat_service,
+        )
+
+        await student_programming_chat_service.ensure_schema()
+        logger.info('Student programming chat schema ensured')
+    except Exception as e:
+        logger.error(f'Failed to ensure student programming chat schema: {e}')
+
+    try:
+        from .services.benchmark_index_service import benchmark_index_service
+
+        await benchmark_index_service.seed_from_fixtures()
+        logger.info('Benchmark index schema ensured and fixture data seeded')
+    except Exception as e:
+        logger.error(f'Failed to ensure benchmark index schema: {e}')
+
+    try:
+        yield
+    except asyncio.CancelledError:
+        logger.info("AI service lifespan cancelled during shutdown")
 
     # Shutdown: Close RabbitMQ consumer
-    if _consumer_task:
-        _consumer_task.cancel()
-        try:
-            await _consumer_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("RabbitMQ consumer stopped")
+    finally:
+        if _consumer_task:
+            _consumer_task.cancel()
+            try:
+                await _consumer_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.debug(f"RabbitMQ consumer shutdown warning: {e}")
+            logger.info("RabbitMQ consumer stopped")
 
 
 # Create FastAPI app with lifespan

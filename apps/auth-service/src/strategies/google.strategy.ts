@@ -4,8 +4,25 @@ import {
     Strategy,
     VerifyCallback,
     StrategyOptions,
+    StrategyOptionsWithRequest,
 } from 'passport-google-oauth20';
+import { Request } from 'express';
 import { AuthService } from '../auth.service';
+
+function getRoleFromState(state?: string): 'teacher' | 'student' {
+    if (!state) {
+        return 'student';
+    }
+
+    try {
+        const parsed = JSON.parse(
+            Buffer.from(state, 'base64url').toString('utf8')
+        );
+        return parsed?.role === 'teacher' ? 'teacher' : 'student';
+    } catch {
+        return 'student';
+    }
+}
 
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
@@ -15,10 +32,12 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
             clientSecret: process.env.GOOGLE_CLIENT_SECRET,
             callbackURL: process.env.GOOGLE_CALLBACK_URL,
             scope: ['email', 'profile'],
-        } as StrategyOptions);
+            passReqToCallback: true,
+        } as unknown as StrategyOptionsWithRequest);
     }
 
     async validate(
+        req: Request,
         accessToken: string,
         refreshToken: string,
         profile: any,
@@ -33,7 +52,18 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
             accessToken,
         };
 
-        const result = await this.authService.googleLogin(user);
+        const roleFromCookie = req.cookies?.oauth_role;
+        const role =
+            roleFromCookie === 'teacher' || roleFromCookie === 'student'
+                ? roleFromCookie
+                : getRoleFromState(req.query?.state as string | undefined);
+        console.log('[OAuth][Google] Role resolution', {
+            email: user.email,
+            roleFromCookie,
+            state: req.query?.state,
+            resolvedRole: role,
+        });
+        const result = await this.authService.googleLogin(user, undefined, role);
         done(null, result);
     }
 }

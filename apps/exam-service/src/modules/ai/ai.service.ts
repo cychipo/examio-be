@@ -3,9 +3,12 @@ import {
     Logger,
     NotFoundException,
     BadRequestException,
+    HttpException,
     InternalServerErrorException,
+    ServiceUnavailableException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { AxiosError } from 'axios';
 import { User } from '@prisma/client';
 import {
     GenerateIdService,
@@ -17,8 +20,12 @@ import {
     UploadFileDto,
     RegenerateDto,
     GenerateFromFileDto,
+    TutorIngestDto,
+    TutorKnowledgeFolderDto,
+    TutorKnowledgeUploadDto,
+    TutorQueryDto,
 } from './dto/ai.dto';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Observable } from 'rxjs';
 import { FinanceClientService } from '../finance-client/finance-client.service';
 
 @Injectable()
@@ -35,6 +42,74 @@ export class AIService {
     ) {
         this.aiServiceUrl =
             process.env.AI_SERVICE_URL || 'http://localhost:8000/api';
+    }
+
+    private getDefaultModelId(): string {
+        return 'qwen3_8b';
+    }
+
+    private normalizeModelUnavailableMessage(errorData: unknown): string | null {
+        const payload = errorData as
+            | { detail?: { code?: string; message?: string } | string; message?: string; error?: string }
+            | undefined;
+
+        const detail = payload?.detail;
+        if (detail && typeof detail === 'object' && 'code' in detail) {
+            const code = detail.code;
+            if (
+                code === 'MODEL_UNAVAILABLE' ||
+                code === 'MODEL_INSUFFICIENT_VRAM' ||
+                code === 'MODEL_RUNTIME_ERROR'
+            ) {
+                return 'Model hiện tại không khả dụng, thử model khác.';
+            }
+        }
+
+        return null;
+    }
+
+    private rethrowAiHttpError(error: unknown): never {
+        const axiosError = error as AxiosError<{
+            detail?: string;
+            error?: string;
+            message?: string;
+            status_code?: number;
+        }>;
+
+        if (axiosError.code === 'ERR_CANCELED' && axiosError.response) {
+            const canceledStatus = axiosError.response.status;
+            const canceledData = axiosError.response.data;
+            const canceledMessage =
+                canceledData?.detail ||
+                canceledData?.error ||
+                canceledData?.message ||
+                'Request was canceled';
+
+            if (canceledStatus === 400) {
+                throw new BadRequestException(canceledMessage);
+            }
+
+            if (canceledStatus === 404) {
+                throw new NotFoundException(canceledMessage);
+            }
+
+            throw new HttpException(canceledMessage, canceledStatus);
+        }
+
+        const status = axiosError.response?.status;
+        const data = axiosError.response?.data;
+        const message =
+            data?.detail || data?.error || data?.message || axiosError.message;
+
+        if (status === 400) {
+            throw new BadRequestException(message);
+        }
+
+        if (status === 404) {
+            throw new NotFoundException(message);
+        }
+
+        throw new InternalServerErrorException(message);
     }
 
     private async clearAiServiceCache(userStorageId: string) {
@@ -489,7 +564,7 @@ export class AIService {
                 : `${this.aiServiceUrl}/generate/quiz`;
 
             this.logger.log(
-                `Generating ${count} ${isFlashcard ? 'flashcards' : 'quiz questions'} for ${userStorageId} with model: ${modelType || 'gemini'}...`
+                `Generating ${count} ${isFlashcard ? 'flashcards' : 'quiz questions'} for ${userStorageId} with model: ${modelType || this.getDefaultModelId()}...`
             );
 
             const generationStart = Date.now();
@@ -502,7 +577,7 @@ export class AIService {
                         [isFlashcard ? 'numFlashcards' : 'numQuestions']: count,
                         isNarrowSearch,
                         keyword,
-                        modelType: modelType || 'gemini',
+                        modelType: modelType || this.getDefaultModelId(),
                     },
                     { timeout: 3600000 } // 60 min timeout for generation
                 )
@@ -531,6 +606,9 @@ export class AIService {
             );
         } catch (error) {
             const errorDetails = error.response?.data || error.message;
+            const normalizedModelError = this.normalizeModelUnavailableMessage(
+                error.response?.data
+            );
             this.logger.error(
                 `Async processing failed for ${userStorageId}: ${JSON.stringify(errorDetails)}`,
                 error.stack
@@ -550,6 +628,609 @@ export class AIService {
                     `Failed to update status to FAILED: ${updateError.message}`
                 );
             }
+
+            if (normalizedModelError) {
+                throw new ServiceUnavailableException(normalizedModelError);
+            }
+        }
+    }
+
+    async getModelCatalog() {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/ai/models`, {
+                    timeout: 15000,
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(
+                `Failed to fetch model catalog: ${error.message}`,
+                error.stack
+            );
+            throw new InternalServerErrorException(
+                'Không thể tải danh sách model AI'
+            );
+        }
+    }
+
+    async tutorIngest(user: User, dto: TutorIngestDto) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/ingest`, {
+                    ...dto,
+                    triggeredBy: dto.triggeredBy || user.id,
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor ingest failed: ${error.message}`, error.stack);
+            throw new InternalServerErrorException(
+                error.response?.data?.detail || 'Không thể tạo tutor ingest job'
+            );
+        }
+    }
+
+    async uploadTutorKnowledgeFile(
+        user: User,
+        file: Express.Multer.File,
+        dto: TutorKnowledgeUploadDto
+    ) {
+        if (!file || !file.buffer) {
+            throw new BadRequestException('No file provided for tutor knowledge upload');
+        }
+
+        const allowedMimeTypes = new Set([
+            'application/pdf',
+            'application/json',
+            'text/json',
+        ]);
+        const allowedExtensions = new Set(['.pdf', '.json']);
+        const extension = file.originalname.slice(
+            Math.max(0, file.originalname.lastIndexOf('.'))
+        ).toLowerCase();
+
+        if (
+            !allowedMimeTypes.has(file.mimetype) &&
+            !allowedExtensions.has(extension)
+        ) {
+            throw new BadRequestException(
+                'Chỉ hỗ trợ file PDF hoặc JSON cho kho tri thức GenAI'
+            );
+        }
+
+        try {
+            const sanitizedName = `${Date.now()}-${sanitizeFilename(file.originalname)}`;
+            const keyR2 = await this.r2ClientService.uploadFile(
+                sanitizedName,
+                file.buffer,
+                file.mimetype,
+                'genai-tutor-knowledge'
+            );
+            const url = this.r2ClientService.getPublicUrl(keyR2);
+            const fileId = this.generateIdService.generateId();
+
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/knowledge-files`, {
+                    fileId,
+                    userId: user.id,
+                    filename: file.originalname,
+                    description: dto.description,
+                    url,
+                    keyR2,
+                    mimeType: file.mimetype,
+                    size: file.size,
+                    folderId: dto.folderId,
+                    folderName: dto.folderName,
+                    folderDescription: dto.folderDescription,
+                    courseCode: dto.courseCode,
+                    language: dto.language,
+                    topic: dto.topic,
+                    difficulty: dto.difficulty,
+                })
+            );
+
+            return {
+                ...response.data,
+                filename: file.originalname,
+                mimeType: file.mimetype,
+                size: file.size,
+            };
+        } catch (error) {
+            this.logger.error(`Tutor knowledge upload failed: ${error.message}`, error.stack);
+            throw new InternalServerErrorException(
+                error.response?.data?.detail || 'Không thể upload file tri thức tutor'
+            );
+        }
+    }
+
+    async getTutorKnowledgeFileStatus(fileId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-files/${fileId}`)
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor knowledge status failed: ${error.message}`);
+            throw new NotFoundException('Tutor knowledge file không tồn tại');
+        }
+    }
+
+    async deleteTutorKnowledgeFile(fileId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.delete(`${this.aiServiceUrl}/tutor/knowledge-files/${fileId}`)
+            );
+            const deleted = response.data as { keyR2?: string };
+            if (deleted.keyR2) {
+                await this.r2ClientService.deleteFile(deleted.keyR2);
+            }
+            return { success: true };
+        } catch (error) {
+            this.logger.error(`Tutor knowledge delete failed: ${error.message}`, error.stack);
+            throw new InternalServerErrorException(
+                error.response?.data?.detail || 'Không thể xóa file tri thức tutor'
+            );
+        }
+    }
+
+    async createTutorKnowledgeFolder(user: User, dto: TutorKnowledgeFolderDto) {
+        const folderId = dto.folderId || this.generateIdService.generateId();
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/knowledge-folders`, {
+                folderId,
+                userId: user.id,
+                name: dto.name,
+                description: dto.description,
+                icon: dto.icon,
+            })
+        );
+        return response.data;
+    }
+
+    async updateTutorKnowledgeFolder(user: User, folderId: string, dto: TutorKnowledgeFolderDto) {
+        const response = await firstValueFrom(
+            this.httpService.put(`${this.aiServiceUrl}/tutor/knowledge-folders/${folderId}`, {
+                folderId,
+                userId: user.id,
+                name: dto.name,
+                description: dto.description,
+                icon: dto.icon,
+            })
+        );
+        return response.data;
+    }
+
+    async deleteTutorKnowledgeFolder(folderId: string) {
+        const response = await firstValueFrom(
+            this.httpService.delete(`${this.aiServiceUrl}/tutor/knowledge-folders/${folderId}`)
+        );
+        const payload = response.data as {
+            success: boolean;
+            deletedFiles?: Array<{ keyR2?: string }>;
+        };
+        for (const file of payload.deletedFiles || []) {
+            if (file.keyR2) {
+                await this.r2ClientService.deleteFile(file.keyR2);
+            }
+        }
+        return response.data;
+    }
+
+    async getTutorKnowledgeFolderContents(
+        user: User,
+        folderId: string,
+        page: number = 1,
+        pageSize: number = 12
+    ) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-folders/${folderId}/contents`, {
+                    params: { user_id: user.id, page, page_size: pageSize },
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
+    }
+
+    async listTutorKnowledgeFolders(user: User) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-folders`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async getTutorKnowledgeStats(user: User, folderId?: string) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-stats`, {
+                params: {
+                    user_id: user.id,
+                    folder_id: folderId,
+                },
+            })
+        );
+        return response.data;
+    }
+
+    async listTutorKnowledgeFiles(user: User) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-files`, {
+                params: { user_id: user.id, page: 1, page_size: 12 },
+            })
+        );
+        return response.data;
+    }
+
+    async listTutorDatasetCatalog() {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports/catalog`)
+        );
+        return response.data;
+    }
+
+    async createTutorDatasetImport(user: User, payload: { folderId?: string; datasetKey: string }) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports`, {
+                    userId: user.id,
+                    folderId: payload.folderId,
+                    datasetKey: payload.datasetKey,
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
+    }
+
+    async listTutorDatasetImports(user: User) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async listTutorDatasetImportStates(user: User) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports/states`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async getTutorDatasetImportJob(jobId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}`)
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
+    }
+
+    async cancelTutorDatasetImportJob(jobId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports/${jobId}/cancel`, {})
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
+    }
+
+    async clearTutorDatasetImport(user: User, datasetKey: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/dataset-imports/${datasetKey}/clear`, null, {
+                    params: { user_id: user.id },
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.rethrowAiHttpError(error);
+        }
+    }
+
+    async searchTutorKnowledgeFiles(
+        user: User,
+        query: {
+            folderId?: string;
+            status?: string;
+            search?: string;
+            sortBy?: string;
+            sortOrder?: string;
+            page?: number;
+            pageSize?: number;
+        }
+    ) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-files`, {
+                params: {
+                    user_id: user.id,
+                    folder_id: query.folderId,
+                    status: query.status,
+                    search: query.search,
+                    sort_by: query.sortBy,
+                    sort_order: query.sortOrder,
+                    page: query.page,
+                    page_size: query.pageSize,
+                },
+            })
+        );
+        return response.data;
+    }
+
+    async reprocessTutorKnowledgeFile(fileId: string) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/knowledge-files/${fileId}/reprocess`, {})
+        );
+        return response.data;
+    }
+
+    async bulkDeleteTutorKnowledgeFiles(fileIds: string[]) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/knowledge-files/bulk-delete`, {
+                fileIds,
+            })
+        );
+        const payload = response.data as {
+            success: boolean;
+            deletedFiles?: Array<{ keyR2?: string }>;
+        };
+        for (const file of payload.deletedFiles || []) {
+            if (file.keyR2) {
+                await this.r2ClientService.deleteFile(file.keyR2);
+            }
+        }
+        return response.data;
+    }
+
+    async bulkReprocessTutorKnowledgeFiles(fileIds: string[]) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/knowledge-files/bulk-reprocess`, {
+                fileIds,
+            })
+        );
+        return response.data;
+    }
+
+    async getTutorIngestJob(jobId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/ingest/${jobId}`)
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor ingest job lookup failed: ${error.message}`);
+            throw new NotFoundException('Tutor ingest job không tồn tại');
+        }
+    }
+
+    async listTutorIngestJobs() {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/ingest`)
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor ingest list failed: ${error.message}`);
+            throw new InternalServerErrorException('Không thể lấy danh sách tutor ingest jobs');
+        }
+    }
+
+    async tutorQuery(dto: TutorQueryDto) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.post(`${this.aiServiceUrl}/tutor/query`, dto, {
+                    timeout: 300000,
+                })
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor query failed: ${error.message}`, error.stack);
+            throw new InternalServerErrorException(
+                error.response?.data?.detail || 'Không thể truy vấn tutor'
+            );
+        }
+    }
+
+    async tutorStream(dto: TutorQueryDto) {
+        return new Observable((subject) => {
+            this.httpService
+                .post(`${this.aiServiceUrl}/tutor/stream`, dto, {
+                    timeout: 300000,
+                    responseType: 'stream',
+                })
+                .subscribe({
+                    next: (response) => {
+                        const stream = response.data;
+                        let buffer = '';
+
+                        stream.on('data', (chunk: Buffer) => {
+                            buffer += chunk.toString();
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop() || '';
+
+                            for (const line of lines) {
+                                if (!line.trim().startsWith('data: ')) {
+                                    continue;
+                                }
+                                try {
+                                    const event = JSON.parse(line.trim().slice(6));
+                                    subject.next(event);
+                                } catch {
+                                    // Ignore malformed SSE events
+                                }
+                            }
+                        });
+
+                        stream.on('end', () => {
+                            subject.complete();
+                        });
+
+                        stream.on('error', (error: Error) => {
+                            subject.error(error);
+                        });
+                    },
+                    error: (error) => {
+                        this.logger.error(`Tutor stream failed: ${error.message}`, error.stack);
+                        subject.error(
+                            new InternalServerErrorException(
+                                error.response?.data?.detail || 'Không thể stream tutor response'
+                            )
+                        );
+                    },
+                });
+        });
+    }
+
+    async listStudentProgrammingSessions(user: User) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/student-programming/sessions`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async createStudentProgrammingSession(user: User, title?: string) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/student-programming/sessions`, {
+                userId: user.id,
+                title,
+            })
+        );
+        return response.data;
+    }
+
+    async updateStudentProgrammingSession(user: User, sessionId: string, title: string) {
+        const response = await firstValueFrom(
+            this.httpService.patch(`${this.aiServiceUrl}/tutor/student-programming/sessions/${sessionId}`, {
+                userId: user.id,
+                title,
+            })
+        );
+        return response.data;
+    }
+
+    async deleteStudentProgrammingSession(user: User, sessionId: string) {
+        const response = await firstValueFrom(
+            this.httpService.delete(`${this.aiServiceUrl}/tutor/student-programming/sessions/${sessionId}`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async listStudentProgrammingMessages(user: User, sessionId: string) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/student-programming/sessions/${sessionId}/messages`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async createStudentProgrammingMessage(
+        user: User,
+        sessionId: string,
+        payload: {
+            content: string;
+            role: 'assistant' | 'user';
+            sources?: any[];
+            confidence?: number;
+            modelUsed?: string;
+        }
+    ) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/student-programming/sessions/${sessionId}/messages`, {
+                userId: user.id,
+                content: payload.content,
+                role: payload.role,
+                sources: payload.sources,
+                confidence: payload.confidence,
+                modelUsed: payload.modelUsed,
+            })
+        );
+        return response.data;
+    }
+
+    async evaluateStudentProgrammingAnswer(
+        user: User,
+        payload: {
+            sessionId: string;
+            messageId: string;
+            question: string;
+            answer: string;
+            modelType?: string;
+            language?: string;
+        }
+    ) {
+        const response = await firstValueFrom(
+            this.httpService.post(`${this.aiServiceUrl}/tutor/student-programming/evaluate`, {
+                userId: user.id,
+                sessionId: payload.sessionId,
+                messageId: payload.messageId,
+                question: payload.question,
+                answer: payload.answer,
+                modelType: payload.modelType,
+                language: payload.language,
+            })
+        );
+        return response.data;
+    }
+
+    async getStudentProgrammingEvaluationJob(user: User, jobId: string) {
+        const response = await firstValueFrom(
+            this.httpService.get(`${this.aiServiceUrl}/tutor/student-programming/evaluate/${jobId}`, {
+                params: { user_id: user.id },
+            })
+        );
+        return response.data;
+    }
+
+    async getTutorGraphByJob(jobId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/graph/job/${jobId}`)
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor graph by job failed: ${error.message}`);
+            throw new NotFoundException('Tutor graph theo job không tồn tại');
+        }
+    }
+
+    async getTutorGraphByDocument(documentId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/graph/document/${documentId}`)
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor graph by document failed: ${error.message}`);
+            throw new NotFoundException('Tutor graph theo document không tồn tại');
+        }
+    }
+
+    async getTutorKnowledgeFileGraph(fileId: string) {
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(`${this.aiServiceUrl}/tutor/knowledge-files/${fileId}/graph`)
+            );
+            return response.data;
+        } catch (error) {
+            this.logger.error(`Tutor graph by knowledge file failed: ${error.message}`);
+            throw new NotFoundException('Graph tri thức theo file không tồn tại');
         }
     }
 
@@ -890,6 +1571,16 @@ export class AIService {
             return {
                 jobId: upload.id,
                 status: normalizedStatus,
+                filename: upload.filename,
+                createdAt: upload.createdAt,
+            };
+        }
+
+        if (normalizedStatus === 'failed') {
+            return {
+                jobId: upload.id,
+                status: 'failed',
+                error: 'Model hiện tại không khả dụng, thử model khác.',
                 filename: upload.filename,
                 createdAt: upload.createdAt,
             };

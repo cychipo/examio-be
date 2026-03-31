@@ -1,5 +1,14 @@
-import { Controller, Logger, Get } from '@nestjs/common';
+import {
+    Body,
+    Controller,
+    Get,
+    Logger,
+    Post,
+    UploadedFile,
+    UseInterceptors,
+} from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { R2ServiceService } from './r2-service.service';
 
 // gRPC DTOs matching the proto file
@@ -29,6 +38,46 @@ export class R2ServiceController {
     @Get('health')
     health() {
         return { status: 'ok', service: 'r2-service' };
+    }
+
+    @Post('internal/upload')
+    @UseInterceptors(FileInterceptor('file'))
+    async uploadFileHttp(
+        @UploadedFile() file: Express.Multer.File,
+        @Body('folder') folder?: string
+    ) {
+        if (!file) {
+            return {
+                success: false,
+                message: 'File is required',
+            };
+        }
+
+        try {
+            const key = await this.r2Service.uploadFile(
+                file.originalname,
+                file.buffer,
+                file.mimetype,
+                folder
+            );
+
+            return {
+                success: true,
+                file_id: key,
+                url: this.r2Service.getPublicUrl(key),
+                key_r2: key,
+                message: 'File uploaded successfully',
+            };
+        } catch (error) {
+            this.logger.error(
+                `UploadFile HTTP failed: ${error.message}`,
+                error.stack
+            );
+            return {
+                success: false,
+                message: `Upload failed: ${error.message}`,
+            };
+        }
     }
 
     @GrpcMethod('R2Service', 'UploadFile')

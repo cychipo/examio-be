@@ -32,5 +32,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
 #python
+
+/data-source/
+data-source/
+apps/ai-service/data-source/

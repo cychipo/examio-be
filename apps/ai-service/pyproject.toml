@@ -64,6 +64,7 @@ dependencies = [
 packages = [
     {include = "agent", from = "src"},
     {include = "backend", from = "src"},
+    {include = "genai_tutor", from = "src"},
     {include = "rag", from = "src"},
     {include = "llm", from = "src"},
     {include = "score", from = "src"},

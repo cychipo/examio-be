@@ -27,6 +27,8 @@ from src.backend.services.ocr_service import (
     FileExtractionError,
     NoContentExtractedError,
 )
+from src.llm.model_manager import ModelUnavailableError, model_manager
+from src.llm.model_registry import resolve_generation_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,7 +45,7 @@ class ProcessFileRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     
     user_storage_id: str = Field(..., description="ID của UserStorage (NestJS đã tạo)")
-    model_type: str = Field(default="fayedark", alias="modelType", description="AI model: 'gemini' or 'fayedark' (Ollama)")
+    model_type: str = Field(default='qwen3_8b', alias='modelType', description='Model id tu registry')
 
 
 class QueryFileRequest(BaseModel):
@@ -66,9 +68,9 @@ class MultiQueryRequest(BaseModel):
 
 # ==================== Helper Functions ====================
 
-async def get_or_create_retriever(user_storage_id: str, model_type: str = "gemini"):
+async def get_or_create_retriever(user_storage_id: str, model_type: str = 'qwen3_8b'):
     """Get retriever from cache or create from DB chunks"""
-    cache_key = f"{user_storage_id}:{model_type}"
+    cache_key = f"{user_storage_id}:embedding:{model_manager.get_embedding_info()['id']}"
     if cache_key in _retriever_cache:
         return _retriever_cache[cache_key]
 
@@ -112,7 +114,7 @@ async def process_file(request: ProcessFileRequest):
     """
     try:
         user_storage_id = request.user_storage_id
-        model_type = request.model_type
+        model_type = resolve_generation_model(request.model_type).id
         logger.info(f"Processing file: {user_storage_id} with model: {model_type}")
 
         # Get file info from DB (created by NestJS)
@@ -173,11 +175,18 @@ async def process_file(request: ProcessFileRequest):
         except Exception as e:
             await ocr_service.update_processing_status(user_storage_id, "FAILED")
             raise e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error processing file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+
+@router.get('/models', response_model=Dict[str, Any])
+async def get_models():
+    return await model_manager.get_frontend_model_catalog()
 
 
 @router.post("/query-file", response_model=Dict[str, Any])
@@ -198,13 +207,7 @@ async def query_file(request: QueryFileRequest):
             raise HTTPException(status_code=400, detail=f"File chưa được xử lý: {file_info.processing_status}")
 
         # Determine model_type
-        from src.llm.model_manager import model_manager, ModelType
-        system_model_type = model_manager.get_model_type()
-        requested_model = request.model_type
-        
-        # Consistent mapping: translate system ModelType to string id
-        if not requested_model:
-            requested_model = "fayedark" if system_model_type == ModelType.OLLAMA else "gemini"
+        requested_model = model_manager.resolve_model(request.model_type).id
 
         retrieval_result = await hybrid_retrieval_service.retrieve_for_chat(
             user_storage_id=user_storage_id,
@@ -247,6 +250,10 @@ async def query_file(request: QueryFileRequest):
             "filename": file_info.filename
         }
 
+    except ModelUnavailableError as e:
+        raise HTTPException(status_code=503, detail={'code': e.code, 'message': str(e)})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
@@ -271,13 +278,7 @@ async def multi_query_file(request: MultiQueryRequest):
         if file_info.processing_status != "COMPLETED":
             raise HTTPException(status_code=400, detail=f"File chưa được xử lý")
 
-        # Determine model_type
-        from src.llm.model_manager import model_manager, ModelType
-        system_model_type = model_manager.get_model_type()
-        requested_model = request.model_type
-        
-        if not requested_model:
-            requested_model = "fayedark" if system_model_type == ModelType.OLLAMA else "gemini"
+        requested_model = model_manager.resolve_model(request.model_type).id
 
         results = []
         for query in queries:
@@ -322,6 +323,10 @@ async def multi_query_file(request: MultiQueryRequest):
             "filename": file_info.filename
         }
 
+    except ModelUnavailableError as e:
+        raise HTTPException(status_code=503, detail={'code': e.code, 'message': str(e)})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:

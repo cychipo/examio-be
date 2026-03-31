@@ -6,7 +6,7 @@ FROM python:3.12-slim AS builder
 WORKDIR /build
 
 # Install build deps
-RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev && \
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ build-essential libc6-dev python3-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -30,6 +30,10 @@ WORKDIR /app
 # - libgl1 & libglib2.0-0: Required for OpenCV (image preprocessing)
 # - curl: For container health checks
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    build-essential \
+    libc6-dev \
     tesseract-ocr \
     tesseract-ocr-vie \
     poppler-utils \

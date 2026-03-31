@@ -55,6 +55,73 @@ import * as crypto from 'crypto';
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
 
+    private async ensureOauthSession(
+        request: Request,
+        oauthUser: AuthenticatedOauthRequest['user']
+    ): Promise<{ token: string; sessionId?: string; refreshToken?: string; user?: any }> {
+        if (!oauthUser.token) {
+            throw new UnauthorizedException('OAuth token not found');
+        }
+
+        if (oauthUser.sessionId && oauthUser.refreshToken) {
+            return {
+                token: oauthUser.token,
+                sessionId: oauthUser.sessionId,
+                refreshToken: oauthUser.refreshToken,
+                user: oauthUser.user,
+            };
+        }
+
+        const deviceInfo = this.extractDeviceInfo(request);
+        const session = await this.authService.createSession(
+            oauthUser.user.id,
+            deviceInfo
+        );
+
+        return {
+            token: oauthUser.token,
+            user: oauthUser.user,
+            sessionId: session.sessionId,
+            refreshToken: session.refreshToken,
+        };
+    }
+
+    private parseOAuthState(state?: string): {
+        redirect?: string;
+    } {
+        if (!state) {
+            return {};
+        }
+
+        try {
+            const parsed = JSON.parse(
+                Buffer.from(state, 'base64url').toString('utf8')
+            );
+
+            return {
+                redirect:
+                    typeof parsed?.redirect === 'string'
+                        ? parsed.redirect
+                        : undefined,
+            };
+        } catch {
+            return {};
+        }
+    }
+
+    private resolveFrontendTarget(
+        frontendUrl: string,
+        role?: 'teacher' | 'student',
+        redirectPath?: string
+    ) {
+        const safeRedirect =
+            redirectPath && redirectPath.startsWith('/') ? redirectPath : null;
+        const dashboardPath =
+            role === 'teacher' ? '/k/dashboard-teacher' : '/k/dashboard-student';
+
+        return `${frontendUrl}${safeRedirect || dashboardPath}`;
+    }
+
     @Post('register')
     @ApiOperation({ summary: 'Register a new user' })
     @ApiResponse({
@@ -70,7 +137,15 @@ export class AuthController {
         // Extract device info from request
         const deviceInfo = this.extractDeviceInfo(request);
 
-        const { token, user, success, sessionId, deviceId, message } =
+        const {
+            token,
+            user,
+            success,
+            sessionId,
+            refreshToken,
+            deviceId,
+            message,
+        } =
             await this.authService.register(registerDto, deviceInfo);
 
         const cookieConfig = getCookieConfig({
@@ -83,12 +158,16 @@ export class AuthController {
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
         }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
+        }
 
         return {
             message,
             user,
             success,
             token,
+            refreshToken,
             deviceId,
         };
     }
@@ -113,7 +192,7 @@ export class AuthController {
         // Extract device info from request
         const deviceInfo = this.extractDeviceInfo(request);
 
-        const { token, user, success, sessionId, deviceId } =
+        const { token, user, success, sessionId, refreshToken, deviceId } =
             await this.authService.login(loginDto, deviceInfo);
 
         const cookieConfig = getCookieConfig({
@@ -125,11 +204,15 @@ export class AuthController {
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
         }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
+        }
 
         return {
             user,
             success,
             token,
+            refreshToken,
             deviceId,
         };
     }
@@ -147,6 +230,11 @@ export class AuthController {
         @Req() request: Request,
         @Res({ passthrough: true }) response: ExpressResponse
     ) {
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
+
         // Extract session ID from cookie
         const sessionId = request.cookies?.session_id;
 
@@ -156,9 +244,10 @@ export class AuthController {
         }
 
         // Clear cookies
-        response.clearCookie('token');
-        response.clearCookie('refreshToken');
-        response.clearCookie('session_id');
+        response.clearCookie('token', cookieConfig);
+        response.clearCookie('accessToken', cookieConfig);
+        response.clearCookie('refreshToken', cookieConfig);
+        response.clearCookie('session_id', cookieConfig);
         return { success: true };
     }
 
@@ -171,10 +260,14 @@ export class AuthController {
     })
     async refreshToken(
         @Req() request: Request,
+        @Body('refreshToken') refreshTokenFromBody: string | undefined,
         @Res({ passthrough: true }) response: ExpressResponse
     ) {
         // Extract refresh token from cookie
-        const refreshToken = request.cookies?.refreshToken;
+        const refreshToken =
+            request.cookies?.refreshToken ||
+            refreshTokenFromBody ||
+            request.body?.refreshToken;
 
         if (!refreshToken) {
             throw new UnauthorizedException('Refresh token not found');
@@ -196,6 +289,8 @@ export class AuthController {
             return {
                 success: true,
                 token: result.token,
+                refreshToken: result.refreshToken,
+                user: result.user,
             };
         } catch (error) {
             throw new UnauthorizedException('Invalid or expired refresh token');
@@ -308,7 +403,8 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId } = req.user;
+        const oauthPayload = await this.ensureOauthSession(request, req.user);
+        const { token, sessionId, refreshToken } = oauthPayload;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -319,17 +415,27 @@ export class AuthController {
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
         }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
+        }
 
         const frontendUrl = (
             process.env.FRONTEND_URL || 'http://localhost:3001'
         ).replace(/\/+$/, '');
+        const redirectFromCookie = request.cookies?.oauth_redirect;
+        const oauthState = this.parseOAuthState(
+            request.query.state as string | undefined
+        );
+        res.clearCookie('oauth_role');
+        res.clearCookie('oauth_redirect');
 
-        const role = req.user.user?.role;
-        const targetPath =
-            role === 'teacher'
-                ? '/k/dashboard-teacher'
-                : '/k/dashboard-student';
-        res.redirect(`${frontendUrl}${targetPath}`);
+        res.redirect(
+            this.resolveFrontendTarget(
+                frontendUrl,
+                oauthPayload.user?.role as 'teacher' | 'student' | undefined,
+                redirectFromCookie || oauthState.redirect
+            )
+        );
     }
 
     @Get('facebook')
@@ -347,7 +453,8 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId } = req.user;
+        const oauthPayload = await this.ensureOauthSession(request, req.user);
+        const { token, sessionId, refreshToken } = oauthPayload;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -358,17 +465,27 @@ export class AuthController {
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
         }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
+        }
 
         const frontendUrl = (
             process.env.FRONTEND_URL || 'http://localhost:3001'
         ).replace(/\/+$/, '');
+        const redirectFromCookie = request.cookies?.oauth_redirect;
+        const oauthState = this.parseOAuthState(
+            request.query.state as string | undefined
+        );
+        res.clearCookie('oauth_role');
+        res.clearCookie('oauth_redirect');
 
-        const role = req.user.user?.role;
-        const targetPath =
-            role === 'teacher'
-                ? '/k/dashboard-teacher'
-                : '/k/dashboard-student';
-        res.redirect(`${frontendUrl}${targetPath}`);
+        res.redirect(
+            this.resolveFrontendTarget(
+                frontendUrl,
+                oauthPayload.user?.role as 'teacher' | 'student' | undefined,
+                redirectFromCookie || oauthState.redirect
+            )
+        );
     }
 
     @Get('github')
@@ -386,7 +503,8 @@ export class AuthController {
         @Res({ passthrough: true }) res: ExpressResponse,
         @Req() request: Request
     ) {
-        const { token, sessionId } = req.user;
+        const oauthPayload = await this.ensureOauthSession(request, req.user);
+        const { token, sessionId, refreshToken } = oauthPayload;
 
         const cookieConfig = getCookieConfig({
             feOrigin: request.headers.origin,
@@ -397,17 +515,27 @@ export class AuthController {
         if (sessionId) {
             res.cookie('session_id', sessionId, cookieConfig);
         }
+        if (refreshToken) {
+            res.cookie('refreshToken', refreshToken, cookieConfig);
+        }
 
         const frontendUrl = (
             process.env.FRONTEND_URL || 'http://localhost:3001'
         ).replace(/\/+$/, '');
+        const redirectFromCookie = request.cookies?.oauth_redirect;
+        const oauthState = this.parseOAuthState(
+            request.query.state as string | undefined
+        );
+        res.clearCookie('oauth_role');
+        res.clearCookie('oauth_redirect');
 
-        const role = req.user.user?.role;
-        const targetPath =
-            role === 'teacher'
-                ? '/k/dashboard-teacher'
-                : '/k/dashboard-student';
-        res.redirect(`${frontendUrl}${targetPath}`);
+        res.redirect(
+            this.resolveFrontendTarget(
+                frontendUrl,
+                oauthPayload.user?.role as 'teacher' | 'student' | undefined,
+                redirectFromCookie || oauthState.redirect
+            )
+        );
     }
 
     @Get('me')
@@ -421,6 +549,53 @@ export class AuthController {
     })
     async getUser(@Req() req: AuthenticatedRequest) {
         return this.authService.getUser(req.user);
+    }
+
+    @Post('sync-refresh-token')
+    @UseGuards(AuthGuard)
+    @ApiOperation({ summary: 'Đồng bộ lại refresh token từ session hiện tại' })
+    @ApiCookieAuth('cookie-auth')
+    async syncRefreshToken(
+        @Req() req: AuthenticatedRequest,
+        @Req() request: Request,
+        @Res({ passthrough: true }) response: ExpressResponse
+    ) {
+        const sessionId = request.cookies?.session_id || request.body?.sessionId;
+
+        console.log('[AuthController] sync-refresh-token request', {
+            userId: req.user.id,
+            sessionId,
+            cookieSessionId: request.cookies?.session_id,
+            bodySessionId: request.body?.sessionId,
+            hasRefreshCookie: Boolean(request.cookies?.refreshToken),
+        });
+
+        if (!sessionId) {
+            throw new UnauthorizedException('Session ID not found');
+        }
+
+        const result = await this.authService.syncRefreshTokenBySession(
+            req.user.id,
+            sessionId
+        );
+
+        const cookieConfig = getCookieConfig({
+            feOrigin: request.headers.origin,
+            isProductionBE: process.env.NODE_ENV === 'production',
+        });
+
+        response.cookie('refreshToken', result.refreshToken, cookieConfig);
+
+        console.log('[AuthController] sync-refresh-token success', {
+            userId: req.user.id,
+            sessionId,
+            refreshTokenPreview: result.refreshToken?.slice(0, 12),
+        });
+
+        return {
+            success: true,
+            refreshToken: result.refreshToken,
+        };
     }
 
     private extractDeviceInfo(request: Request): DeviceInfo {

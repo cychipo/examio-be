@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { of } from 'rxjs';
+import { NotFoundException } from '@nestjs/common';
+import { of, throwError } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { AIService } from './ai.service';
 import { AIRepository } from './ai.repository';
@@ -8,7 +9,7 @@ import { FinanceClientService } from '../finance-client/finance-client.service';
 
 describe('AIService', () => {
     let service: AIService;
-    let httpService: { post: jest.Mock; delete: jest.Mock };
+    let httpService: { post: jest.Mock; delete: jest.Mock; get: jest.Mock };
     let aiRepository: {
         findDuplicateUserStorage: jest.Mock;
         updateUserStorageStatus: jest.Mock;
@@ -26,6 +27,7 @@ describe('AIService', () => {
     beforeEach(async () => {
         httpService = {
             post: jest.fn(),
+            get: jest.fn(),
             delete: jest.fn().mockReturnValue(of({ data: { success: true } })),
         };
 
@@ -228,5 +230,29 @@ describe('AIService', () => {
                 'Đã xóa dữ liệu trong hệ thống nhưng không thể xóa file trên Cloudflare R2',
             warning: 'Cloudflare unavailable',
         });
+    });
+
+    it('maps AI tutor folder 404 to NotFoundException', async () => {
+        httpService.get = jest.fn().mockReturnValue(
+            throwError(() => ({
+                response: {
+                    status: 404,
+                    data: {
+                        error: 'Tutor knowledge folder not found',
+                    },
+                },
+                code: 'ERR_CANCELED',
+                message: 'canceled',
+            }))
+        );
+
+        await expect(
+            service.getTutorKnowledgeFolderContents(
+                { id: 'user-1' } as any,
+                'missing-folder',
+                1,
+                12
+            )
+        ).rejects.toThrow(NotFoundException);
     });
 });

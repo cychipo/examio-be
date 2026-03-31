@@ -14,6 +14,16 @@ import aio_pika
 from aio_pika import connect_robust, IncomingMessage
 
 from src.backend.services.ocr_service import ocr_service
+from src.genai_tutor.knowledge_base.knowledge_file_worker import (
+    tutor_knowledge_file_worker,
+)
+from src.backend.services.tutor_dataset_import_service import (
+    tutor_dataset_import_service,
+)
+from src.backend.services.student_programming_evaluation_service import (
+    EVALUATION_ROUTING_KEY,
+    student_programming_evaluation_service,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,6 +33,8 @@ RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://localhost:5672")
 EXCHANGE_NAME = "examio.events"
 QUEUE_NAME = "ai-service-queue"
 ROUTING_KEY = "ai.ocr.requested"
+TUTOR_KNOWLEDGE_ROUTING_KEY = "ai.tutor.knowledge.requested"
+TUTOR_DATASET_IMPORT_ROUTING_KEY = "ai.tutor.dataset-import.requested"
 
 
 class RabbitMQConsumer:
@@ -60,6 +72,27 @@ class RabbitMQConsumer:
         # Bind queue to exchange with routing key
         await self.queue.bind(self.exchange, routing_key=ROUTING_KEY)
         logger.info(f"Bound queue {QUEUE_NAME} to exchange {EXCHANGE_NAME} with key {ROUTING_KEY}")
+        await self.queue.bind(
+            self.exchange,
+            routing_key=TUTOR_KNOWLEDGE_ROUTING_KEY,
+        )
+        logger.info(
+            f"Bound queue {QUEUE_NAME} to exchange {EXCHANGE_NAME} with key {TUTOR_KNOWLEDGE_ROUTING_KEY}"
+        )
+        await self.queue.bind(
+            self.exchange,
+            routing_key=TUTOR_DATASET_IMPORT_ROUTING_KEY,
+        )
+        logger.info(
+            f"Bound queue {QUEUE_NAME} to exchange {EXCHANGE_NAME} with key {TUTOR_DATASET_IMPORT_ROUTING_KEY}"
+        )
+        await self.queue.bind(
+            self.exchange,
+            routing_key=EVALUATION_ROUTING_KEY,
+        )
+        logger.info(
+            f"Bound queue {QUEUE_NAME} to exchange {EXCHANGE_NAME} with key {EVALUATION_ROUTING_KEY}"
+        )
 
     async def process_message(self, message: IncomingMessage):
         """Process incoming OCR request message"""
@@ -70,6 +103,34 @@ class RabbitMQConsumer:
             try:
                 body = json.loads(message.body.decode())
                 logger.info(f"Received OCR request: {body}")
+
+                if body.get("type") == "tutor.knowledge.requested":
+                    payload = body.get("payload", {})
+                    tutor_knowledge_file_worker.enqueue(payload)
+                    logger.info(
+                        f"Queued tutor knowledge processing for {payload.get('fileId')}"
+                    )
+                    return
+
+                if body.get("type") == "tutor.dataset-import.requested":
+                    payload = body.get("payload", {})
+                    await tutor_dataset_import_service.run_job(payload.get("jobId"))
+                    logger.info(
+                        f"Queued tutor dataset import processing for {payload.get('jobId')}"
+                    )
+                    return
+
+                if body.get("type") == "tutor.student-evaluation.requested":
+                    payload = body.get("payload", {})
+                    asyncio.create_task(
+                        student_programming_evaluation_service.run_job(
+                            payload.get("jobId")
+                        )
+                    )
+                    logger.info(
+                        f"Queued student programming evaluation processing for {payload.get('jobId')}"
+                    )
+                    return
 
                 payload = body.get("payload", {})
                 user_storage_id = payload.get("userStorageId")
@@ -83,10 +144,11 @@ class RabbitMQConsumer:
                 quantity_flashcard = payload.get("quantityFlashcard", 10)
                 
                 # Model type override from payload or system default
-                from src.llm.model_manager import model_manager, ModelType
-                system_model_type = model_manager.get_model_type()
-                default_model = "fayedark" if system_model_type == ModelType.OLLAMA else "gemini"
-                model_type = payload.get("modelType", default_model)
+                from src.llm.model_manager import model_manager
+
+                model_type = model_manager.resolve_model(
+                    payload.get("modelType")
+                ).id
 
                 if not user_storage_id:
                     logger.error("Missing userStorageId in message")
@@ -140,7 +202,7 @@ class RabbitMQConsumer:
         type_result: int,
         quantity_quizz: int,
         quantity_flashcard: int,
-        model_type: str = "gemini"
+        model_type: str = "qwen3_8b"
     ):
         """
         Auto-generate quiz or flashcard after OCR completes.

@@ -1,0 +1,20 @@
+[
+  {
+    "task_id": 1,
+    "text": "Write a function multiply(a, b) that returns the product of two integers.",
+    "code": "def multiply(a, b):\n    return a * b\n",
+    "test_list": [
+      "assert multiply(2, 3) == 6",
+      "assert multiply(-1, 5) == -5"
+    ]
+  },
+  {
+    "task_id": 2,
+    "text": "Write a function to reverse a string.",
+    "code": "def reverse_string(value):\n    return value[::-1]\n",
+    "test_list": [
+      "assert reverse_string('abc') == 'cba'",
+      "assert reverse_string('kma') == 'amk'"
+    ]
+  }
+]

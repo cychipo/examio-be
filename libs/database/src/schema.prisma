@@ -269,7 +269,7 @@ model ExamAttempt {
     markedQuestions String[] @default([]) // Marked question IDs
     totalQuestions  Int      @default(0)
     correctAnswers  Int      @default(0)
-    
+
     // Selected questions for this attempt (stored to maintain consistency across attempts)
     selectedQuestionIds String[] @default([]) // Question IDs selected for this specific attempt
 
@@ -484,22 +484,22 @@ model UserStorageGraph {
 }
 
 model UserStorageGraphGroup {
-    id              String   @id @default(cuid())
-    graphId         String
-    userStorageId   String
-    groupIndex      Int
-    communityId     Int?
-    pageStart       Int?
-    pageEnd         Int?
-    pageRanges      Json
-    chunkIds        Json
-    estimatedTokens Int      @default(0)
-    charCount       Int      @default(0)
-    weight          Float    @default(1)
-    summary         String?
-    metadata        Json?
-    createdAt       DateTime @default(now())
-    updatedAt       DateTime @default(now()) @updatedAt
+    id             String   @id @default(cuid())
+    graphId        String
+    userStorageId  String
+    groupIndex     Int
+    communityId    Int?
+    pageStart      Int?
+    pageEnd        Int?
+    pageRanges     Json
+    chunkIds       Json
+    estimatedTokens Int    @default(0)
+    charCount      Int      @default(0)
+    weight         Float    @default(1)
+    summary        String?
+    metadata       Json?
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @default(now()) @updatedAt
 
     graph       UserStorageGraph @relation(fields: [graphId], references: [id], onDelete: Cascade)
     userStorage UserStorage      @relation(fields: [userStorageId], references: [id], onDelete: Cascade)

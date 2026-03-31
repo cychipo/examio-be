@@ -47,6 +47,15 @@ export class LoginResponseDto {
 
     @ApiProperty({ description: 'Trạng thái thành công' })
     success: boolean;
+
+    @ApiProperty({ description: 'JWT token', required: false })
+    token?: string;
+
+    @ApiProperty({ description: 'Refresh token', required: false })
+    refreshToken?: string;
+
+    @ApiProperty({ description: 'Device ID', required: false })
+    deviceId?: string;
 }
 
 export class RegisterResponseDto {
@@ -61,6 +70,9 @@ export class RegisterResponseDto {
 
     @ApiProperty({ description: 'JWT token' })
     token: string;
+
+    @ApiProperty({ description: 'Refresh token', required: false })
+    refreshToken?: string;
 
     @ApiProperty({ description: 'Device ID', required: false })
     deviceId?: string;
@@ -77,6 +89,12 @@ export class RefreshTokenResponseDto {
 
     @ApiProperty({ description: 'Access token mới' })
     token: string;
+
+    @ApiProperty({ description: 'Refresh token mới' })
+    refreshToken: string;
+
+    @ApiProperty({ description: 'Thông tin người dùng', type: UserDto })
+    user: UserDto;
 }
 
 export class AuthMessageResponseDto {

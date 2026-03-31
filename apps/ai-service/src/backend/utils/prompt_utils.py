@@ -8,6 +8,84 @@ Port of libs/common/src/utils/prompt.ts to Python
 class PromptUtils:
     """Prompt generator for AI content generation"""
 
+    FOREIGN_LANGUAGE_KEYWORDS = (
+        'english',
+        'tiếng anh',
+        'tieng anh',
+        'ielts',
+        'toeic',
+        'toefl',
+        'chinese',
+        'tiếng trung',
+        'tieng trung',
+        'hsk',
+        'japanese',
+        'tiếng nhật',
+        'tieng nhat',
+        'jlpt',
+        'korean',
+        'tiếng hàn',
+        'tieng han',
+        'topik',
+        'french',
+        'tiếng pháp',
+        'tieng phap',
+        'german',
+        'tiếng đức',
+        'tieng duc',
+        'grammar',
+        'ngữ pháp',
+        'ngu phap',
+        'vocabulary',
+        'từ vựng',
+        'tu vung',
+        'translation',
+        'dịch thuật',
+        'dich thuat',
+        'reading',
+        'listening',
+        'speaking',
+        'writing',
+        'pronunciation',
+    )
+
+    GENERATION_SYSTEM_PROMPT = """
+Bạn là một tiến sĩ người Việt, chuyên thiết kế nội dung học tập chính xác, ngắn gọn và tự nhiên.
+
+LUẬT NGÔN NGỮ:
+- Mặc định toàn bộ nội dung phải bằng tiếng Việt tự nhiên.
+- Chỉ giữ ngôn ngữ gốc nếu tài liệu rõ ràng là môn ngoại ngữ.
+- Nếu mơ hồ, chọn tiếng Việt.
+
+LUẬT ĐẦU RA:
+- Chỉ trả về JSON hợp lệ.
+- Không markdown.
+- Không giải thích ngoài JSON.
+"""
+
+    @staticmethod
+    def is_foreign_language_subject(content: str) -> bool:
+        normalized = content.lower()
+        return any(keyword in normalized for keyword in PromptUtils.FOREIGN_LANGUAGE_KEYWORDS)
+
+    @staticmethod
+    def get_generation_system_prompt(content: str) -> str:
+        if PromptUtils.is_foreign_language_subject(content):
+            return """
+Bạn là một tiến sĩ người Việt, chuyên thiết kế nội dung học tập chính xác, ngắn gọn và tự nhiên.
+
+CHẾ ĐỘ NGOẠI NGỮ:
+- Tài liệu này có vẻ là tài liệu học ngoại ngữ.
+- Giữ nội dung theo ngôn ngữ mục tiêu của bài học.
+
+LUẬT ĐẦU RA:
+- Chỉ trả về JSON hợp lệ.
+- Không markdown.
+- Không giải thích ngoài JSON.
+"""
+
+        return PromptUtils.GENERATION_SYSTEM_PROMPT
+
     @staticmethod
     def generate_quiz_prompt(
         page_range: str,
@@ -16,36 +94,22 @@ class PromptUtils:
     ) -> str:
         """Generate prompt for quiz question creation"""
         return f"""
-You are an expert in creating multiple choice tests.
+Tạo đúng {num_questions} câu hỏi trắc nghiệm từ nội dung sau (trang {page_range}).
 
-Based on the following content (pages {page_range}), create EXACTLY {num_questions} multiple choice questions that focus on knowledge, facts, concepts, meanings, connections, practical applications, or specific information that appears in the document.
-
-Note: Because the content is OCRed from a pdf file, the characters may be corrupted. Please use your knowledge and understanding to understand the exact content for those corrupted characters.
-
-Requirements:
-- GENERATE EXACTLY {num_questions} QUESTIONS. NO MORE, NO LESS.
-- ALL QUESTIONS AND ANSWERS MUST BE IN VIETNAMESE language (Unless it is a foreign language subject). Translate if necessary.
-- Do not ask about titles, tables of contents, chapters, sections, or general questions like "What is the main content?".
-- Do not ask meta questions about the document structure itself, such as chapter numbers, section numbers, page numbers, headings, filenames, where something appears in the file, or which section/chapter contains a topic.
-- Do not create questions in the style of "Trong chương/mục nào...", "Ở trang nào...", "Phần nào đề cập...", "Mục nào nói về...", or questions that test navigation inside the file instead of testing knowledge.
-- Ignore numbering-only lines, heading lines, table-of-contents lines, chapter labels, section labels, and navigation markers when deciding what to ask.
-- If the content mentions a chapter, section, page, heading, or numbering label, treat it as document structure noise unless it is itself the knowledge being taught.
-- Only ask about knowledge, information, facts, concepts, definitions, figures, or specific content in the document.
-- Prioritize conceptual understanding, definitions, mechanisms, causes, consequences, examples, formulas, comparisons, and practical applications that a learner should remember after studying.
-- Each question has 4 answers (A, B, C, D), only 1 answer is correct.
-- The correct answer is clearly marked.
-- The result content for the fields in json must be in Vietnamese (field name is in English and the content is in Vietnamese or numbers). Except in the case where the uploaded file is for a foreign language subject.
-- The result returns a JSON array, each item has the form:
+Yêu cầu:
+- Đúng {num_questions} câu, không thừa không thiếu.
+- Mặc định dùng tiếng Việt. Chỉ dùng ngôn ngữ gốc nếu đây rõ ràng là môn ngoại ngữ.
+- Bỏ qua mục lục, tiêu đề, số chương, số mục, số trang, vị trí trong tài liệu.
+- Chỉ hỏi về kiến thức, khái niệm, định nghĩa, cơ chế, ví dụ, công thức, số liệu, ứng dụng.
+- Mỗi câu có 4 đáp án A, B, C, D và chỉ 1 đáp án đúng.
+- Chỉ trả về JSON array theo mẫu:
 {{
   "question": "...",
   "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
   "answer": "C",
   "sourcePageRange": "{page_range}"
 }}
-- Note that each answer must have the letter A/B/C/D at the beginning, not missing
-- The correct answer only needs the letter A/B/C/D at the beginning, not the answer content
-- IMPORTANT: Return ONLY the JSON array, no explanation or markdown code blocks
-- If you ask a question based on an example, mathematical operation, code snippet, etc., in the file, you need to return the content of that example as well; you cannot return a question without the content of what you are asking.
+- Không markdown, không giải thích thêm.
 
 Content:
 {content}
@@ -59,33 +123,21 @@ Content:
     ) -> str:
         """Generate prompt for flashcard creation"""
         return f"""
-You are an expert in creating flashcards for learning.
+Tạo đúng {num_flashcards} flashcard từ nội dung sau (trang {page_range}).
 
-Based on the following content (pages {page_range}), create EXACTLY {num_flashcards} flashcards that focus on knowledge, facts, concepts, meanings, connections, practical applications, or specific information that appears in the document.
-
-Note: Because the content is OCRed from a pdf file, the characters may be corrupted. Please use your knowledge and understanding to understand the exact content for those corrupted characters.
-
-Requirements:
-- GENERATE EXACTLY {num_flashcards} FLASHCARDS. NO MORE, NO LESS.
-- ALL CONTENT MUST BE IN VIETNAMESE language.
-- Do not create flashcards about titles, tables of contents, chapters, sections, or general questions like "What is the main content?".
-- Do not create flashcards about chapter numbers, section numbers, page numbers, headings, filenames, or where a concept is located in the file.
-- Do not create flashcards in the style of "Khái niệm này nằm ở mục nào/chương nào/trang nào?".
-- Ignore numbering-only lines, heading lines, table-of-contents lines, chapter labels, section labels, and navigation markers when creating flashcards.
-- If a sentence mainly describes where something is located in the file, do not use that sentence as the basis for a flashcard.
-- Only create questions about knowledge, information, facts, concepts, definitions, figures, or specific content in the document.
-- Prioritize key knowledge a learner should memorize or understand, not navigation inside the document.
-- Each flashcard has:
-  - A short question (≤ 20 words, in Vietnamese).
-  - A concise and precise answer (1–3 sentences, in Vietnamese).
-- The result content for the fields in JSON must be in Vietnamese (field name is in English, content in Vietnamese or numbers). Except in the case where the uploaded file is for a foreign language subject.
-- The result returns a JSON array, each item has the form:
+Yêu cầu:
+- Đúng {num_flashcards} flashcard, không thừa không thiếu.
+- Mặc định dùng tiếng Việt. Chỉ dùng ngôn ngữ gốc nếu đây rõ ràng là môn ngoại ngữ.
+- Bỏ qua mục lục, tiêu đề, số chương, số mục, số trang, vị trí trong tài liệu.
+- Mỗi flashcard gồm câu hỏi ngắn và câu trả lời ngắn, rõ ý.
+- Chỉ tạo flashcard về kiến thức cần nhớ: khái niệm, định nghĩa, cơ chế, ví dụ, công thức, ứng dụng.
+- Chỉ trả về JSON array theo mẫu:
 {{
     "question": "...",
     "answer": "...",
     "sourcePageRange": "{page_range}"
 }}
-- IMPORTANT: Return ONLY the JSON array, no explanation or markdown code blocks
+- Không markdown, không giải thích thêm.
 
 Content:
 {content}
@@ -94,7 +146,7 @@ Content:
     @staticmethod
     def get_virtual_teacher_system_prompt() -> str:
         """Get system prompt for Virtual Teacher"""
-        return """Bạn là một giáo viên ảo thân thiện và nhiệt tình. Bạn có tên là Sensei.
+        return """Bạn là Sensei, một tiến sĩ người Việt và là giáo viên ảo thân thiện, nhiệt tình.
 
 NHIỆM VỤ:
 - Giải thích kiến thức một cách dễ hiểu, sử dụng ví dụ thực tế
@@ -111,7 +163,10 @@ QUY TẮC QUAN TRỌNG:
 - KHÔNG sử dụng markdown (**, ##, -, bullet points)
 - KHÔNG sử dụng ký tự đặc biệt hoặc emoji
 - Viết thành các câu hoàn chỉnh, tự nhiên
-- Mỗi ý nên cách nhau bằng dấu chấm, không xuống dòng nhiều"""
+- Mỗi ý nên cách nhau bằng dấu chấm, không xuống dòng nhiều
+- Mặc định luôn trả lời bằng tiếng Việt tự nhiên
+- Chỉ trả lời bằng ngôn ngữ khác khi câu hỏi hoặc tài liệu rõ ràng thuộc môn ngoại ngữ hoặc bài học ngôn ngữ như tiếng Anh, tiếng Trung, tiếng Nhật, tiếng Hàn, ngữ pháp, từ vựng, dịch thuật, luyện nghe nói đọc viết
+- Nếu tài liệu có thuật ngữ tiếng Anh nhưng môn học không phải ngoại ngữ, hãy giải thích bằng tiếng Việt và chỉ giữ nguyên các thuật ngữ khi cần thiết"""
 
     @staticmethod
     def build_virtual_teacher_prompt(

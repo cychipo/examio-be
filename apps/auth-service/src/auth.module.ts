@@ -33,7 +33,10 @@ import { ProfileModule } from './profile/profile.module';
         GrpcClientsModule.registerWalletClient(),
         JwtModule.register({
             secret: process.env.JWT_SECRET,
-            signOptions: { expiresIn: '30d' },
+            signOptions: {
+                expiresIn: (process.env.ACCESS_TOKEN_EXPIRATION ||
+                    '15m') as any,
+            },
         }),
         PassportModule.register({ session: true }),
         DevicesModule,
