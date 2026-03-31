@@ -137,6 +137,8 @@ class ModelManager:
     async def check_generation_model_availability(
         self,
         model_id: str,
+        installed_names: set[str] | None = None,
+        availability_error: Exception | None = None,
     ) -> Dict[str, Any]:
         model = self.resolve_model(model_id)
 
@@ -147,41 +149,44 @@ class ModelManager:
                 'reason': None,
             }
 
-        ollama_info = self.get_ollama_info(model.id)
-        verify_ssl = os.getenv('OLLAMA_VERIFY_SSL', 'true').lower() == 'true'
-        tags_url = f"{ollama_info['url'].rstrip('/')}/api/tags"
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0, verify=verify_ssl, trust_env=False) as client:
-                response = await client.get(tags_url)
-                response.raise_for_status()
-                data = response.json()
-                models = data.get('models', [])
-                installed_names = {
-                    item.get('name')
-                    for item in models
-                    if isinstance(item, dict) and item.get('name')
-                }
-
-            if model.runtime_model_name not in installed_names:
-                return {
-                    'modelId': model.id,
-                    'available': False,
-                    'reason': 'Model chua duoc cai dat tren runtime.',
-                }
-
-            return {
-                'modelId': model.id,
-                'available': True,
-                'reason': None,
-            }
-        except Exception as error:
-            normalized_error = self._normalize_model_error(error)
+        if availability_error is not None:
+            normalized_error = self._normalize_model_error(availability_error)
             return {
                 'modelId': model.id,
                 'available': False,
                 'reason': str(normalized_error),
                 'code': normalized_error.code,
+            }
+
+        if installed_names is None:
+            installed_names = await self._fetch_installed_ollama_model_names()
+
+        if model.runtime_model_name not in installed_names:
+            return {
+                'modelId': model.id,
+                'available': False,
+                'reason': 'Model chua duoc cai dat tren runtime.',
+            }
+
+        return {
+            'modelId': model.id,
+            'available': True,
+            'reason': None,
+        }
+
+    async def _fetch_installed_ollama_model_names(self) -> set[str]:
+        ollama_info = self.get_ollama_info()
+        verify_ssl = os.getenv('OLLAMA_VERIFY_SSL', 'true').lower() == 'true'
+        tags_url = f"{ollama_info['url'].rstrip('/')}/api/tags"
+        async with httpx.AsyncClient(timeout=5.0, verify=verify_ssl, trust_env=False) as client:
+            response = await client.get(tags_url)
+            response.raise_for_status()
+            data = response.json()
+            models = data.get('models', [])
+            return {
+                item.get('name')
+                for item in models
+                if isinstance(item, dict) and item.get('name')
             }
 
     async def ensure_generation_model_ready(self, model_id: str) -> None:
@@ -194,15 +199,33 @@ class ModelManager:
 
     async def get_frontend_model_catalog(self) -> Dict[str, Any]:
         availability_map: Dict[str, Dict[str, Any]] = {}
-        for model_id in [
+        model_ids = [
             'qwen3_8b',
             'qwen3_32b',
             'gemini',
             'glm4_9b',
             'gemma2_9b',
-        ]:
+        ]
+        ollama_model_ids = [
+            model_id
+            for model_id in model_ids
+            if self.resolve_model(model_id).provider == 'ollama'
+        ]
+
+        installed_names: set[str] | None = None
+        availability_error: Exception | None = None
+        if ollama_model_ids:
+            try:
+                installed_names = await self._fetch_installed_ollama_model_names()
+            except Exception as error:
+                availability_error = error
+
+        for model_id in model_ids:
+            resolved = self.resolve_model(model_id)
             availability_map[model_id] = await self.check_generation_model_availability(
-                model_id
+                model_id,
+                installed_names=installed_names if resolved.provider == 'ollama' else None,
+                availability_error=availability_error if resolved.provider == 'ollama' else None,
             )
 
         return get_frontend_model_catalog(availability=availability_map)

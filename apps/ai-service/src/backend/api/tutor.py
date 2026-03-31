@@ -207,7 +207,7 @@ class TutorQueryResponse(BaseModel):
 
 def _build_tutor_system_prompt() -> str:
     return (
-        'Bạn là GenAI Tutor hỗ trợ sinh viên học lập trình C và Python. '
+        'Bạn là GenAI Tutor hỗ trợ sinh viên học lập trình C++ và Python. '
         'Hãy ưu tiên giải thích theo hướng sư phạm, nêu từng bước, và bám sát ngữ cảnh đã truy xuất. '
         'Nếu thông tin trong ngữ cảnh chưa đủ chắc chắn, hãy nói rõ giới hạn đó.'
     )

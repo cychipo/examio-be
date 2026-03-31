@@ -9,6 +9,7 @@ import {
     Body,
     Query,
     Req,
+    Res,
     UseGuards,
     UseInterceptors,
     UploadedFile,
@@ -25,7 +26,7 @@ import {
     ApiCookieAuth,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { ProxyService } from '../services/proxy.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -694,18 +695,43 @@ export class AIProxyController {
 
     @Post('tutor/stream')
     @ApiOperation({ summary: 'Hỏi tutor với streaming' })
-    async tutorStream(@Body() body: any, @Req() req: Request) {
-        return this.proxyService.forwardWithAuthAndTimeout(
-            'exam',
-            {
-                method: 'POST',
-                path: '/api/v1/ai/tutor/stream',
-                body,
-                headers: this.h(req),
-            },
-            this.t(req),
-            300000
+    async tutorStream(@Body() body: any, @Req() req: Request, @Res() res: Response) {
+        const examServiceUrl = process.env.EXAM_SERVICE_URL || 'http://localhost:3002';
+        const response = await firstValueFrom(
+            this.httpService.post(`${examServiceUrl}/api/v1/ai/tutor/stream`, body, {
+                headers: {
+                    ...this.h(req),
+                    Authorization: `Bearer ${this.t(req)}`,
+                },
+                timeout: 300000,
+                responseType: 'stream',
+            })
         );
+
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        const stream = response.data;
+        stream.on('data', (chunk: Buffer) => {
+            res.write(chunk);
+        });
+        stream.on('end', () => {
+            res.end();
+        });
+        stream.on('error', (error: Error) => {
+            this.logger.error(`Tutor stream proxy failed: ${error.message}`);
+            if (!res.headersSent) {
+                res.status(503).json({ message: 'Service unavailable' });
+                return;
+            }
+            res.write(`data: ${JSON.stringify({ type: 'error', data: error.message })}\n\n`);
+            res.end();
+        });
+
+        req.on('close', () => {
+            stream.destroy();
+        });
     }
 
     @Get('tutor/graph/job/:jobId')

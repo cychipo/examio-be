@@ -27,6 +27,18 @@ def _normalize_timestamp(value: Any) -> Any:
     return value
 
 
+def _normalize_metadata(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
 class BenchmarkIndexService:
     _instance = None
     _pool: asyncpg.Pool | None = None
@@ -160,7 +172,7 @@ class BenchmarkIndexService:
             'topic': row['topic'],
             'difficulty': row['difficulty'],
             'sourcePath': row['sourcePath'],
-            'metadata': row['metadata'] or {},
+            'metadata': _normalize_metadata(row['metadata']),
             'createdAt': row['createdAt'].isoformat() if row['createdAt'] else None,
             'updatedAt': row['updatedAt'].isoformat() if row['updatedAt'] else None,
         }

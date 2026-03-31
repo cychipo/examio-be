@@ -74,3 +74,37 @@ int main() {
 
     assert result.status == 'passed'
     sandbox.cleanup(result)
+
+
+def test_cpp_executor_adapts_candidate_assert_harness(tmp_path: Path):
+    sandbox = ExecutionSandbox(temp_root=tmp_path)
+    result = sandbox.execute(
+        SandboxExecutionRequest(
+            language='cpp',
+            source_code='''
+bool is_prime(long n) {
+    if (n < 2) return false;
+    if (n == 2) return true;
+    if (n % 2 == 0) return false;
+    for (long i = 3; i * i <= n; i += 2) {
+        if (n % i == 0) return false;
+    }
+    return true;
+}
+''',
+            test_code='''
+}
+int main() {
+    auto candidate = is_prime;
+    assert(candidate(6) == false);
+    assert(candidate(101) == true);
+    return 0;
+}
+''',
+            entry_point='is_prime',
+            sample_id='cpp_prime_candidate',
+        )
+    )
+
+    assert result.status == 'passed'
+    sandbox.cleanup(result)

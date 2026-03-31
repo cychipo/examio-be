@@ -25,7 +25,7 @@ import {
     TutorKnowledgeUploadDto,
     TutorQueryDto,
 } from './dto/ai.dto';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Observable } from 'rxjs';
 import { FinanceClientService } from '../finance-client/finance-client.service';
 
 @Injectable()
@@ -1044,20 +1044,53 @@ export class AIService {
     }
 
     async tutorStream(dto: TutorQueryDto) {
-        try {
-            const response = await firstValueFrom(
-                this.httpService.post(`${this.aiServiceUrl}/tutor/stream`, dto, {
+        return new Observable((subject) => {
+            this.httpService
+                .post(`${this.aiServiceUrl}/tutor/stream`, dto, {
                     timeout: 300000,
-                    responseType: 'text',
+                    responseType: 'stream',
                 })
-            );
-            return response.data;
-        } catch (error) {
-            this.logger.error(`Tutor stream failed: ${error.message}`, error.stack);
-            throw new InternalServerErrorException(
-                error.response?.data?.detail || 'Không thể stream tutor response'
-            );
-        }
+                .subscribe({
+                    next: (response) => {
+                        const stream = response.data;
+                        let buffer = '';
+
+                        stream.on('data', (chunk: Buffer) => {
+                            buffer += chunk.toString();
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop() || '';
+
+                            for (const line of lines) {
+                                if (!line.trim().startsWith('data: ')) {
+                                    continue;
+                                }
+                                try {
+                                    const event = JSON.parse(line.trim().slice(6));
+                                    subject.next(event);
+                                } catch {
+                                    // Ignore malformed SSE events
+                                }
+                            }
+                        });
+
+                        stream.on('end', () => {
+                            subject.complete();
+                        });
+
+                        stream.on('error', (error: Error) => {
+                            subject.error(error);
+                        });
+                    },
+                    error: (error) => {
+                        this.logger.error(`Tutor stream failed: ${error.message}`, error.stack);
+                        subject.error(
+                            new InternalServerErrorException(
+                                error.response?.data?.detail || 'Không thể stream tutor response'
+                            )
+                        );
+                    },
+                });
+        });
     }
 
     async listStudentProgrammingSessions(user: User) {

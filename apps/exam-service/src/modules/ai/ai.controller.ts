@@ -10,6 +10,7 @@ import {
     Query,
     UseGuards,
     Req,
+    Res,
     UseInterceptors,
     UploadedFile,
     Logger,
@@ -26,6 +27,7 @@ import {
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard, AuthenticatedRequest, Roles, RolesGuard } from '@examio/common';
+import { Response } from 'express';
 import { AIService } from './ai.service';
 import {
     UploadFileDto,
@@ -409,8 +411,28 @@ export class AIController {
     @Roles('teacher', 'student')
     @ApiCookieAuth('cookie-auth')
     @ApiOperation({ summary: 'Hỏi tutor với streaming' })
-    async tutorStream(@Body() dto: TutorQueryDto) {
-        return this.aiService.tutorStream(dto);
+    async tutorStream(@Body() dto: TutorQueryDto, @Req() req: AuthenticatedRequest, @Res() res: Response) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        const observable = await this.aiService.tutorStream(dto);
+        const subscription = observable.subscribe({
+            next: (event) => {
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+            },
+            error: (err) => {
+                res.write(`data: ${JSON.stringify({ type: 'error', data: err.message })}\n\n`);
+                res.end();
+            },
+            complete: () => {
+                res.end();
+            },
+        });
+
+        req.on('close', () => {
+            subscription.unsubscribe();
+        });
     }
 
     @Get('tutor/student-programming/sessions')
