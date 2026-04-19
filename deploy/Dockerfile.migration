@@ -1,15 +1,14 @@
 # Minimal Dockerfile for Prisma Migrations
 FROM node:20-alpine
 
-RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
+RUN corepack enable && corepack prepare yarn@4.9.2 --activate
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json yarn.lock .yarnrc.yml ./
 COPY libs ./libs
 
-# Install only what's needed for prisma
-RUN pnpm install --frozen-lockfile && \
-    pnpm prisma:merge
+RUN yarn install --immutable && \
+    yarn prisma:merge
 
 CMD ["npx", "prisma", "migrate", "deploy", "--schema=libs/database/src/schema.prisma"]

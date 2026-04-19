@@ -37,9 +37,9 @@ echo "OLMOCR_PATH=$(pwd)/../../olmocr" >> .env
 pip install -r requirements.txt
 
 # 5. Chạy service
-cd ../../  # về root examio-be
-pnpm dev:ocr-python  # Terminal 1
-pnpm dev:ocr         # Terminal 2
+cd ../../
+yarn dev:ocr-python  # Terminal 1
+yarn dev:ocr         # Terminal 2
 ```
 
 ## Environment Variables
@@ -48,7 +48,7 @@ pnpm dev:ocr         # Terminal 2
 OLMOCR_PATH=/Users/tobi/devs/examio/olmocr
 ```
 
-Script `dev:ocr-python` trong package.json đã tự động set:
+Script `dev:ocr-python` trong `package.json` đã tự động set:
 - `PYTHONPATH=src:../../olmocr` - để import olmocr
 - `OLMOCR_PATH=../../olmocr` - truyền vào main.py
 
