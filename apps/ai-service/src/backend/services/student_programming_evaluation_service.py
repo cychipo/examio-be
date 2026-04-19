@@ -555,6 +555,77 @@ class StudentProgrammingEvaluationService:
                 'signals': benchmark_context.get('signals'),
             },
             'modelUsed': None,
+            'scorePhase': 'final',
+            'isFinal': True,
+        }
+
+    def _build_quick_assessment(
+        self,
+        question: str,
+        answer: str,
+        language: Literal['python', 'c', 'cpp'],
+        benchmark_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        extracted_code = extract_code_block(answer, language)
+        has_code = bool(extracted_code.strip())
+        is_testable = False
+        if language == 'python':
+            is_testable = self._is_testable_python_code(extracted_code)
+        elif language == 'c':
+            is_testable = self._is_testable_c_code(extracted_code)
+        elif language == 'cpp':
+            is_testable = self._is_testable_cpp_code(extracted_code)
+
+        signals = benchmark_context.get('signals') or {}
+        candidate_count = int(benchmark_context.get('candidateCount') or 0)
+        has_benchmarks = bool(benchmark_context.get('hasImportedBenchmarks'))
+
+        score = 20
+        reasons: list[str] = []
+
+        if has_code:
+            score += 20
+            reasons.append('có code')
+        else:
+            reasons.append('chưa thấy code rõ ràng')
+
+        if is_testable:
+            score += 35
+            reasons.append('code có thể đem chấm sandbox')
+        else:
+            reasons.append('code chưa ở dạng dễ chấm tự động')
+
+        if signals.get('function_name'):
+            score += 15
+            reasons.append(f"detect được hàm `{signals['function_name']}`")
+
+        if has_benchmarks and candidate_count > 0:
+            score += 10
+            reasons.append(f'có {candidate_count} benchmark cùng ngôn ngữ')
+
+        score = max(0, min(100, score))
+        rationale = 'Điểm tạm dựa trên khả năng trích code, khả năng test tự động và tín hiệu match benchmark.'
+        if reasons:
+            rationale = f"{rationale} Tín hiệu hiện có: {', '.join(reasons)}."
+
+        return {
+            'score': score,
+            'status': 'running',
+            'language': language,
+            'rationale': rationale,
+            'passed': 0,
+            'total': 0,
+            'executionTimeMs': 0,
+            'stderr': '',
+            'stdout': '',
+            'testCode': '',
+            'benchmark': {
+                'candidateCount': candidate_count,
+                'signals': signals,
+            },
+            'modelUsed': None,
+            'scorePhase': 'quick',
+            'isFinal': False,
         }
 
     def _execute_sample(
@@ -702,6 +773,21 @@ class StudentProgrammingEvaluationService:
 
         try:
             benchmark_context = await self._get_benchmark_match_context(question, language)
+            quick_assessment = self._build_quick_assessment(
+                question,
+                answer,
+                language,
+                benchmark_context,
+            )
+            await student_programming_chat_service.update_evaluation_job(
+                job_id,
+                user_id,
+                {
+                    **quick_assessment,
+                    'status': 'running',
+                    'metadata': {'stage': 'quick-assessment-completed'},
+                },
+            )
             sample = await self._find_matching_sample(question, language)
             result = await self._evaluate_answer(
                 question,

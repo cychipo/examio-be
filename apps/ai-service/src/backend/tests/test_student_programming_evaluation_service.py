@@ -148,6 +148,9 @@ def test_run_job_attaches_completed_evaluation_to_message() -> None:
         asyncio.run(scenario())
         assert updates[0]['status'] == 'running'
         assert updates[0]['language'] == 'python'
+        assert updates[1]['status'] == 'running'
+        assert updates[1]['scorePhase'] == 'quick'
+        assert updates[1]['isFinal'] is False
         assert updates[-1]['status'] == 'completed'
         assert attachments
         assert attachments[0]['evaluation']['score'] == 100
@@ -258,6 +261,35 @@ def test_run_job_failed_preserves_language_and_error_message() -> None:
         student_programming_evaluation_service._get_benchmark_match_context = original_context  # type: ignore[method-assign]
         student_programming_evaluation_service._find_matching_sample = original_find  # type: ignore[method-assign]
         student_programming_evaluation_service._evaluate_answer_sync = original_eval  # type: ignore[method-assign]
+
+
+def test_quick_assessment_returns_partial_score() -> None:
+    result = student_programming_evaluation_service._build_quick_assessment(
+        'Write add(a, b)',
+        '```python\ndef add(a, b):\n    return a + b\n```',
+        'python',
+        {
+            'language': 'python',
+            'candidateCount': 3,
+            'signals': {
+                'function_name': 'add',
+                'task_id': None,
+            },
+            'hasImportedBenchmarks': True,
+        },
+    )
+
+    assert result['status'] == 'running'
+    assert result['scorePhase'] == 'quick'
+    assert result['isFinal'] is False
+    assert result['score'] > 0
+    assert result['benchmark'] == {
+        'candidateCount': 3,
+        'signals': {
+            'function_name': 'add',
+            'task_id': None,
+        },
+    }
 
 
 def test_evaluate_answer_returns_benchmark_metadata() -> None:

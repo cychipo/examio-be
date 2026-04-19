@@ -233,6 +233,10 @@ class StudentProgrammingChatService:
             **_normalize_metadata(job.get('metadata')),
             **updates.get('metadata', {}),
         }
+        if 'scorePhase' in updates:
+            merged_metadata['scorePhase'] = updates.get('scorePhase')
+        if 'isFinal' in updates:
+            merged_metadata['isFinal'] = updates.get('isFinal')
         payload = {
             'status': updates.get('status', job['status']),
             'score': updates.get('score', job.get('score')),
@@ -318,6 +322,8 @@ class StudentProgrammingChatService:
                 'id': evaluation_job['id'],
                 'status': evaluation_job['status'],
                 'score': evaluation_job.get('score'),
+                'scorePhase': evaluation_job.get('scorePhase'),
+                'isFinal': evaluation_job.get('isFinal'),
             }
             updated = await conn.fetchrow(
                 '''
@@ -384,6 +390,8 @@ class StudentProgrammingChatService:
             'testCode': row['testCode'],
             'modelUsed': row['modelUsed'],
             'errorMessage': row['errorMessage'],
+            'scorePhase': metadata.get('scorePhase', 'final' if row['status'] in {'completed', 'failed'} else None),
+            'isFinal': metadata.get('isFinal', row['status'] in {'completed', 'failed'}),
             'metadata': metadata,
             'createdAt': row['createdAt'].isoformat() if row['createdAt'] else None,
             'updatedAt': row['updatedAt'].isoformat() if row['updatedAt'] else None,
