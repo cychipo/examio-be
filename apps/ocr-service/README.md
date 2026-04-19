@@ -1,6 +1,6 @@
 # OCR Service
 
-OCR microservice cho Examio sử dụng olmocr (AllenAI). Service này xử lý PDF và trả về markdown content thông qua gRPC.
+OCR microservice cho ExamIO sử dụng olmocr (AllenAI). Service này xử lý PDF và trả về markdown content thông qua gRPC.
 
 ## Kiến trúc
 
@@ -85,17 +85,19 @@ PORT=8003
 
 ## Chạy Service
 
-### Cách 1: Sử dụng pnpm scripts (Khuyến nghị)
+### Cách 1: Sử dụng Yarn scripts (Khuyến nghị)
 
 Terminal 1 - Python backend:
 ```bash
 # Script này tự động set OLMOCR_PATH và PYTHONPATH
-pnpm dev:ocr-python
+cd ../../
+yarn dev:ocr-python
 ```
 
 Terminal 2 - NestJS gRPC service:
 ```bash
-pnpm dev:ocr
+cd ../../
+yarn dev:ocr
 ```
 
 ### Cách 2: Chạy thủ công
