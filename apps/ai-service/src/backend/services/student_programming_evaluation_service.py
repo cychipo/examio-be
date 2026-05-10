@@ -24,6 +24,7 @@ from src.evaluation.datasets.schemas import EvaluationSample
 from src.evaluation.pipeline.code_extractor import extract_code_block
 from src.evaluation.sandbox.executor import ExecutionSandbox
 from src.evaluation.sandbox.models import SandboxExecutionRequest
+from src.llm.model_manager import model_manager
 
 
 EVALUATION_ROUTING_KEY = 'ai.tutor.student-evaluation.requested'
@@ -281,6 +282,229 @@ class StudentProgrammingEvaluationService:
         if 'std::' in stripped:
             return True
         return bool(re.search(r'\b[a-zA-Z_][\w\s\*:<>,]+\s+[a-zA-Z_][\w]*\s*\([^\)]*\)\s*\{', stripped))
+
+    def _is_testable_code(self, code: str, language: Literal['python', 'c', 'cpp']) -> bool:
+        if language == 'python':
+            return self._is_testable_python_code(code)
+        if language == 'c':
+            return self._is_testable_c_code(code)
+        return self._is_testable_cpp_code(code)
+
+    def _build_static_judge_signals(
+        self,
+        question: str,
+        answer: str,
+        extracted_code: str,
+        language: Literal['python', 'c', 'cpp'],
+    ) -> dict[str, Any]:
+        code = extracted_code.strip()
+        syntax_valid = None
+        syntax_error = None
+        if language == 'python' and code:
+            try:
+                compile(code, '<student-answer>', 'exec')
+                syntax_valid = True
+            except SyntaxError as error:
+                syntax_valid = False
+                syntax_error = str(error)
+
+        lowered = f'{question}\n{answer}\n{code}'.lower()
+        edge_terms = ['edge', 'case', 'empty', 'null', 'none', 'negative', 'zero', 'boundary', 'biên', 'rỗng', 'âm']
+        blocking_patterns = {
+            'python': ['input('],
+            'c': ['scanf(', 'gets('],
+            'cpp': ['cin >>'],
+        }
+        function_name = self._extract_fallback_function_name(question, code, language)
+        if language == 'python':
+            looks_like_code = bool(re.search(r'(^|\n)\s*(def|class|return|import|from|for|while|if)\b|=', code)) or syntax_valid is True
+        elif language == 'c':
+            looks_like_code = bool(re.search(r'[#;{}]|\b(return|int|void|char|float|double)\b', code))
+        else:
+            looks_like_code = bool(re.search(r'[#;{}]|\b(std::|return|int|void|auto|vector|string|bool)\b', code))
+        has_code = bool(code) and looks_like_code
+        is_testable = self._is_testable_code(code, language) if has_code else False
+        return {
+            'hasCode': has_code,
+            'isTestable': is_testable,
+            'functionName': function_name,
+            'syntaxValid': syntax_valid,
+            'syntaxError': syntax_error,
+            'hasEdgeCaseSignals': any(term in lowered for term in edge_terms),
+            'hasBlockingInput': any(pattern in code for pattern in blocking_patterns[language]),
+            'codeLength': len(code),
+        }
+
+    def _build_static_only_response(
+        self,
+        language: Literal['python', 'c', 'cpp'],
+        benchmark_context: dict[str, Any],
+        static_signals: dict[str, Any],
+        rationale: str | None = None,
+    ) -> dict[str, Any]:
+        score = 20
+        strengths: list[str] = []
+        issues: list[str] = []
+
+        if static_signals.get('hasCode'):
+            score += 20
+            strengths.append('Có code để phân tích.')
+        else:
+            issues.append('Chưa thấy code rõ ràng trong câu trả lời.')
+
+        if static_signals.get('isTestable'):
+            score += 15
+            strengths.append('Code có cấu trúc hàm/lớp tương đối dễ đánh giá.')
+        else:
+            issues.append('Code chưa ở dạng dễ chạy testcase tự động.')
+
+        if static_signals.get('functionName'):
+            score += 10
+            strengths.append(f"Phát hiện hàm `{static_signals['functionName']}`.")
+
+        if static_signals.get('syntaxValid') is True:
+            score += 10
+            strengths.append('Cú pháp Python hợp lệ ở mức compile.')
+        elif static_signals.get('syntaxValid') is False:
+            score -= 15
+            issues.append('Code Python có lỗi cú pháp.')
+
+        if static_signals.get('hasEdgeCaseSignals'):
+            score += 5
+            strengths.append('Có dấu hiệu cân nhắc edge cases.')
+
+        if static_signals.get('hasBlockingInput'):
+            score -= 10
+            issues.append('Có pattern nhập liệu trực tiếp khiến sandbox khó chấm tự động.')
+
+        score = max(0, min(65, score))
+        return {
+            'score': score,
+            'status': 'estimated',
+            'language': language,
+            'rationale': rationale or 'Không có benchmark/testcase chuẩn; điểm này chỉ dựa trên phân tích tĩnh code.',
+            'passed': 0,
+            'total': 0,
+            'executionTimeMs': 0,
+            'stderr': static_signals.get('syntaxError') or '',
+            'stdout': '',
+            'testCode': '',
+            'benchmark': {
+                'candidateCount': benchmark_context.get('candidateCount', 0),
+                'signals': benchmark_context.get('signals'),
+            },
+            'modelUsed': None,
+            'scorePhase': 'final',
+            'isFinal': True,
+            'scoreSource': 'static_only',
+            'isEstimated': True,
+            'confidenceLevel': 'low',
+            'issues': issues,
+            'strengths': strengths,
+        }
+
+    def _parse_judge_json(self, raw_response: str) -> dict[str, Any]:
+        stripped = raw_response.strip()
+        fenced = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', stripped, re.DOTALL)
+        if fenced:
+            stripped = fenced.group(1)
+        else:
+            first = stripped.find('{')
+            last = stripped.rfind('}')
+            if first >= 0 and last > first:
+                stripped = stripped[first:last + 1]
+        parsed = json.loads(stripped)
+        if not isinstance(parsed, dict):
+            raise ValueError('Judge response is not a JSON object')
+        return parsed
+
+    async def _build_llm_judge_fallback(
+        self,
+        question: str,
+        answer: str,
+        extracted_code: str,
+        language: Literal['python', 'c', 'cpp'],
+        benchmark_context: dict[str, Any],
+        static_signals: dict[str, Any],
+        model_type: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            timeout_seconds = max(1.0, float(os.getenv('STUDENT_EVAL_JUDGE_TIMEOUT_SECONDS', '20')))
+        except ValueError:
+            timeout_seconds = 20.0
+        system_prompt = (
+            'Bạn là giám khảo lập trình. Chỉ trả JSON strict, không markdown. '
+            'Không sinh testcase để chạy code. Đánh giá dựa trên đề bài, câu trả lời và code được cung cấp.'
+        )
+        prompt = f"""
+Đánh giá độ tín nhiệm lời giải lập trình sau theo rubric 100 điểm:
+- Correctness against prompt: 35
+- Algorithm/logic quality: 25
+- Edge cases: 15
+- Readability/maintainability: 15
+- Safety/performance: 10
+
+Yêu cầu trả đúng JSON object:
+{{"score": number, "rationale": "ngắn, tiếng Việt", "issues": ["..."], "strengths": ["..."]}}
+
+Ngôn ngữ: {language}
+Static signals: {json.dumps(static_signals, ensure_ascii=False)}
+Đề bài:
+{question[:4000]}
+
+Câu trả lời:
+{answer[:6000]}
+
+Code trích xuất:
+{extracted_code[:6000]}
+""".strip()
+        started_at = time.perf_counter()
+        try:
+            raw_response = await asyncio.wait_for(
+                model_manager.generate_content_with_model(
+                    prompt,
+                    model_type or model_manager.get_default_model_id(),
+                    system_prompt=system_prompt,
+                ),
+                timeout=timeout_seconds,
+            )
+            parsed = self._parse_judge_json(raw_response)
+            score = max(0, min(100, round(float(parsed.get('score', 0)))))
+            issues = [str(item) for item in parsed.get('issues', []) if str(item).strip()][:5]
+            strengths = [str(item) for item in parsed.get('strengths', []) if str(item).strip()][:5]
+            rationale = str(parsed.get('rationale') or 'Điểm ước lượng bằng phân tích code và AI judge.').strip()
+            return {
+                'score': score,
+                'status': 'estimated',
+                'language': language,
+                'rationale': rationale,
+                'passed': 0,
+                'total': 0,
+                'executionTimeMs': round((time.perf_counter() - started_at) * 1000, 2),
+                'stderr': '',
+                'stdout': raw_response[:1000],
+                'testCode': '',
+                'benchmark': {
+                    'candidateCount': benchmark_context.get('candidateCount', 0),
+                    'signals': benchmark_context.get('signals'),
+                },
+                'modelUsed': model_type or model_manager.get_default_model_id(),
+                'scorePhase': 'final',
+                'isFinal': True,
+                'scoreSource': 'llm_judge',
+                'isEstimated': True,
+                'confidenceLevel': 'low' if score < 40 else 'medium',
+                'issues': issues,
+                'strengths': strengths,
+            }
+        except Exception as error:
+            logger.warning('[student-eval] llm judge fallback failed: %s', error)
+            return self._build_static_only_response(
+                language,
+                benchmark_context,
+                static_signals,
+                'AI judge không khả dụng hoặc timeout; điểm này chỉ dựa trên phân tích tĩnh code.',
+            )
 
     def _extract_fallback_function_name(self, question: str, extracted_code: str, language: Literal['python', 'c', 'cpp']) -> str | None:
         if language == 'python':
@@ -557,6 +781,9 @@ class StudentProgrammingEvaluationService:
             'modelUsed': None,
             'scorePhase': 'final',
             'isFinal': True,
+            'scoreSource': 'unavailable',
+            'isEstimated': False,
+            'confidenceLevel': 'low',
         }
 
     def _build_quick_assessment(
@@ -626,6 +853,9 @@ class StudentProgrammingEvaluationService:
             'modelUsed': None,
             'scorePhase': 'quick',
             'isFinal': False,
+            'scoreSource': 'static_only',
+            'isEstimated': True,
+            'confidenceLevel': 'low',
         }
 
     def _execute_sample(
@@ -681,6 +911,11 @@ class StudentProgrammingEvaluationService:
                 ),
             },
             'modelUsed': None,
+            'scorePhase': 'final',
+            'isFinal': True,
+            'scoreSource': 'synthetic_tests' if fallback else 'benchmark',
+            'isEstimated': False,
+            'confidenceLevel': 'medium' if fallback else 'high',
         }
         self.sandbox.cleanup(result)
         return response
@@ -795,6 +1030,7 @@ class StudentProgrammingEvaluationService:
                 language,
                 benchmark_context,
                 sample,
+                metadata.get('modelType'),
             )
             updated_job = await student_programming_chat_service.update_evaluation_job(
                 job_id,
@@ -842,62 +1078,38 @@ class StudentProgrammingEvaluationService:
         language: Literal['python', 'c', 'cpp'],
         benchmark_context: dict[str, Any],
         sample: EvaluationSample | None,
+        model_type: str | None = None,
     ) -> dict[str, Any]:
         extracted_code = extract_code_block(answer, language)
         logger.info('[student-eval] deterministic extracted code preview=%s', extracted_code[:200].replace('\n', '\\n'))
+        static_signals = self._build_static_judge_signals(question, answer, extracted_code, language)
 
-        if language == 'python' and not self._is_testable_python_code(extracted_code):
-            return {
-                'score': 0,
-                'status': 'unavailable',
-                'language': language,
-                'rationale': 'Chưa có dữ liệu để đánh giá tự động cho câu trả lời dạng script/snippet này.',
-                'passed': 0,
-                'total': 0,
-                'executionTimeMs': 0,
-                'stderr': '',
-                'stdout': '',
-                'testCode': '',
-                'modelUsed': None,
-                'benchmark': None,
-            }
+        if not static_signals.get('hasCode'):
+            return self._build_unavailable_response(language, benchmark_context)
 
-        if language == 'c' and not self._is_testable_c_code(extracted_code):
-            return {
-                'score': 0,
-                'status': 'unavailable',
-                'language': language,
-                'rationale': 'Chưa có dữ liệu để đánh giá tự động cho câu trả lời C này.',
-                'passed': 0,
-                'total': 0,
-                'executionTimeMs': 0,
-                'stderr': '',
-                'stdout': '',
-                'testCode': '',
-                'modelUsed': None,
-                'benchmark': None,
-            }
-
-        if language == 'cpp' and not self._is_testable_cpp_code(extracted_code):
-            return {
-                'score': 0,
-                'status': 'unavailable',
-                'language': language,
-                'rationale': 'Chưa có dữ liệu để đánh giá tự động cho câu trả lời C++ này.',
-                'passed': 0,
-                'total': 0,
-                'executionTimeMs': 0,
-                'stderr': '',
-                'stdout': '',
-                'testCode': '',
-                'modelUsed': None,
-                'benchmark': None,
-            }
+        if not static_signals.get('isTestable'):
+            return await self._build_llm_judge_fallback(
+                question,
+                answer,
+                extracted_code,
+                language,
+                benchmark_context,
+                static_signals,
+                model_type,
+            )
 
         if sample is None:
             fallback_sample = self._build_rule_based_fallback_sample(question, extracted_code, language)
             if fallback_sample is None:
-                return self._build_unavailable_response(language, benchmark_context)
+                return await self._build_llm_judge_fallback(
+                    question,
+                    answer,
+                    extracted_code,
+                    language,
+                    benchmark_context,
+                    static_signals,
+                    model_type,
+                )
             return await asyncio.to_thread(
                 self._execute_sample,
                 extracted_code,

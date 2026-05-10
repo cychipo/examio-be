@@ -233,10 +233,9 @@ class StudentProgrammingChatService:
             **_normalize_metadata(job.get('metadata')),
             **updates.get('metadata', {}),
         }
-        if 'scorePhase' in updates:
-            merged_metadata['scorePhase'] = updates.get('scorePhase')
-        if 'isFinal' in updates:
-            merged_metadata['isFinal'] = updates.get('isFinal')
+        for metadata_key in ('scorePhase', 'isFinal', 'scoreSource', 'isEstimated', 'confidenceLevel', 'issues', 'strengths'):
+            if metadata_key in updates:
+                merged_metadata[metadata_key] = updates.get(metadata_key)
         payload = {
             'status': updates.get('status', job['status']),
             'score': updates.get('score', job.get('score')),
@@ -324,6 +323,9 @@ class StudentProgrammingChatService:
                 'score': evaluation_job.get('score'),
                 'scorePhase': evaluation_job.get('scorePhase'),
                 'isFinal': evaluation_job.get('isFinal'),
+                'scoreSource': evaluation_job.get('scoreSource'),
+                'isEstimated': evaluation_job.get('isEstimated'),
+                'confidenceLevel': evaluation_job.get('confidenceLevel'),
             }
             updated = await conn.fetchrow(
                 '''
@@ -392,6 +394,11 @@ class StudentProgrammingChatService:
             'errorMessage': row['errorMessage'],
             'scorePhase': metadata.get('scorePhase', 'final' if row['status'] in {'completed', 'failed'} else None),
             'isFinal': metadata.get('isFinal', row['status'] in {'completed', 'failed'}),
+            'scoreSource': metadata.get('scoreSource'),
+            'isEstimated': metadata.get('isEstimated'),
+            'confidenceLevel': metadata.get('confidenceLevel'),
+            'issues': metadata.get('issues'),
+            'strengths': metadata.get('strengths'),
             'metadata': metadata,
             'createdAt': row['createdAt'].isoformat() if row['createdAt'] else None,
             'updatedAt': row['updatedAt'].isoformat() if row['updatedAt'] else None,

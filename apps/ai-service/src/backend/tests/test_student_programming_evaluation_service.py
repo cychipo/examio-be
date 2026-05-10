@@ -622,6 +622,112 @@ def test_evaluate_answer_uses_cpp_rule_based_fallback() -> None:
         student_programming_evaluation_service.sandbox.cleanup = original_cleanup  # type: ignore[method-assign]
 
 
+def test_evaluate_answer_uses_llm_judge_fallback_when_no_rule_matches() -> None:
+    original_generate = eval_module.model_manager.generate_content_with_model
+
+    async def fake_generate(prompt: str, model_id: str, system_prompt: str | None = None):
+        assert 'Correctness against prompt' in prompt
+        assert system_prompt is not None
+        assert model_id == 'gemini'
+        return '{"score": 72, "rationale": "Lời giải có hướng đúng nhưng thiếu xử lý edge case.", "issues": ["Thiếu edge case"], "strengths": ["Có cấu trúc hàm rõ"]}'
+
+    eval_module.model_manager.generate_content_with_model = fake_generate  # type: ignore[method-assign]
+
+    try:
+        result = asyncio.run(
+            student_programming_evaluation_service._evaluate_answer(
+                'Write a function two_sum(nums, target) that returns indices.',
+                '```python\ndef two_sum(nums, target):\n    return []\n```',
+                'python',
+                {
+                    'language': 'python',
+                    'candidateCount': 0,
+                    'signals': {
+                        'function_name': 'two_sum',
+                        'task_id': None,
+                    },
+                    'hasImportedBenchmarks': False,
+                },
+                None,
+                'gemini',
+            )
+        )
+        assert result['status'] == 'estimated'
+        assert result['score'] == 72
+        assert result['scoreSource'] == 'llm_judge'
+        assert result['isEstimated'] is True
+        assert result['confidenceLevel'] == 'medium'
+        assert result['issues'] == ['Thiếu edge case']
+        assert result['strengths'] == ['Có cấu trúc hàm rõ']
+    finally:
+        eval_module.model_manager.generate_content_with_model = original_generate  # type: ignore[method-assign]
+
+
+
+def test_evaluate_answer_uses_static_only_when_llm_judge_fails() -> None:
+    original_generate = eval_module.model_manager.generate_content_with_model
+
+    async def fake_generate(prompt: str, model_id: str, system_prompt: str | None = None):
+        raise RuntimeError('provider timeout')
+
+    eval_module.model_manager.generate_content_with_model = fake_generate  # type: ignore[method-assign]
+
+    try:
+        result = asyncio.run(
+            student_programming_evaluation_service._evaluate_answer(
+                'Write a function two_sum(nums, target) that returns indices.',
+                '```python\ndef two_sum(nums, target):\n    return []\n```',
+                'python',
+                {
+                    'language': 'python',
+                    'candidateCount': 0,
+                    'signals': {
+                        'function_name': 'two_sum',
+                        'task_id': None,
+                    },
+                    'hasImportedBenchmarks': False,
+                },
+                None,
+                'gemini',
+            )
+        )
+        assert result['status'] == 'estimated'
+        assert result['scoreSource'] == 'static_only'
+        assert result['isEstimated'] is True
+        assert result['confidenceLevel'] == 'low'
+        assert result['score'] > 0
+    finally:
+        eval_module.model_manager.generate_content_with_model = original_generate  # type: ignore[method-assign]
+
+
+
+def test_evaluate_answer_without_code_returns_unavailable_source() -> None:
+    result = asyncio.run(
+        student_programming_evaluation_service._evaluate_answer(
+            'Write a function two_sum(nums, target) that returns indices.',
+            'Có thể dùng hash map để lưu chỉ số đã gặp.',
+            'python',
+            {
+                'language': 'python',
+                'candidateCount': 0,
+                'signals': {
+                    'function_name': 'two_sum',
+                    'task_id': None,
+                },
+                'hasImportedBenchmarks': False,
+            },
+            None,
+            'gemini',
+        )
+    )
+
+    assert result['status'] == 'unavailable'
+    assert result['scoreSource'] == 'unavailable'
+    assert result['isEstimated'] is False
+    assert result['confidenceLevel'] == 'low'
+
+
+
 def test_evaluate_answer_returns_clear_unavailable_rationale() -> None:
     original_context = student_programming_evaluation_service._get_benchmark_match_context
     original_find = student_programming_evaluation_service._find_matching_sample
