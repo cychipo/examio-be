@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_EMBED_MAX_LENGTH = 2000
 DEFAULT_OLLAMA_EMBED_BATCH_SIZE = 5
+DEFAULT_OLLAMA_EMBED_MAX_BATCH_SIZE = 8
 DEFAULT_OLLAMA_EMBED_MAX_CONCURRENCY = 5
+DEFAULT_OLLAMA_EMBED_MAX_CONCURRENCY_CAP = 5
 DEFAULT_OLLAMA_EMBED_DELAY_BETWEEN_BATCHES = 0.02
 DEFAULT_OLLAMA_EMBED_RETRY_COUNT = 3
 DEFAULT_OLLAMA_EMBED_RETRY_BASE_DELAY = 0.75
@@ -83,7 +85,9 @@ class OllamaEmbeddings:
         self.timeout = httpx.Timeout(120.0, connect=30.0)
         self.embed_max_length = get_embedding_text_limit()
         self.default_batch_size = _get_int_env("OLLAMA_EMBED_BATCH_SIZE", DEFAULT_OLLAMA_EMBED_BATCH_SIZE)
+        self.max_batch_size = _get_int_env("OLLAMA_EMBED_MAX_BATCH_SIZE", DEFAULT_OLLAMA_EMBED_MAX_BATCH_SIZE)
         self.max_concurrency = _get_int_env("OLLAMA_EMBED_MAX_CONCURRENCY", DEFAULT_OLLAMA_EMBED_MAX_CONCURRENCY)
+        self.max_concurrency_cap = _get_int_env("OLLAMA_EMBED_MAX_CONCURRENCY_CAP", DEFAULT_OLLAMA_EMBED_MAX_CONCURRENCY_CAP)
         self.default_delay_between_batches = _get_float_env(
             "OLLAMA_EMBED_DELAY_BETWEEN_BATCHES",
             DEFAULT_OLLAMA_EMBED_DELAY_BETWEEN_BATCHES,
@@ -104,7 +108,9 @@ class OllamaEmbeddings:
             f"model={self.model}, "
             f"max_length={self.embed_max_length}, "
             f"batch_size={self.default_batch_size}, "
+            f"max_batch_size={self.max_batch_size}, "
             f"max_concurrency={self.max_concurrency}, "
+            f"max_concurrency_cap={self.max_concurrency_cap}, "
             f"delay_between_batches={self.default_delay_between_batches}, "
             f"retry_count={self.retry_count}, "
             f"retry_base_delay={self.retry_base_delay}"
@@ -207,9 +213,10 @@ class OllamaEmbeddings:
         if not texts:
             return []
 
-        resolved_batch_size = max(1, min(batch_size or self.default_batch_size, 3))
+        requested_batch_size = batch_size or self.default_batch_size
+        resolved_batch_size = max(1, min(requested_batch_size, self.max_batch_size))
         resolved_delay_between_batches = max(0.0, delay_between_batches if delay_between_batches is not None else self.default_delay_between_batches)
-        resolved_max_concurrency = max(1, min(self.max_concurrency, 2))
+        resolved_max_concurrency = max(1, min(self.max_concurrency, self.max_concurrency_cap))
         semaphore = asyncio.Semaphore(resolved_max_concurrency)
 
         async def _embed_with_limit(input_text: str) -> List[float]:

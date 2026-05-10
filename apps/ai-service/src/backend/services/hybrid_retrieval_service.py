@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -26,6 +27,8 @@ class RetrievalResult:
     sources: List[Dict[str, Any]]
     retrieval_mode: str
     metadata: Dict[str, Any]
+    generation_groups: Optional[List[Any]] = None
+    graph_entry: Optional[Any] = None
 
 
 @dataclass
@@ -204,12 +207,17 @@ class HybridRetrievalService:
             return []
 
         vector_store = get_pg_vector_store()
+        start_time = time.perf_counter()
         similar_docs = await vector_store.search_similar(
             [user_storage_id],
             query,
             top_k=top_k,
             similarity_threshold=0.5,
             model_type=model_type,
+        )
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.info(
+            f"[AI_TIMING] stage=vector_seed_chunks user_storage_id={user_storage_id} top_k={top_k} results={len(similar_docs)} elapsed_ms={elapsed_ms}"
         )
         return [
             DocumentChunk(
@@ -390,11 +398,19 @@ class HybridRetrievalService:
         user_storage_id: str,
         chunks: List[DocumentChunk],
     ) -> Optional[GraphCacheEntry]:
+        start_time = time.perf_counter()
         state = await graph_storage_service.load_graph_state(user_storage_id)
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         if state is None:
+            logger.info(
+                f"[AI_TIMING] stage=graph_state_load user_storage_id={user_storage_id} found=false elapsed_ms={elapsed_ms}"
+            )
             return None
 
         if state['chunk_signature'] != self._chunk_signature_string(chunks):
+            logger.info(
+                f"[AI_TIMING] stage=graph_state_load user_storage_id={user_storage_id} found=true signature_match=false elapsed_ms={elapsed_ms}"
+            )
             return None
 
         chunk_map = {chunk.id: chunk for chunk in chunks}
@@ -439,6 +455,9 @@ class HybridRetrievalService:
             )
 
         partitioner.subgraphs = subgraphs
+        logger.info(
+            f"[AI_TIMING] stage=graph_state_load user_storage_id={user_storage_id} found=true signature_match=true groups={len(groups)} elapsed_ms={elapsed_ms}"
+        )
         return GraphCacheEntry(
             signature=self._signature_for_chunks(chunks),
             graph=graph,
@@ -452,6 +471,7 @@ class HybridRetrievalService:
     async def _build_graph_cache_entry(
         self, user_storage_id: str, chunks: List[DocumentChunk]
     ) -> GraphCacheEntry:
+        start_time = time.perf_counter()
         documents = self._to_langchain_documents(chunks)
         builder = DocumentGraph()
 
@@ -489,6 +509,10 @@ class HybridRetrievalService:
         )
         await self._persist_groups_to_db(user_storage_id, chunks, entry)
         self._graph_cache[user_storage_id] = entry
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.info(
+            f"[AI_TIMING] stage=graph_build user_storage_id={user_storage_id} chunks={len(chunks)} groups={len(generation_groups)} edges={builder.graph.number_of_edges()} communities={len(partitioner.subgraphs)} elapsed_ms={elapsed_ms}"
+        )
         return entry
 
     async def _get_or_build_graph_entry(
@@ -500,6 +524,9 @@ class HybridRetrievalService:
         signature = self._signature_for_chunks(chunks)
         cached = self._graph_cache.get(user_storage_id)
         if cached and cached.signature == signature:
+            logger.info(
+                f"[AI_TIMING] stage=graph_cache user_storage_id={user_storage_id} source=memory chunks={len(chunks)} elapsed_ms=0"
+            )
             return cached
 
         persisted = await self._load_graph_state_from_db(user_storage_id, chunks)
@@ -685,6 +712,7 @@ class HybridRetrievalService:
         is_narrow_search: bool = False,
         max_chunks: int = DEFAULT_GENERATION_TOP_K,
     ) -> RetrievalResult:
+        retrieval_start = time.perf_counter()
         chunks = await ocr_service.get_document_chunks(user_storage_id)
         if not chunks:
             return RetrievalResult([], None, [], self._resolve_mode(), {'total_chunks': 0})
@@ -745,6 +773,10 @@ class HybridRetrievalService:
                 seen_chunk_ids.add(chunk.id)
                 flattened_chunks.append(chunk)
 
+        elapsed_ms = int((time.perf_counter() - retrieval_start) * 1000)
+        logger.info(
+            f"[AI_TIMING] stage=generation_retrieval user_storage_id={user_storage_id} mode={mode} total_chunks={len(chunks)} selected_chunks={len(flattened_chunks)} groups={len(generation_groups)} seed_chunks={len(seed_chunks)} elapsed_ms={elapsed_ms}"
+        )
         return RetrievalResult(
             chunks=flattened_chunks,
             combined_context=self._combine_chunks_for_context(
@@ -760,6 +792,8 @@ class HybridRetrievalService:
                 'is_narrow_search': is_narrow_search,
                 'group_count': len(generation_groups),
             },
+            generation_groups=generation_groups,
+            graph_entry=graph_entry,
         )
 
     def plan_generation_groups(

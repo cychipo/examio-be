@@ -1648,6 +1648,10 @@ export class AIService {
             status: normalizedStatus,
             filename: upload.filename,
             createdAt: upload.createdAt,
+            message:
+                normalizedStatus === 'completed'
+                    ? 'OCR và embedding đã hoàn tất nhưng chưa có kết quả quiz/flashcard.'
+                    : undefined,
         };
     }
 

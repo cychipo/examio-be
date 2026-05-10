@@ -283,11 +283,13 @@ class PgVectorStore:
         similarity_threshold = similarity_threshold or self.VECTOR_SEARCH_CONFIG["SIMILARITY_THRESHOLD"]
 
         try:
-            # Tạo embedding cho query (dùng task_type khác với document)
+            query_embedding_start = time.perf_counter()
             query_embedding = await self.create_embedding(query, task_type="retrieval_query", model_type=model_type)
+            query_embedding_ms = int((time.perf_counter() - query_embedding_start) * 1000)
 
             pool = await self._get_pool()
 
+            query_start = time.perf_counter()
             # Query với cosine similarity
             # 1 - (embedding <=> query_embedding) = cosine similarity
             rows = await pool.fetch(
@@ -307,6 +309,7 @@ class PgVectorStore:
                 top_k
             )
 
+            query_ms = int((time.perf_counter() - query_start) * 1000)
             results = [
                 DocumentChunk(
                     id=row["id"],
@@ -320,7 +323,9 @@ class PgVectorStore:
                 for row in rows
             ]
 
-            logger.info(f"Found {len(results)} similar documents (threshold: {similarity_threshold})")
+            logger.info(
+                f"[AI_TIMING] stage=vector_search files={len(user_storage_ids)} top_k={top_k} results={len(results)} embedding_ms={query_embedding_ms} query_ms={query_ms} threshold={similarity_threshold}"
+            )
             return results
 
         except Exception as e:

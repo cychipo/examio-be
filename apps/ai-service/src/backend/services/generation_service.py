@@ -96,7 +96,8 @@ class ContentGenerationService:
     _pool: Optional[asyncpg.Pool] = None
     MAX_SOURCE_CHUNKS = 8
     MAX_ITEMS_PER_CALL = 6
-    DEFAULT_GENERATION_MAX_CONCURRENCY = 1
+    DEFAULT_GENERATION_MAX_CONCURRENCY = 2
+    DEFAULT_GENERATION_MAX_CONCURRENCY_CAP = 3
     MAX_META_OUTPUT_RETRIES = 1
 
     def _describe_group(self, group: GenerationGroup) -> Dict[str, Any]:
@@ -281,21 +282,31 @@ class ContentGenerationService:
 
     def _get_generation_max_concurrency(self) -> int:
         raw = os.getenv("GENERATION_MAX_CONCURRENCY")
+        cap_raw = os.getenv("GENERATION_MAX_CONCURRENCY_CAP")
+        try:
+            cap = int(cap_raw) if cap_raw is not None else self.DEFAULT_GENERATION_MAX_CONCURRENCY_CAP
+        except ValueError:
+            logger.warning(
+                f"Invalid GENERATION_MAX_CONCURRENCY_CAP={cap_raw!r}, using default={self.DEFAULT_GENERATION_MAX_CONCURRENCY_CAP}"
+            )
+            cap = self.DEFAULT_GENERATION_MAX_CONCURRENCY_CAP
+
+        cap = max(1, cap)
         if raw is None:
-            return self.DEFAULT_GENERATION_MAX_CONCURRENCY
+            return min(self.DEFAULT_GENERATION_MAX_CONCURRENCY, cap)
         try:
             value = int(raw)
             if value < 1:
                 logger.warning(
                     f"GENERATION_MAX_CONCURRENCY must be >= 1, got {value}. Using {self.DEFAULT_GENERATION_MAX_CONCURRENCY}."
                 )
-                return self.DEFAULT_GENERATION_MAX_CONCURRENCY
-            return value
+                return min(self.DEFAULT_GENERATION_MAX_CONCURRENCY, cap)
+            return min(value, cap)
         except ValueError:
             logger.warning(
                 f"Invalid GENERATION_MAX_CONCURRENCY={raw!r}, using default={self.DEFAULT_GENERATION_MAX_CONCURRENCY}"
             )
-            return self.DEFAULT_GENERATION_MAX_CONCURRENCY
+            return min(self.DEFAULT_GENERATION_MAX_CONCURRENCY, cap)
 
     async def _generate_quiz_batch_for_chunk(
         self,
@@ -410,13 +421,19 @@ class ContentGenerationService:
 
         async def _run_one(task: Dict[str, Any]) -> Dict[str, Any]:
             async with semaphore:
+                batch_start = time.perf_counter()
                 try:
                     result = await task["runner"]()
+                    elapsed_ms = int((time.perf_counter() - batch_start) * 1000)
+                    logger.info(
+                        f"[AI_TIMING] stage=generation_batch kind={kind} chunk_index={task['chunk_index']} batch_index={task['batch_index']} items={len(result)} elapsed_ms={elapsed_ms}"
+                    )
                     return {
                         "chunk_index": task["chunk_index"],
                         "batch_index": task["batch_index"],
                         "items": result,
                         "error": None,
+                        "elapsed_ms": elapsed_ms,
                     }
                 except Exception as e:
                     import traceback
@@ -426,12 +443,17 @@ class ContentGenerationService:
                         f"Error type: {type(e).__name__} | Error: {e}\n"
                         f"Traceback:\n{traceback.format_exc()}"
                     )
+                    elapsed_ms = int((time.perf_counter() - batch_start) * 1000)
+                    logger.info(
+                        f"[AI_TIMING] stage=generation_batch kind={kind} chunk_index={task['chunk_index']} batch_index={task['batch_index']} items=0 elapsed_ms={elapsed_ms} error=true"
+                    )
                     return {
                         "chunk_index": task["chunk_index"],
                         "batch_index": task["batch_index"],
                         "items": [],
                         "error": str(e),
                         "error_code": error_code,
+                        "elapsed_ms": elapsed_ms,
                     }
 
         results = await asyncio.gather(*[_run_one(task) for task in tasks])
@@ -486,15 +508,11 @@ class ContentGenerationService:
             if not chunks:
                 return {"success": False, "error": "No content found in file"}
 
-            graph_entry = await hybrid_retrieval_service._get_or_build_graph_entry(  # noqa: SLF001
-                request.user_storage_id,
-                await ocr_service.get_document_chunks(request.user_storage_id),
-            )
-            generation_groups = hybrid_retrieval_service.plan_generation_groups(
+            generation_groups = retrieval_result.generation_groups or hybrid_retrieval_service.plan_generation_groups(
                 user_storage_id=request.user_storage_id,
                 selected_chunks=chunks,
                 total_items=request.num_questions,
-                graph_entry=graph_entry,
+                graph_entry=retrieval_result.graph_entry,
                 seed_chunks=None,
                 keyword=request.keyword,
             )
@@ -668,15 +686,11 @@ class ContentGenerationService:
             if not chunks:
                 return {"success": False, "error": "No content found in file"}
 
-            graph_entry = await hybrid_retrieval_service._get_or_build_graph_entry(  # noqa: SLF001
-                request.user_storage_id,
-                await ocr_service.get_document_chunks(request.user_storage_id),
-            )
-            generation_groups = hybrid_retrieval_service.plan_generation_groups(
+            generation_groups = retrieval_result.generation_groups or hybrid_retrieval_service.plan_generation_groups(
                 user_storage_id=request.user_storage_id,
                 selected_chunks=chunks,
                 total_items=request.num_flashcards,
-                graph_entry=graph_entry,
+                graph_entry=retrieval_result.graph_entry,
                 seed_chunks=None,
                 keyword=request.keyword,
             )
@@ -1035,6 +1049,7 @@ class ContentGenerationService:
             RETURNING id
         """
 
+        start_time = time.perf_counter()
         async with pool.acquire() as conn:
             await conn.execute(
                 query,
@@ -1044,7 +1059,10 @@ class ContentGenerationService:
                 json.dumps(quizzes)
             )
 
-        logger.info(f"Saved quiz history {history_id} with {len(quizzes)} questions")
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.info(
+            f"[AI_TIMING] stage=quiz_history_save user_storage_id={user_storage_id} history_id={history_id} items={len(quizzes)} elapsed_ms={elapsed_ms}"
+        )
         return history_id
 
     async def _save_flashcard_history(
@@ -1063,6 +1081,7 @@ class ContentGenerationService:
             RETURNING id
         """
 
+        start_time = time.perf_counter()
         async with pool.acquire() as conn:
             await conn.execute(
                 query,
@@ -1072,7 +1091,10 @@ class ContentGenerationService:
                 json.dumps(flashcards)
             )
 
-        logger.info(f"Saved flashcard history {history_id} with {len(flashcards)} flashcards")
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.info(
+            f"[AI_TIMING] stage=flashcard_history_save user_storage_id={user_storage_id} history_id={history_id} items={len(flashcards)} elapsed_ms={elapsed_ms}"
+        )
         return history_id
 
     async def get_quiz_history(self, history_id: str) -> Optional[Dict]:

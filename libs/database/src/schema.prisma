@@ -461,6 +461,8 @@ model Document {
     createdAt   DateTime    @default(now())
     updatedAt   DateTime    @default(now()) @updatedAt
     userStorage UserStorage @relation(fields: [userStorageId], references: [id], onDelete: Cascade)
+
+    @@index([userStorageId, createdAt])
 }
 
 model UserStorageGraph {

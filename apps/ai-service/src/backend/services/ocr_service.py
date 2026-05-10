@@ -14,6 +14,7 @@ KHÔNG xử lý: Upload file, tạo UserStorage record (NestJS làm)
 import os
 import logging
 import tempfile
+import time
 import httpx
 from typing import Optional, List, Tuple, Any, Dict
 from datetime import datetime
@@ -170,6 +171,7 @@ class OCRProcessingService:
             ORDER BY "createdAt"
         """
 
+        start_time = time.perf_counter()
         chunks = []
         async with pool.acquire() as conn:
             rows = await conn.fetch(query, user_storage_id)
@@ -184,6 +186,10 @@ class OCRProcessingService:
                     created_at=row['createdAt']
                 ))
 
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.info(
+            f"[AI_TIMING] stage=document_chunks_load user_storage_id={user_storage_id} chunks={len(chunks)} elapsed_ms={elapsed_ms}"
+        )
         return chunks
 
     async def update_processing_status(
@@ -353,17 +359,27 @@ class OCRProcessingService:
             should_cleanup_temp = True
 
         try:
+            prepare_start = time.perf_counter()
             if self._is_pdf_file(file_info):
                 logger.info("📄 Processing PDF with local Tesseract/PyPDF...")
                 from backend.services.pdf_ocr_service import pdf_ocr_service
 
+                ocr_start = time.perf_counter()
                 chunk_results = pdf_ocr_service.process_pdf_with_chunks(file_bytes)
+                ocr_ms = int((time.perf_counter() - ocr_start) * 1000)
+                split_start = time.perf_counter()
                 documents_to_store = self._build_pdf_documents_to_store(user_storage_id, chunk_results)
+                split_ms = int((time.perf_counter() - split_start) * 1000)
+                logger.info(
+                    f"[AI_TIMING] stage=ocr_pdf_prepare user_storage_id={user_storage_id} page_chunks={len(chunk_results)} documents={len(documents_to_store)} ocr_ms={ocr_ms} split_ms={split_ms}"
+                )
             else:
                 logger.info(f"📝 Processing non-PDF file: {file_info.mimetype}")
                 from src.rag.retriever import extract_text_from_file
 
+                extract_start = time.perf_counter()
                 extracted_text = extract_text_from_file(temp_path, file_info.mimetype)
+                extract_ms = int((time.perf_counter() - extract_start) * 1000)
                 if (
                     extracted_text.startswith("Error")
                     or extracted_text.startswith("Unsupported")
@@ -372,11 +388,20 @@ class OCRProcessingService:
                 ):
                     raise FileExtractionError(extracted_text)
 
+                split_start = time.perf_counter()
                 documents_to_store = self._build_text_documents_to_store(user_storage_id, extracted_text)
+                split_ms = int((time.perf_counter() - split_start) * 1000)
+                logger.info(
+                    f"[AI_TIMING] stage=ocr_text_prepare user_storage_id={user_storage_id} chars={len(extracted_text)} documents={len(documents_to_store)} extract_ms={extract_ms} split_ms={split_ms}"
+                )
 
             if not documents_to_store:
                 raise NoContentExtractedError("No content could be extracted from file")
 
+            total_ms = int((time.perf_counter() - prepare_start) * 1000)
+            logger.info(
+                f"[AI_TIMING] stage=ocr_prepare_total user_storage_id={user_storage_id} documents={len(documents_to_store)} elapsed_ms={total_ms}"
+            )
             return documents_to_store
         finally:
             if should_cleanup_temp and temp_path and os.path.exists(temp_path):
@@ -445,6 +470,7 @@ class OCRProcessingService:
         Returns:
             dict with success, chunks_count, or error
         """
+        process_start = time.perf_counter()
         try:
             file_info = await self.get_file_info(user_storage_id)
             if not file_info:
@@ -468,6 +494,10 @@ class OCRProcessingService:
                 raise NoContentExtractedError("No content could be extracted from file")
 
             await self.update_processing_status(user_storage_id, "COMPLETED", credit_charged=True)
+            total_ms = int((time.perf_counter() - process_start) * 1000)
+            logger.info(
+                f"[AI_TIMING] stage=ocr_process_total user_storage_id={user_storage_id} chunks_saved={chunks_saved} elapsed_ms={total_ms}"
+            )
             return {"success": True, "chunks_count": chunks_saved}
 
         except Exception as e:
