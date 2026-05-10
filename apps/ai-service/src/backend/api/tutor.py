@@ -275,9 +275,20 @@ def _prune_tutor_context_cache() -> None:
             _tutor_context_cache.pop(key, None)
 
 
+def _get_tutor_fast_retrieval_timeout() -> float:
+    raw = os.getenv('TUTOR_FAST_RETRIEVAL_TIMEOUT_SECONDS')
+    if raw is None:
+        return 1.2
+    try:
+        return max(0.1, float(raw))
+    except ValueError:
+        return 1.2
+
+
 async def _retrieve_tutor_context(
     request: TutorQueryRequest,
 ) -> tuple[str, list[dict[str, Any]], float]:
+    retrieval_start = time.perf_counter()
     cache_key = _build_tutor_cache_key(request)
     _prune_tutor_context_cache()
     cached = _tutor_context_cache.get(cache_key)
@@ -355,6 +366,13 @@ async def _retrieve_tutor_context(
     confidence = max(0.0, min(1.0, max(item.similarity_score for item in retrieved)))
     result = (pre_context, sources, confidence)
     _tutor_context_cache[cache_key] = (now + _TUTOR_CONTEXT_CACHE_TTL_SECONDS, result)
+    elapsed_ms = int((time.perf_counter() - retrieval_start) * 1000)
+    logger.info(
+        '[AI_TIMING] stage=tutor_context_retrieval fast_mode=%s sources=%s elapsed_ms=%s',
+        request.fast_mode,
+        len(sources),
+        elapsed_ms,
+    )
     return result
 
 
@@ -876,7 +894,27 @@ async def query_tutor(request: TutorQueryRequest) -> TutorQueryResponse:
         request.fast_mode = request.fast_mode or _is_fast_mode_candidate(request.query)
 
         model_type = model_manager.resolve_model(request.model_type).id
-        pre_context, sources, confidence = await _retrieve_tutor_context(request)
+        retrieval_start = time.perf_counter()
+        try:
+            if request.fast_mode:
+                pre_context, sources, confidence = await asyncio.wait_for(
+                    _retrieve_tutor_context(request),
+                    timeout=_get_tutor_fast_retrieval_timeout(),
+                )
+            else:
+                pre_context, sources, confidence = await _retrieve_tutor_context(request)
+        except asyncio.TimeoutError:
+            elapsed_ms = int((time.perf_counter() - retrieval_start) * 1000)
+            logger.warning(
+                '[AI_TIMING] stage=tutor_context_retrieval_timeout fast_mode=true elapsed_ms=%s',
+                elapsed_ms,
+            )
+            pre_context, sources, confidence = '', [], 0.0
+        except HTTPException as exc:
+            if not request.fast_mode or exc.status_code != 404:
+                raise
+            pre_context, sources, confidence = '', [], 0.0
+
         agent = SimpleChatAgent(
             pre_context=pre_context,
             model_type=model_type,
@@ -920,21 +958,44 @@ async def stream_tutor(request: TutorQueryRequest):
         request.fast_mode = request.fast_mode or _is_fast_mode_candidate(request.query)
 
         model_type = model_manager.resolve_model(request.model_type).id
-        pre_context, sources, confidence = await _retrieve_tutor_context(request)
-        agent = SimpleChatAgent(
-            pre_context=pre_context,
-            model_type=model_type,
-            system_prompt=_build_tutor_system_prompt(),
-        )
 
-        history_dicts = [
-            {'role': message.role, 'content': message.content}
-            for message in request.history
-        ]
-
-        def iter_response():
+        async def iter_response():
             full_answer = ''
+            sources: list[dict[str, Any]] = []
+            confidence = 0.0
+            yield f"data: {json.dumps({'type': 'started'})}\n\n"
             try:
+                retrieval_start = time.perf_counter()
+                try:
+                    if request.fast_mode:
+                        pre_context, sources, confidence = await asyncio.wait_for(
+                            _retrieve_tutor_context(request),
+                            timeout=_get_tutor_fast_retrieval_timeout(),
+                        )
+                    else:
+                        pre_context, sources, confidence = await _retrieve_tutor_context(request)
+                except asyncio.TimeoutError:
+                    elapsed_ms = int((time.perf_counter() - retrieval_start) * 1000)
+                    logger.warning(
+                        '[AI_TIMING] stage=tutor_context_retrieval_timeout fast_mode=true elapsed_ms=%s',
+                        elapsed_ms,
+                    )
+                    pre_context, sources, confidence = '', [], 0.0
+                except HTTPException as exc:
+                    if not request.fast_mode or exc.status_code != 404:
+                        raise
+                    pre_context, sources, confidence = '', [], 0.0
+
+                agent = SimpleChatAgent(
+                    pre_context=pre_context,
+                    model_type=model_type,
+                    system_prompt=_build_tutor_system_prompt(),
+                )
+                history_dicts = [
+                    {'role': message.role, 'content': message.content}
+                    for message in request.history
+                ]
+
                 for chunk in agent.chat_stream(request.query, history=history_dicts):
                     chunk_text = str(chunk)
                     full_answer += chunk_text

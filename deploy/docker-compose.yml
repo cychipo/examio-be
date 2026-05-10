@@ -266,6 +266,16 @@ services:
             - REDIS_PASSWORD=${REDIS_PASSWORD:-}
             - GEMINI_API_KEYS=${GEMINI_API_KEYS}
             - GEMINI_MODEL_NAMES=${GEMINI_MODEL_NAMES}
+            - AI2_BASE_URL=${AI2_BASE_URL:-https://ai2.devt.vn/v1}
+            - AI2_API_KEY=${AI2_API_KEY:-}
+            - AI2_GENERATION_MODEL_NAMES=${AI2_GENERATION_MODEL_NAMES:-minimax-m2.5-free,nemotron-3-super-free,trinity-large-preview-free}
+            - AI2_DEFAULT_MODEL=${AI2_DEFAULT_MODEL:-minimax-m2.5-free}
+            - AI2_TIMEOUT_SECONDS=${AI2_TIMEOUT_SECONDS:-3600}
+            - AI2_MAX_TOKENS=${AI2_MAX_TOKENS:-4096}
+            - DEFAULT_MAX_TOKENS_CAP=${DEFAULT_MAX_TOKENS_CAP:-4096}
+            - TUTOR_FAST_RETRIEVAL_TIMEOUT_SECONDS=${TUTOR_FAST_RETRIEVAL_TIMEOUT_SECONDS:-0.5}
+            - CHAT_HISTORY_MAX_MESSAGES=${CHAT_HISTORY_MAX_MESSAGES:-4}
+            - CHAT_HISTORY_MAX_CHARS=${CHAT_HISTORY_MAX_CHARS:-1200}
             - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
             - OCR_SERVICE_URL= # Using internal Tesseract/PyPDF logic
         env_file:

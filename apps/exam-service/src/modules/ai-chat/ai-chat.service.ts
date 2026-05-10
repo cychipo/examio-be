@@ -45,6 +45,16 @@ export class AIChatService implements OnModuleInit {
         );
     }
 
+    private trimHistoryForAI(history: { role: string; content: string }[]) {
+        return history.slice(-4).map((message) => ({
+            role: message.role,
+            content:
+                message.content.length > 1200
+                    ? `${message.content.slice(0, 1200).trim()} ...`
+                    : message.content,
+        }));
+    }
+
     // ==================== CHAT ====================
 
     async getChats(user: User) {
@@ -161,10 +171,7 @@ export class AIChatService implements OnModuleInit {
 
         // Get history for context - sliding window of 30 recent messages
         const history = await this.chatRepository.findMessagesByChatId(chatId);
-        const historyForAI = history.slice(-30).map((m) => ({
-            role: m.role,
-            content: m.content,
-        }));
+        const historyForAI = this.trimHistoryForAI(history);
 
         // Collect all document IDs: from DTO + from chat's linked documents
         let effectiveDocumentIds: string[] = [];
@@ -293,10 +300,7 @@ export class AIChatService implements OnModuleInit {
 
         // 2. Prepare History & Payload
         const history = await this.chatRepository.findMessagesByChatId(chatId);
-        const historyForAI = history.slice(-30).map((m) => ({
-            role: m.role,
-            content: m.content,
-        }));
+        const historyForAI = this.trimHistoryForAI(history);
 
         const userStorageId =
             effectiveDocumentIds.length > 0 ? effectiveDocumentIds[0] : null;

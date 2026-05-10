@@ -14,6 +14,32 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
+def _get_int_env(name: str, default: int, minimum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+def _trim_chat_history(history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    max_messages = _get_int_env('CHAT_HISTORY_MAX_MESSAGES', 8, 0)
+    max_chars = _get_int_env('CHAT_HISTORY_MAX_CHARS', 2000, 200)
+    if max_messages == 0:
+        return []
+
+    trimmed = history[-max_messages:]
+    result = []
+    for item in trimmed:
+        content = str(item.get('content') or '')
+        if len(content) > max_chars:
+            content = content[:max_chars].rsplit(' ', 1)[0] + ' ...'
+        result.append({'role': str(item.get('role') or ''), 'content': content})
+    return result
+
+
 class SimpleChatAgent:
     """Simplified chat agent without LangGraph to avoid recursion issues"""
 
@@ -160,7 +186,22 @@ Answer only YES or NO."""
             max_retries = 15
             for attempt in range(max_retries):
                 try:
+                    ai_call_start = time.perf_counter()
+                    logger.info(
+                        "[AI_TIMING] stage=llm_stream_start model_type=%s messages=%s",
+                        self.model_type,
+                        len(messages),
+                    )
+                    first_chunk_logged = False
                     for chunk in self.llm.stream(messages):
+                        if not first_chunk_logged:
+                            elapsed_ms = int((time.perf_counter() - ai_call_start) * 1000)
+                            logger.info(
+                                "[AI_TIMING] stage=llm_first_chunk model_type=%s elapsed_ms=%s",
+                                self.model_type,
+                                elapsed_ms,
+                            )
+                            first_chunk_logged = True
                         yield chunk.content
                     return
                 except Exception as e:
@@ -196,6 +237,7 @@ Answer only YES or NO."""
             logger.info(f"Processing streaming query: {message}")
             if history is None:
                 history = []
+            history = _trim_chat_history(history)
 
             # 1. Convert history
             lc_messages = []

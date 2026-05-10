@@ -415,6 +415,7 @@ export class AIController {
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
+        res.write(`data: ${JSON.stringify({ type: 'started' })}\n\n`);
 
         const observable = await this.aiService.tutorStream(dto);
         const subscription = observable.subscribe({

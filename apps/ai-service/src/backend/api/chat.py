@@ -161,50 +161,45 @@ async def stream_ai(request: ChatRequest):
         else:
             logger.info(f"Stream AI [General chat]: query='{query[:50]}...', model={model_type}")
 
-        # Use PostgreSQL vector search instead of in-memory FAISS
-        # This uses pre-computed embeddings from database (no re-embedding!)
-        pre_context = None
-        sources: List[Dict[str, Any]] = []
-        if user_storage_id:
-            retrieval_result = await hybrid_retrieval_service.retrieve_for_chat(
-                user_storage_id=user_storage_id,
-                query=query,
-                model_type=model_type,
-                top_k=8,
-                max_content_length=8000,
-            )
-            logger.info(
-                "[AI_RETRIEVAL] mode=%s user_storage_id=%s selected=%s total=%s chat=stream",
-                retrieval_result.retrieval_mode,
-                user_storage_id,
-                retrieval_result.metadata.get("selected_chunks"),
-                retrieval_result.metadata.get("total_chunks"),
-            )
-            pre_context = retrieval_result.combined_context
-            sources = retrieval_result.sources
-            logger.info(f"Retrieved {len(pre_context) if pre_context else 0} chars context from PostgreSQL")
-
-        # Create agent with pre-fetched context (fast path - no retriever creation)
-        agent = SimpleChatAgent(pre_context=pre_context, model_type=model_type, system_prompt=request.system_prompt)
-
-        # History setup
-        history_dicts: List[Dict[str, str]] = []
-        if request.history:
-            history_dicts = [
-                {"role": m.role, "content": str(m.content)} for m in request.history
-            ]
-
-        def iter_response():
+        async def iter_response():
             import json
             full_answer: str = ""
+            sources: List[Dict[str, Any]] = []
+            yield f"data: {json.dumps({'type': 'started'})}\n\n"
             try:
+                pre_context = None
+                if user_storage_id:
+                    retrieval_result = await hybrid_retrieval_service.retrieve_for_chat(
+                        user_storage_id=user_storage_id,
+                        query=query,
+                        model_type=model_type,
+                        top_k=8,
+                        max_content_length=8000,
+                    )
+                    pre_context = retrieval_result.combined_context
+                    sources = retrieval_result.sources
+                    logger.info(
+                        "[AI_RETRIEVAL] mode=%s user_storage_id=%s selected=%s total=%s chat=stream",
+                        retrieval_result.retrieval_mode,
+                        user_storage_id,
+                        retrieval_result.metadata.get("selected_chunks"),
+                        retrieval_result.metadata.get("total_chunks"),
+                    )
+                    logger.info(f"Retrieved {len(pre_context) if pre_context else 0} chars context from PostgreSQL")
+
+                agent = SimpleChatAgent(pre_context=pre_context, model_type=model_type, system_prompt=request.system_prompt)
+                history_dicts: List[Dict[str, str]] = []
+                if request.history:
+                    history_dicts = [
+                        {"role": m.role, "content": str(m.content)} for m in request.history
+                    ]
+
                 for chunk in agent.chat_stream(query, history=history_dicts):
                     chunk_text = _ensure_text(chunk)
                     full_answer += chunk_text
                     data = json.dumps({"type": "chunk", "data": chunk_text})
                     yield f"data: {data}\n\n"
 
-                # Done event
                 done_data = json.dumps({
                     "type": "done",
                     "data": {

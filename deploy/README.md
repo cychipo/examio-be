@@ -91,10 +91,27 @@ RABBITMQ_PASS=secure_password_here
 RABBITMQ_URL=amqp://admin:secure_password_here@rabbitmq:5672
 ```
 
-#### AI Service (Gemini)
+#### AI Service
 ```bash
+# AI2 is used only for quiz/flashcard/content generation.
+AI2_BASE_URL=https://ai2.devt.vn/v1
+AI2_API_KEY=your_ai2_api_key
+AI2_GENERATION_MODEL_NAMES=minimax-m2.5-free,nemotron-3-super-free,trinity-large-preview-free
+AI2_DEFAULT_MODEL=minimax-m2.5-free
+AI2_TIMEOUT_SECONDS=3600
+AI2_MAX_TOKENS=4096
+DEFAULT_MAX_TOKENS=4096
+DEFAULT_MAX_TOKENS_CAP=4096
+TUTOR_FAST_RETRIEVAL_TIMEOUT_SECONDS=0.5
+CHAT_HISTORY_MAX_MESSAGES=4
+CHAT_HISTORY_MAX_CHARS=1200
+
+# Gemini remains available for content generation selection and uses the same token cap.
 GEMINI_API_KEYS=key1,key2
 GEMINI_MODEL_NAMES=gemini-2.0-flash,gemini-1.5-flash
+
+# Ollama is used for OCR/RAG embeddings only.
+OLLAMA_BASE_URL=http://ollama:11434
 ```
 
 #### R2 Storage (Cloudflare)

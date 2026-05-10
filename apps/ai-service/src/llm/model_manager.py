@@ -2,6 +2,7 @@
 Model Manager Module de quan ly da model generation/chat va embedding.
 """
 
+import asyncio
 import logging
 import os
 from enum import Enum
@@ -15,6 +16,7 @@ from src.llm.model_registry import (
     get_default_generation_model,
     get_embedding_model,
     get_frontend_model_catalog,
+    get_generation_models,
     resolve_generation_model,
 )
 
@@ -26,9 +28,13 @@ logger = logging.getLogger(__name__)
 class ModelType(str, Enum):
     OLLAMA = 'ollama'
     GEMINI = 'gemini'
+    AI2 = 'ai2'
 
 
 class AIModelType(str, Enum):
+    MINIMAX_M25_FREE = 'minimax-m2.5-free'
+    NEMOTRON_3_SUPER_FREE = 'nemotron-3-super-free'
+    TRINITY_LARGE_PREVIEW_FREE = 'trinity-large-preview-free'
     GEMINI = 'gemini'
     QWEN3_8B = 'qwen3_8b'
     QWEN3_32B = 'qwen3_32b'
@@ -85,16 +91,37 @@ class ModelManager:
         return float(val) if val is not None else 0.7
 
     def get_max_tokens(self) -> int:
-        val = self.get_model_parameter('max_tokens', 2048)
-        return int(val) if val is not None else 2048
+        val = self.get_model_parameter('max_tokens', 4096)
+        max_tokens = int(val) if val is not None else 4096
+        return min(max_tokens, self.get_max_tokens_cap())
+
+    def get_max_tokens_cap(self) -> int:
+        raw_value = os.getenv('DEFAULT_MAX_TOKENS_CAP')
+        if raw_value is None:
+            return 4096
+        try:
+            return max(1, int(raw_value))
+        except ValueError:
+            logger.warning('Invalid DEFAULT_MAX_TOKENS_CAP=%s, using default=4096', raw_value)
+            return 4096
+
+    def get_ai2_max_tokens(self) -> int:
+        raw_value = os.getenv('AI2_MAX_TOKENS')
+        if raw_value is None:
+            return min(self.get_max_tokens(), 4096)
+        try:
+            return max(1, min(int(raw_value), 32768))
+        except ValueError:
+            logger.warning('Invalid AI2_MAX_TOKENS=%s, using default=4096', raw_value)
+            return 4096
 
     def get_default_model_id(self) -> str:
-        env_model = os.getenv('DEFAULT_MODEL_ID')
+        env_model = os.getenv('DEFAULT_MODEL_ID') or os.getenv('AI2_DEFAULT_MODEL')
         if env_model:
             try:
                 return resolve_generation_model(env_model).id
             except ValueError:
-                logger.warning('Invalid DEFAULT_MODEL_ID=%s, using registry default', env_model)
+                logger.warning('Invalid default generation model=%s, using registry default', env_model)
         return get_default_generation_model().id
 
     def resolve_model(self, model_id: str | None = None):
@@ -126,6 +153,30 @@ class ModelManager:
             'runtime_model_name': model.runtime_model_name,
         }
 
+    def get_ai2_base_url(self) -> str:
+        raw_base_url = os.getenv('AI2_BASE_URL', 'https://ai2.devt.vn/v1').strip().rstrip('/')
+        return raw_base_url if raw_base_url.endswith('/v1') else f'{raw_base_url}/v1'
+
+    def get_ai2_timeout(self) -> float:
+        raw_timeout = os.getenv('AI2_TIMEOUT_SECONDS')
+        if raw_timeout is None:
+            return 3600.0
+        try:
+            return max(1.0, float(raw_timeout))
+        except ValueError:
+            logger.warning('Invalid AI2_TIMEOUT_SECONDS=%s, using default=3600', raw_timeout)
+            return 3600.0
+
+    def get_ai2_info(self, model_id: str | None = None) -> Dict[str, Any]:
+        model = self.resolve_model(model_id)
+        return {
+            'model': model.runtime_model_name,
+            'url': self.get_ai2_base_url(),
+            'id': model.id,
+            'api_key_configured': bool(os.getenv('AI2_API_KEY')),
+            'timeout': self.get_ai2_timeout(),
+        }
+
     def get_embedding_info(self) -> Dict[str, Any]:
         model = get_embedding_model()
         return {
@@ -139,10 +190,44 @@ class ModelManager:
         model_id: str,
         installed_names: set[str] | None = None,
         availability_error: Exception | None = None,
+        ai2_model_names: set[str] | None = None,
+        ai2_availability_error: Exception | None = None,
     ) -> Dict[str, Any]:
         model = self.resolve_model(model_id)
 
         if model.provider == 'gemini':
+            return {
+                'modelId': model.id,
+                'available': True,
+                'reason': None,
+            }
+
+        if model.provider == 'ai2':
+            api_key = os.getenv('AI2_API_KEY')
+            if not api_key:
+                return {
+                    'modelId': model.id,
+                    'available': False,
+                    'reason': 'AI2_API_KEY chua duoc cau hinh cho tac vu sinh content.',
+                    'code': 'MODEL_CONFIGURATION_ERROR',
+                }
+            if ai2_availability_error is not None:
+                normalized_error = self._normalize_model_error(ai2_availability_error)
+                return {
+                    'modelId': model.id,
+                    'available': False,
+                    'reason': str(normalized_error),
+                    'code': normalized_error.code,
+                }
+            if ai2_model_names is None:
+                ai2_model_names = await self._fetch_ai2_model_names()
+            if model.runtime_model_name not in ai2_model_names:
+                return {
+                    'modelId': model.id,
+                    'available': False,
+                    'reason': 'Model khong ton tai tren AI2 provider.',
+                    'code': 'MODEL_UNAVAILABLE',
+                }
             return {
                 'modelId': model.id,
                 'available': True,
@@ -189,6 +274,26 @@ class ModelManager:
                 if isinstance(item, dict) and item.get('name')
             }
 
+    async def _fetch_ai2_model_names(self) -> set[str]:
+        api_key = os.getenv('AI2_API_KEY')
+        if not api_key:
+            raise ModelUnavailableError(
+                'AI2_API_KEY chua duoc cau hinh cho tac vu sinh content.',
+                code='MODEL_CONFIGURATION_ERROR',
+            )
+
+        url = f'{self.get_ai2_base_url()}/models'
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+            response = await client.get(url, headers={'Authorization': f'Bearer {api_key}'})
+            self._raise_ai2_status_error(response)
+            data = response.json()
+            models = data.get('data', [])
+            return {
+                item.get('id')
+                for item in models
+                if isinstance(item, dict) and item.get('id')
+            }
+
     async def ensure_generation_model_ready(self, model_id: str) -> None:
         availability = await self.check_generation_model_availability(model_id)
         if not availability.get('available'):
@@ -199,18 +304,9 @@ class ModelManager:
 
     async def get_frontend_model_catalog(self) -> Dict[str, Any]:
         availability_map: Dict[str, Dict[str, Any]] = {}
-        model_ids = [
-            'qwen3_8b',
-            'qwen3_32b',
-            'gemini',
-            'glm4_9b',
-            'gemma2_9b',
-        ]
-        ollama_model_ids = [
-            model_id
-            for model_id in model_ids
-            if self.resolve_model(model_id).provider == 'ollama'
-        ]
+        generation_models = get_generation_models()
+        ollama_model_ids = [model.id for model in generation_models if model.provider == 'ollama']
+        ai2_model_ids = [model.id for model in generation_models if model.provider == 'ai2']
 
         installed_names: set[str] | None = None
         availability_error: Exception | None = None
@@ -220,12 +316,21 @@ class ModelManager:
             except Exception as error:
                 availability_error = error
 
-        for model_id in model_ids:
-            resolved = self.resolve_model(model_id)
-            availability_map[model_id] = await self.check_generation_model_availability(
-                model_id,
-                installed_names=installed_names if resolved.provider == 'ollama' else None,
-                availability_error=availability_error if resolved.provider == 'ollama' else None,
+        ai2_model_names: set[str] | None = None
+        ai2_availability_error: Exception | None = None
+        if ai2_model_ids and os.getenv('AI2_API_KEY'):
+            try:
+                ai2_model_names = await self._fetch_ai2_model_names()
+            except Exception as error:
+                ai2_availability_error = error
+
+        for model in generation_models:
+            availability_map[model.id] = await self.check_generation_model_availability(
+                model.id,
+                installed_names=installed_names if model.provider == 'ollama' else None,
+                availability_error=availability_error if model.provider == 'ollama' else None,
+                ai2_model_names=ai2_model_names if model.provider == 'ai2' else None,
+                ai2_availability_error=ai2_availability_error if model.provider == 'ai2' else None,
             )
 
         return get_frontend_model_catalog(availability=availability_map)
@@ -239,7 +344,7 @@ class ModelManager:
         self._runtime_model_type = ModelType(model.provider)
         if model.provider == 'ollama':
             self._runtime_ollama_model = model.runtime_model_name
-        else:
+        elif model.provider == 'gemini':
             self._runtime_gemini_model = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 
     def set_ollama_model(self, ollama_model: str) -> None:
@@ -254,9 +359,14 @@ class ModelManager:
         return await self.generate_content_with_model(prompt, self.get_current_model_id())
 
     def _normalize_model_error(self, error: Exception) -> ModelUnavailableError:
+        if isinstance(error, ModelUnavailableError):
+            return error
+
         message = str(error)
         lower_message = message.lower()
 
+        if 'ai2_api_key' in lower_message or 'api key' in lower_message or 'unauthorized' in lower_message or '401' in lower_message or '403' in lower_message:
+            return ModelUnavailableError(message, code='MODEL_CONFIGURATION_ERROR')
         if 'vram' in lower_message or 'memory' in lower_message or 'insufficient' in lower_message:
             return ModelUnavailableError(message, code='MODEL_INSUFFICIENT_VRAM')
         if 'not found' in lower_message or '404' in lower_message or 'pull' in lower_message:
@@ -265,12 +375,41 @@ class ModelManager:
             return ModelUnavailableError(message, code='MODEL_UNAVAILABLE')
         return ModelUnavailableError(message, code='MODEL_RUNTIME_ERROR')
 
+    def _raise_ai2_status_error(self, response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+
+        detail = response.text[:500]
+        if response.status_code in (401, 403):
+            raise ModelUnavailableError(
+                'AI2 authentication failed. Kiem tra AI2_API_KEY.',
+                code='MODEL_CONFIGURATION_ERROR',
+            )
+        if response.status_code == 404:
+            raise ModelUnavailableError(
+                f'AI2 endpoint or model not found: {detail}',
+                code='MODEL_UNAVAILABLE',
+            )
+        if response.status_code == 429:
+            raise ModelUnavailableError(
+                f'AI2 rate limit exceeded: {detail}',
+                code='MODEL_RATE_LIMITED',
+            )
+        if response.status_code >= 500:
+            raise ModelUnavailableError(
+                f'AI2 provider error: {detail}',
+                code='MODEL_RUNTIME_ERROR',
+            )
+        raise ModelUnavailableError(
+            f'AI2 request failed with status {response.status_code}: {detail}',
+            code='MODEL_RUNTIME_ERROR',
+        )
+
     async def _generate_with_gemini(
         self,
         prompt: str,
         system_prompt: str | None = None,
     ) -> str:
-        import asyncio
         import google.generativeai as genai  # type: ignore[import-untyped]
         from google.api_core.exceptions import ResourceExhausted
 
@@ -337,9 +476,6 @@ class ModelManager:
         response_model: Any = None,
         system_prompt: str | None = None,
     ) -> str:
-        import asyncio
-        import httpx
-
         ollama_info = self.get_ollama_info(model_id)
         base_url = ollama_info['url'].rstrip('/')
         url = f"{base_url}/api/generate"
@@ -390,10 +526,82 @@ class ModelManager:
 
         raise self._normalize_model_error(last_error or Exception('Ollama generation failed'))
 
+    async def _generate_with_ai2(
+        self,
+        prompt: str,
+        model_id: str,
+        system_prompt: str | None = None,
+    ) -> str:
+        api_key = os.getenv('AI2_API_KEY')
+        if not api_key:
+            raise ModelUnavailableError(
+                'AI2_API_KEY chua duoc cau hinh cho tac vu sinh content.',
+                code='MODEL_CONFIGURATION_ERROR',
+            )
+
+        ai2_info = self.get_ai2_info(model_id)
+        url = f"{ai2_info['url']}/chat/completions"
+        messages = []
+        if system_prompt:
+            messages.append({'role': 'system', 'content': system_prompt})
+        messages.append({'role': 'user', 'content': prompt})
+        payload = {
+            'model': ai2_info['model'],
+            'messages': messages,
+            'temperature': self.get_temperature(),
+            'max_tokens': self.get_ai2_max_tokens(),
+            'stream': False,
+        }
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+        }
+
+        max_retries = 3
+        last_error: Exception | None = None
+        async with httpx.AsyncClient(timeout=ai2_info['timeout'], trust_env=False) as client:
+            for attempt in range(max_retries):
+                try:
+                    response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+                        last_error = ModelUnavailableError(
+                            f'AI2 transient error status={response.status_code}',
+                            code='MODEL_RUNTIME_ERROR',
+                        )
+                        await asyncio.sleep((attempt + 1) * 2)
+                        continue
+                    self._raise_ai2_status_error(response)
+                    data = response.json()
+                    choices = data.get('choices') if isinstance(data, dict) else None
+                    if not choices or not isinstance(choices, list):
+                        raise ModelUnavailableError('AI2 response missing choices.', code='MODEL_RUNTIME_ERROR')
+                    message = choices[0].get('message') if isinstance(choices[0], dict) else None
+                    content = message.get('content') if isinstance(message, dict) else None
+                    if isinstance(content, list):
+                        content = ''.join(
+                            item.get('text', '') if isinstance(item, dict) else str(item)
+                            for item in content
+                        )
+                    if not isinstance(content, str):
+                        raise ModelUnavailableError('AI2 response missing message content.', code='MODEL_RUNTIME_ERROR')
+                    return content
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as error:
+                    last_error = error
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep((attempt + 1) * 2)
+                        continue
+                    raise self._normalize_model_error(error)
+                except ModelUnavailableError:
+                    raise
+                except Exception as error:
+                    raise self._normalize_model_error(error)
+
+        raise self._normalize_model_error(last_error or Exception('AI2 generation failed'))
+
     async def generate_content_with_model(
         self,
         prompt: str,
-        ai_model_type: AIModelType | str = AIModelType.GEMINI,
+        ai_model_type: AIModelType | str = AIModelType.MINIMAX_M25_FREE,
         response_model: Any = None,
         system_prompt: str | None = None,
     ) -> str:
@@ -402,6 +610,8 @@ class ModelManager:
 
         await self.ensure_generation_model_ready(model.id)
 
+        if model.provider == 'ai2':
+            return await self._generate_with_ai2(prompt, model.id, system_prompt=system_prompt)
         if model.provider == 'gemini':
             return await self._generate_with_gemini(prompt, system_prompt=system_prompt)
         return await self._generate_with_ollama(
@@ -411,12 +621,28 @@ class ModelManager:
             system_prompt=system_prompt,
         )
 
-    def get_langchain_model(self, ai_model_type: AIModelType | str = AIModelType.GEMINI):
+    def get_langchain_model(self, ai_model_type: AIModelType | str = AIModelType.MINIMAX_M25_FREE):
         from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_ollama import ChatOllama
+        from langchain_openai import ChatOpenAI
 
         model_id = ai_model_type.value if isinstance(ai_model_type, AIModelType) else str(ai_model_type)
         model = self.resolve_model(model_id)
+
+        if model.provider == 'ai2':
+            api_key = os.getenv('AI2_API_KEY')
+            if not api_key:
+                raise ModelUnavailableError(
+                    'AI2_API_KEY chua duoc cau hinh cho tac vu sinh content.',
+                    code='MODEL_CONFIGURATION_ERROR',
+                )
+            return ChatOpenAI(
+                model=model.runtime_model_name,
+                api_key=api_key,
+                base_url=self.get_ai2_base_url(),
+                temperature=self.get_temperature(),
+                max_tokens=self.get_max_tokens(),
+            )
 
         if model.provider == 'gemini':
             gemini_info = self.get_gemini_info(model.id)

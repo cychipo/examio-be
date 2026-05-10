@@ -1,9 +1,17 @@
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal
 
 
-ModelProvider = Literal['gemini', 'ollama']
+ModelProvider = Literal['gemini', 'ollama', 'ai2']
 ModelTask = Literal['generation', 'chat', 'embedding']
+
+
+DEFAULT_AI2_GENERATION_MODEL_NAMES = (
+    'minimax-m2.5-free',
+    'nemotron-3-super-free',
+    'trinity-large-preview-free',
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +36,38 @@ class ModelRegistryEntry:
     specs: tuple[ModelSpec, ...] = ()
 
 
+def _split_env_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+
+def _get_ai2_generation_model_names() -> tuple[str, ...]:
+    names = _split_env_list(os.getenv('AI2_GENERATION_MODEL_NAMES'))
+    if not names:
+        names = list(DEFAULT_AI2_GENERATION_MODEL_NAMES)
+
+    unique_names: list[str] = []
+    for name in names:
+        if name not in unique_names:
+            unique_names.append(name)
+
+    default_name = os.getenv('AI2_DEFAULT_MODEL', DEFAULT_AI2_GENERATION_MODEL_NAMES[0]).strip()
+    if default_name and default_name not in unique_names:
+        unique_names.insert(0, default_name)
+
+    return tuple(unique_names)
+
+
+def _get_ai2_default_model_name(model_names: tuple[str, ...]) -> str:
+    default_name = os.getenv('AI2_DEFAULT_MODEL', DEFAULT_AI2_GENERATION_MODEL_NAMES[0]).strip()
+    return default_name if default_name in model_names else model_names[0]
+
+
+def _format_ai2_display_name(model_name: str) -> str:
+    return model_name.replace('-', ' ').replace('.', ' ').title()
+
+
 EMBEDDING_MODEL = ModelRegistryEntry(
     id='qwen3_embedding_8b',
     provider='ollama',
@@ -46,102 +86,62 @@ EMBEDDING_MODEL = ModelRegistryEntry(
 )
 
 
-GENERATION_MODELS: tuple[ModelRegistryEntry, ...] = (
+AI2_GENERATION_MODEL_NAMES = _get_ai2_generation_model_names()
+AI2_DEFAULT_MODEL_NAME = _get_ai2_default_model_name(AI2_GENERATION_MODEL_NAMES)
+
+AI2_GENERATION_MODELS: tuple[ModelRegistryEntry, ...] = tuple(
     ModelRegistryEntry(
-        id='qwen3_8b',
-        provider='ollama',
-        runtime_model_name='qwen3:8b',
-        display_name='Qwen3 8B',
-        description='Model local can bang giua toc do va chat luong.',
+        id=model_name,
+        provider='ai2',
+        runtime_model_name=model_name,
+        display_name=_format_ai2_display_name(model_name),
+        description='AI2 OpenAI-compatible model dung cho sinh quiz va flashcard.',
         task_types=('generation', 'chat'),
         enabled=True,
-        is_default=True,
-        supports_structured_output=True,
-        badge='Mac dinh',
-        sort_order=10,
-        specs=(
-            ModelSpec(label='Provider', value='Ollama'),
-            ModelSpec(label='Tham so', value='8B'),
-            ModelSpec(label='VRAM goi y', value='~10-12 GB'),
-        ),
-    ),
-    ModelRegistryEntry(
-        id='qwen3_32b',
-        provider='ollama',
-        runtime_model_name='qwen3:32b',
-        display_name='Qwen3 32B',
-        description='Model local manh hon cho bai toan can chat luong cao.',
-        task_types=('generation', 'chat'),
-        enabled=True,
-        is_default=False,
-        supports_structured_output=True,
-        badge='Manh',
-        sort_order=20,
-        specs=(
-            ModelSpec(label='Provider', value='Ollama'),
-            ModelSpec(label='Tham so', value='32B'),
-            ModelSpec(label='VRAM goi y', value='~40+ GB'),
-        ),
-    ),
-    ModelRegistryEntry(
-        id='gemini',
-        provider='gemini',
-        runtime_model_name='gemini',
-        display_name='Gemini',
-        description='Cloud model giu nguyen co che rotate key va model tu env.',
-        task_types=('generation', 'chat'),
-        enabled=True,
-        is_default=False,
+        is_default=model_name == AI2_DEFAULT_MODEL_NAME,
         supports_structured_output=False,
-        badge='Cloud',
-        sort_order=30,
+        badge='Mac dinh' if model_name == AI2_DEFAULT_MODEL_NAME else 'AI2',
+        sort_order=(index + 1) * 10,
         specs=(
-            ModelSpec(label='Provider', value='Google'),
-            ModelSpec(label='Kieu', value='Cloud'),
-            ModelSpec(label='Rotation', value='API key + model'),
+            ModelSpec(label='Provider', value='AI2'),
+            ModelSpec(label='Runtime', value=model_name),
+            ModelSpec(label='Kieu', value='OpenAI-compatible chat completions'),
         ),
-    ),
-    ModelRegistryEntry(
-        id='glm4_9b',
-        provider='ollama',
-        runtime_model_name='glm4:latest',
-        display_name='GLM-4 9B',
-        description='Model local kich thuoc vua, hop cho chat va generate thong thuong.',
-        task_types=('generation', 'chat'),
-        enabled=True,
-        is_default=False,
-        supports_structured_output=True,
-        sort_order=40,
-        specs=(
-            ModelSpec(label='Provider', value='Ollama'),
-            ModelSpec(label='Tham so', value='9B'),
-            ModelSpec(label='VRAM goi y', value='~12-14 GB'),
-        ),
-    ),
-    ModelRegistryEntry(
-        id='gemma2_9b',
-        provider='ollama',
-        runtime_model_name='gemma2:9b',
-        display_name='Gemma 2 9B',
-        description='Model local gon nhe, phu hop cho tac vu thong thuong.',
-        task_types=('generation', 'chat'),
-        enabled=True,
-        is_default=False,
-        supports_structured_output=True,
-        sort_order=50,
-        specs=(
-            ModelSpec(label='Provider', value='Ollama'),
-            ModelSpec(label='Tham so', value='9B'),
-            ModelSpec(label='VRAM goi y', value='~12-14 GB'),
-        ),
+    )
+    for index, model_name in enumerate(AI2_GENERATION_MODEL_NAMES)
+)
+
+GEMINI_MODEL = ModelRegistryEntry(
+    id='gemini',
+    provider='gemini',
+    runtime_model_name='gemini',
+    display_name='Gemini',
+    description='Cloud model giu nguyen co che rotate key va model tu env.',
+    task_types=('generation', 'chat'),
+    enabled=True,
+    is_default=False,
+    supports_structured_output=False,
+    badge='Cloud',
+    sort_order=40,
+    specs=(
+        ModelSpec(label='Provider', value='Google'),
+        ModelSpec(label='Kieu', value='Cloud'),
+        ModelSpec(label='Rotation', value='API key + model'),
     ),
 )
 
+GENERATION_MODELS: tuple[ModelRegistryEntry, ...] = (*AI2_GENERATION_MODELS, GEMINI_MODEL)
+
 
 LEGACY_MODEL_ALIASES: dict[str, str] = {
-    'fayedark': 'qwen3_8b',
-    'ollama': 'qwen3_8b',
-    'local': 'qwen3_8b',
+    'fayedark': '__default__',
+    'ollama': '__default__',
+    'local': '__default__',
+    'qwen3_8b': '__default__',
+    'qwen3_32b': '__default__',
+    'glm4_9b': '__default__',
+    'gemma2_9b': '__default__',
+    'ai2': '__default__',
 }
 
 
@@ -149,6 +149,10 @@ ALL_MODELS: dict[str, ModelRegistryEntry] = {
     EMBEDDING_MODEL.id: EMBEDDING_MODEL,
     **{entry.id: entry for entry in GENERATION_MODELS},
 }
+
+
+def get_generation_models() -> tuple[ModelRegistryEntry, ...]:
+    return GENERATION_MODELS
 
 
 def get_default_generation_model() -> ModelRegistryEntry:
@@ -162,7 +166,11 @@ def resolve_generation_model(model_id: str | None) -> ModelRegistryEntry:
     if not model_id:
         return get_default_generation_model()
 
-    normalized = LEGACY_MODEL_ALIASES.get(model_id.strip().lower(), model_id.strip())
+    requested_model_id = model_id.strip()
+    normalized = LEGACY_MODEL_ALIASES.get(requested_model_id.lower(), requested_model_id)
+    if normalized == '__default__':
+        return get_default_generation_model()
+
     entry = ALL_MODELS.get(normalized)
     if not entry or 'generation' not in entry.task_types:
         raise ValueError(f'Unknown generation model: {model_id}')

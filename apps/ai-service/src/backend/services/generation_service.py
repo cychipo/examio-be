@@ -329,11 +329,11 @@ class ContentGenerationService:
             content=chunk.content
         )
 
-        is_ollama = model_manager.resolve_model(final_model_id).provider == 'ollama'
+        supports_structured_output = model_manager.resolve_model(final_model_id).supports_structured_output
         batch_results = await self._generate_with_meta_retry(
             base_prompt=base_prompt,
             final_model_id=final_model_id,
-            response_model=QuizList if is_ollama else None,
+            response_model=QuizList if supports_structured_output else None,
             parser=(
                 lambda payload, page_range: self._parse_structured_quiz_items(payload, page_range)
                 if isinstance(payload, QuizList)
@@ -379,11 +379,11 @@ class ContentGenerationService:
             content=chunk.content
         )
 
-        is_ollama = model_manager.resolve_model(final_model_id).provider == 'ollama'
+        supports_structured_output = model_manager.resolve_model(final_model_id).supports_structured_output
         batch_results = await self._generate_with_meta_retry(
             base_prompt=base_prompt,
             final_model_id=final_model_id,
-            response_model=FlashcardList if is_ollama else None,
+            response_model=FlashcardList if supports_structured_output else None,
             parser=(
                 lambda payload, page_range: self._parse_structured_flashcard_items(payload, page_range)
                 if isinstance(payload, FlashcardList)
